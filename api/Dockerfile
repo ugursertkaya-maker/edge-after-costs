@@ -17,7 +17,7 @@ COPY app ./app
 COPY scripts ./scripts
 
 RUN useradd --create-home --uid 10001 cryptobot \
- && mkdir -p /data/backtest-cache \
+ && mkdir -p /data/backtest-cache /data/tape /data/research \
  && chown -R cryptobot:cryptobot /app /data
 USER cryptobot
 

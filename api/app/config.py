@@ -376,6 +376,35 @@ class HorizonConfig:
 
 
 @dataclass(frozen=True)
+class RecorderConfig:
+    """Raw stream capture, so maker-first can be evaluated honestly.
+
+    A resting order lives or dies on queue position and trade-through, neither
+    of which exists in a 1-minute bar. Recording the tape is the only way to
+    replay a maker strategy against something real.
+    """
+
+    enabled: bool = _eb("RECORD_TAPE", True)
+    directory: str = _es("TAPE_DIR", "/data/tape")
+    retention_hours: int = _ei("TAPE_RETENTION_HOURS", 336)   # 14 days
+    roll_seconds: int = _ei("TAPE_ROLL_SECONDS", 3600)
+
+
+@dataclass(frozen=True)
+class ResearchConfig:
+    """Where the tournament's output and the promoted champion live.
+
+    The search runs off-box (the VPS has 2 vCPU and a live engine on it), so its
+    results arrive as files. The worker reads them and republishes them with the
+    dashboard payload, which keeps the API container free of research code.
+    """
+
+    directory: str = _es("RESEARCH_DIR", "/data/research")
+    tournament_file: str = _es("TOURNAMENT_FILE", "tournament.json")
+    finalists_file: str = _es("FINALISTS_FILE", "finalists.json")
+
+
+@dataclass(frozen=True)
 class WorkerConfig:
     evaluate_interval_ms: int = _ei("EVAL_INTERVAL_MS", 1_000)
     position_monitor_interval_ms: int = _ei("POSITION_MONITOR_INTERVAL_MS", 500)
@@ -414,6 +443,8 @@ class Settings:
     execution_style: ExecutionStyleConfig = field(default_factory=ExecutionStyleConfig)
     portfolio: PortfolioConfig = field(default_factory=PortfolioConfig)
     horizon: HorizonConfig = field(default_factory=HorizonConfig)
+    recorder: RecorderConfig = field(default_factory=RecorderConfig)
+    research: ResearchConfig = field(default_factory=ResearchConfig)
 
     @property
     def is_paper(self) -> bool:

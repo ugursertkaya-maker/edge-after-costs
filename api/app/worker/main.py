@@ -16,12 +16,14 @@ from __future__ import annotations
 
 import asyncio
 import contextlib
+import json
 import logging
 import os
 import signal as os_signal
 import time
 import uuid
-from dataclasses import dataclass, field
+from pathlib import Path
+from dataclasses import dataclass, field, replace
 from typing import Any
 
 from app.config import Settings, get_settings
@@ -33,6 +35,8 @@ from app.features import FeatureEngine
 from app.portfolio import PortfolioEngine
 from app.profit import NetTargetEngine
 from app.ranker import OpportunityRanker
+from app.recorder import TapeRecorder
+from app.research.champion import ChampionStore
 from app.regime import RegimeClassifier
 from app.risk import RiskEngine, RiskState
 from app.runtime import RuntimeStore
@@ -143,6 +147,20 @@ class TradingWorker:
         self.exits = ExitEngine(settings=self.s)
         self.sim = PaperSimulator(settings=self.s)
         self.store = store or RuntimeStore(settings=self.s)
+        self.recorder = TapeRecorder(
+            self.s.recorder.directory,
+            enabled=self.s.recorder.enabled,
+            retention_hours=self.s.recorder.retention_hours,
+            roll_seconds=self.s.recorder.roll_seconds,
+        )
+        self._install_recorder()
+        self.champions = ChampionStore(self.s.research.directory)
+        self.champion = self.champions.load()
+        if self.champion is not None:
+            # Live P&L is split on the simulator version, so a promoted
+            # champion must run under its own version from the first tick.
+            self.s = replace(self.s, simulator_version=self.champion.simulator_version)
+            log.info("running champion: %s", self.champion.describe())
 
         self.ledgers: dict[str, Ledger] = {
             "base": Ledger("base", self.s.risk.starting_equity, self.s.simulator_version),
@@ -163,6 +181,25 @@ class TradingWorker:
         self._ranked: list[Opportunity] = []
         self._stop = asyncio.Event()
         self._db_ok = False
+
+    def _install_recorder(self) -> None:
+        """Tap the feed's ingest point without touching the feed itself.
+
+        Wrapping rather than editing keeps the recorder strictly additive: if it
+        is disabled, or if the feed is a test double without ``ingest_message``,
+        nothing changes on the hot path.
+        """
+        if not self.recorder.enabled:
+            return
+        inner = getattr(self.feed, "ingest_message", None)
+        if not callable(inner):
+            return
+
+        def recording_ingest(msg, ts_ms, _inner=inner):
+            self.recorder.record(msg, ts_ms)
+            return _inner(msg, ts_ms)
+
+        self.feed.ingest_message = recording_ingest  # type: ignore[method-assign]
 
     # ------------------------------------------------------------------ #
     # Adaptive layer (§22): rolling, evidence-based, deliberately dumb.
@@ -887,6 +924,7 @@ class TradingWorker:
                 }
             )
 
+        tournament, finalists = self._research_payload()
         points = ledger.equity_points()
         return {
             "mode": self.s.mode,
@@ -949,9 +987,14 @@ class TradingWorker:
                 "maker_fills": self.stats.maker_fills,
                 "maker_misses": self.stats.maker_misses,
                 "checkpoints": self.stats.checkpoints,
+                "recorder": self.recorder.stats.as_dict(),
+                "tape": self.recorder.inventory(),
                 "rejects": self.stats.rejects,
             },
             "portfolio": self._portfolio_block(ledger, ts),
+            "tournament": tournament,
+            "finalists": finalists,
+            "champion": self._champion_payload(ledger),
             "ledgers": [
                 {
                     "name": n, "label": LEDGER_LABELS.get(n, n),
@@ -1066,6 +1109,48 @@ class TradingWorker:
             "total_open_risk_budget_pct": self.s.portfolio.total_open_risk_pct,
         }
 
+    def _research_payload(self) -> tuple[dict[str, Any] | None, list[Any]]:
+        """Tournament output, if a search has been published to this box.
+
+        Read fresh each time rather than cached: a tournament result arriving
+        mid-session should show up without a restart, and the files are small.
+        """
+        base = Path(self.s.research.directory)
+        tournament = _read_json(base / self.s.research.tournament_file)
+        finalists = _read_json(base / self.s.research.finalists_file)
+        if isinstance(finalists, dict):
+            finalists = finalists.get("finalists", [])
+        return (
+            tournament if isinstance(tournament, dict) else None,
+            finalists if isinstance(finalists, list) else [],
+        )
+
+    def _champion_payload(self, ledger: Ledger) -> dict[str, Any] | None:
+        """The live champion, with its out-of-sample claim next to what it is
+        actually doing. They will disagree; seeing the gap is the point."""
+        if self.champion is None:
+            return None
+        live = ledger.stats(strategy=self.champion.family) if self.champion.family else ledger.stats()
+        return {
+            "strategy": self.champion.describe(),
+            "key": self.champion.key,
+            "family": self.champion.family,
+            "symbol": self.champion.symbol,
+            "regime": self.champion.regime,
+            "horizon_seconds": self.champion.horizon_seconds,
+            "version": self.champion.simulator_version,
+            "started_ms": self.champion.promoted_ms,
+            "paper_equity": round(ledger.equity, 4),
+            "oos_profit_factor": self.champion.oos_profit_factor,
+            "oos_expectancy": self.champion.oos_expectancy,
+            "oos_trades": self.champion.oos_trades,
+            "live_profit_factor": round(live.profit_factor, 3),
+            "expectancy": round(live.expectancy, 4),
+            "max_drawdown": round(live.max_drawdown, 4),
+            "trades": live.trades,
+            "gate_reasons": list(self.champion.gate_reasons),
+        }
+
     def publish(self) -> None:
         for name in self.ledgers:
             self.store.publish_dashboard(name, self.dashboard_payload(name))
@@ -1143,10 +1228,18 @@ class TradingWorker:
             for t in tasks:
                 t.cancel()
             await asyncio.gather(*tasks, return_exceptions=True)
+            self.recorder.close()
             await self.rest.close()
 
     def stop(self) -> None:
         self._stop.set()
+
+
+def _read_json(path: Path) -> Any:
+    try:
+        return json.loads(path.read_text())
+    except (OSError, json.JSONDecodeError):
+        return None
 
 
 def _cpu_pct() -> float:

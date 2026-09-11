@@ -294,3 +294,81 @@ def test_position_rows_carry_the_full_cost_breakdown(worker):
     assert row["net_pnl_usd"] == pytest.approx(
         row["gross_pnl_usd"] - row["total_cost_usd"], abs=1e-6
     )
+
+
+# --------------------------------------------------------------------------- #
+# Phase 3 — research payloads
+# --------------------------------------------------------------------------- #
+
+
+def test_payload_has_research_keys_even_with_no_research_yet(worker):
+    worker.evaluate_once(1_000_000)
+    payload = worker.dashboard_payload("base")
+    assert payload["tournament"] is None
+    assert payload["finalists"] == []
+    assert payload["champion"] is None, "no champion until one is promoted"
+
+
+def test_a_promoted_champion_appears_with_its_oos_claim(worker, tmp_path, monkeypatch):
+    """The out-of-sample claim and the live result sit side by side on purpose:
+    they will disagree, and the gap is the information."""
+    from dataclasses import replace as dc_replace
+
+    from app.research.champion import Champion, ChampionStore
+
+    store = ChampionStore(tmp_path)
+    store.promote(
+        Champion(
+            key="breakout|BTCUSD|h1800", family="breakout", symbol="BTCUSD",
+            horizon_seconds=1_800, oos_trades=48, oos_profit_factor=1.31,
+            oos_expectancy=0.021, gate_reasons=("PF 1.31 >= 1.20",),
+        ),
+        current_version="sim-1.0.0",
+    )
+    worker.champions = store
+    worker.champion = store.load()
+
+    block = worker.dashboard_payload("base")["champion"]
+    assert block is not None
+    assert block["family"] == "breakout"
+    assert block["version"] == "sim-1.0.1"
+    assert block["oos_profit_factor"] == pytest.approx(1.31)
+    assert "live_profit_factor" in block and "expectancy" in block
+    assert block["gate_reasons"] == ["PF 1.31 >= 1.20"]
+
+
+def test_tournament_output_is_read_from_disk(worker, tmp_path, monkeypatch):
+    import json as _json
+    from dataclasses import replace as dc_replace
+
+    from app.config import ResearchConfig
+
+    (tmp_path / "tournament.json").write_text(
+        _json.dumps({"candidates_evaluated": 1234, "arms": [{"key": "a", "oos_status": "FAILED"}]})
+    )
+    (tmp_path / "finalists.json").write_text(_json.dumps({"finalists": []}))
+    worker.s = dc_replace(worker.s, research=ResearchConfig(directory=str(tmp_path)))
+
+    payload = worker.dashboard_payload("base")
+    assert payload["tournament"]["candidates_evaluated"] == 1234
+    assert payload["finalists"] == []
+
+
+def test_corrupt_research_files_do_not_break_the_dashboard(worker, tmp_path):
+    from dataclasses import replace as dc_replace
+
+    from app.config import ResearchConfig
+
+    (tmp_path / "tournament.json").write_text("{not json")
+    worker.s = dc_replace(worker.s, research=ResearchConfig(directory=str(tmp_path)))
+
+    payload = worker.dashboard_payload("base")
+    assert payload["tournament"] is None
+    assert payload["finalists"] == []
+
+
+def test_health_reports_the_tape_recorder(worker):
+    worker.evaluate_once(1_000_000)
+    h = worker.dashboard_payload("base")["health"]
+    assert "recorder" in h and "tape" in h
+    assert "enabled" in h["recorder"]

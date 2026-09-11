@@ -86,7 +86,10 @@ services:
       db: { condition: service_healthy }
       redis: { condition: service_healthy }
       api: { condition: service_healthy }
-    volumes: [cryptobot-cache:/data/backtest-cache]
+    volumes:
+      - cryptobot-cache:/data/backtest-cache
+      - cryptobot-tape:/data/tape
+      - cryptobot-research:/data/research
     networks: [cryptobot-internal]   # outbound only, nothing inbound
     mem_limit: 640m
     cpus: 0.8
@@ -125,3 +128,5 @@ networks:
 volumes:
   cryptobot-pgdata: { name: cryptobot-pgdata }
   cryptobot-cache: { name: cryptobot-cache }
+  cryptobot-tape: { name: cryptobot-tape }
+  cryptobot-research: { name: cryptobot-research }

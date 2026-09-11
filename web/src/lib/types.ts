@@ -305,6 +305,13 @@ export interface HealthState {
   db_ok: boolean;
   last_evaluation_ms: Num;
   mode: string | null;
+
+  // ---- Phase 3 -------------------------------------------------------------
+  // The tape recorder is research infrastructure, not trading infrastructure:
+  // it is how the maker study gets sub-minute data a 1-minute bar cannot hold.
+  // Both are optional and absent on a V2-shaped payload.
+  recorder?: RecorderState | null;
+  tape?: TapeState | null;
 }
 
 export interface LedgerRef {
@@ -332,6 +339,17 @@ export interface DashboardPayload {
   equity_curve: EquityCurve;
   health: HealthState;
   ledgers: LedgerRef[];
+
+  // ---- Phase 3 -------------------------------------------------------------
+  /** The strategy search. Absent until the research worker serves it. */
+  tournament?: TournamentSummary | null;
+  /**
+   * Candidates that reached a gate report. An EMPTY array is the expected
+   * outcome and is rendered as a statement, not as an empty table.
+   */
+  finalists?: FinalistRow[] | null;
+  /** What is running in live paper. `null` is a legitimate answer. */
+  champion?: ChampionState | null;
 }
 
 export interface HealthResponse {
@@ -341,4 +359,151 @@ export interface HealthResponse {
 export interface AuthMeResponse {
   authenticated: boolean;
   email?: string | null;
+}
+
+// ===========================================================================
+// PHASE 3 — the profitability search: tournament, robustness gates, champion
+// ---------------------------------------------------------------------------
+// Every field below is OPTIONAL. The research worker is being extended
+// concurrently and serves V2-shaped payloads until that lands, so each panel
+// has to read correctly against a payload that carries none of these keys.
+// The rule from V1 and V2 does not change here: an absent measurement renders
+// as an em dash, never as a zero, and never as a result.
+//
+// The one distinction this section exists to protect: an IN-SAMPLE number is
+// not a result. It is the number the parameters were chosen on. It is carried
+// in its own object, rendered in its own column group, and never mixed into
+// the out-of-sample reading that the promotion gates actually judge.
+// ===========================================================================
+
+/**
+ * Where an arm stands against the out-of-sample promotion gates.
+ *   FINALIST            — passed every gate out-of-sample
+ *   MARGINAL            — positive but below the 1.20 profit-factor bar
+ *   FAILED              — did not pass
+ *   INSUFFICIENT_SAMPLE — fewer than 30 out-of-sample trades; not yet judged
+ */
+export type OosStatus = "FINALIST" | "MARGINAL" | "FAILED" | "INSUFFICIENT_SAMPLE";
+
+/**
+ * One half of a walk-forward split. `in_sample` is where the parameters were
+ * fitted; `out_of_sample` is the only half a promotion decision may read.
+ */
+export interface SampleStats {
+  trades?: Num;
+  profit_factor?: Num;
+  expectancy?: Num;
+  net_pnl?: Num;
+}
+
+/** A single candidate in the tournament — one family × coin × regime × horizon. */
+export interface TournamentArm {
+  key?: string | null;
+  family?: string | null;
+  symbol?: string | null;
+  regime?: string | null;
+  horizon_seconds?: Num;
+  exit_profile?: string | null;
+  stop_profile?: string | null;
+
+  // The arm's full-sample record. Useful as the raw research log; it is NOT
+  // what the gates read, and the table says so above these columns.
+  trades?: Num;
+  win_rate?: Num;
+  avg_win?: Num;
+  avg_loss?: Num;
+  profit_factor?: Num;
+  expectancy?: Num;
+  fees?: Num;
+  slippage?: Num;
+  net_pnl?: Num;
+  max_drawdown?: Num;
+
+  in_sample?: SampleStats | null;
+  out_of_sample?: SampleStats | null;
+  oos_status?: OosStatus | string | null;
+}
+
+export interface TournamentSummary {
+  /** When the search finished. */
+  generated_ms?: Num;
+  candidates_evaluated?: Num;
+  wall_clock_seconds?: Num;
+  /** The data window the search ran over, as the worker names it. */
+  period?: string | null;
+  /** The fee assumption the whole run was costed at. */
+  fee_bps?: Num;
+  arms?: TournamentArm[] | null;
+}
+
+/** One cost-stress replay: the same arm re-run under a harsher assumption. */
+export interface StressResult {
+  label?: string | null;
+  survived?: boolean | null;
+  net_pnl?: Num;
+}
+
+export interface MonteCarloResult {
+  median_drawdown?: Num;
+  p95_drawdown?: Num;
+  worst_loss_streak?: Num;
+  /** Probability of ending below the starting equity, in [0, 1]. */
+  prob_below_start?: Num;
+  samples?: Num;
+}
+
+/**
+ * A candidate that reached the gate report stage. `reasons` carries one line
+ * per gate — pass or fail — written by `robustness.evaluate_gates`.
+ */
+export interface FinalistRow {
+  key?: string | null;
+  family?: string | null;
+  symbol?: string | null;
+  regime?: string | null;
+  horizon_seconds?: Num;
+  passed?: boolean | null;
+  reasons?: string[] | null;
+  stress?: StressResult[] | null;
+  monte_carlo?: MonteCarloResult | null;
+}
+
+/**
+ * The strategy currently running in live paper, if any.
+ *
+ * `oos_profit_factor` and `live_profit_factor` are two different measurements
+ * of the same strategy and they are expected to disagree. The dashboard shows
+ * them side by side rather than picking one, because the size of the gap is
+ * the reading.
+ */
+export interface ChampionState {
+  strategy?: string | null;
+  version?: string | null;
+  started_ms?: Num;
+  paper_equity?: Num;
+  oos_profit_factor?: Num;
+  live_profit_factor?: Num;
+  expectancy?: Num;
+  max_drawdown?: Num;
+  trades?: Num;
+}
+
+/** The tape recorder feeding the maker study. */
+export interface RecorderState {
+  enabled?: boolean | null;
+  messages?: Num;
+  mb_written?: Num;
+  /** Why it is off, when it is off. */
+  disabled_reason?: string | null;
+}
+
+/** What has actually been written to disk so far. */
+export interface TapeState {
+  files?: Num;
+  mb?: Num;
+  /** Hours of tape collected — the maker study's progress bar. */
+  hours?: Num;
+  /** Epoch ms of the oldest / newest retained hour. */
+  oldest?: Num;
+  newest?: Num;
 }
