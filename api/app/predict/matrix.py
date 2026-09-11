@@ -898,7 +898,17 @@ def _build_context(datasets: Mapping[str, Dataset]) -> _Context:
         breadth = np.where(counts > 0, (signs * seen).sum(axis=0) / np.maximum(counts, 1), 0.0)
     breadth = np.clip(np.nan_to_num(breadth), -1.0, 1.0)
 
-    signature = f"{interval}:{'|'.join(sorted(datasets))}:{grid.size}"
+    # The signature fingerprints the context's *values*, not merely its shape.
+    # A per-symbol cache entry carries a cross-sectional feature derived from
+    # the other symbols, so a change in ETH's tape has to invalidate BTC's
+    # cached rows — naming the symbols alone would serve a stale ``risk_on``.
+    digest = hashlib.sha1()
+    digest.update(np.ascontiguousarray(grid, dtype=np.int64).tobytes())
+    digest.update(np.ascontiguousarray(breadth, dtype=np.float64).tobytes())
+    digest.update(np.ascontiguousarray(btc_ret, dtype=np.float64).tobytes())
+    signature = (
+        f"{interval}:{'|'.join(sorted(datasets))}:{grid.size}:{digest.hexdigest()[:16]}"
+    )
     return _Context(
         ts=grid.astype(np.int64),
         breadth=breadth,

@@ -39,12 +39,25 @@ here rather than re-invented:
   never see a price that the decision did not.
 * **The stop wins a tie.**  When both barriers lie inside the same bar, the
   bar data cannot say which came first, so the **stop** is assumed to have hit
-  first.  ``app.exits`` already resolves the same ambiguity the same way.
+  first.  ``app.backtest.engine`` lists the identical rule as its second
+  deliberate pessimism ("Stop before target"), and the labels match it.
 * **ATR is horizon-scaled with ``sqrt``**: ``mult x 1m-ATR x sqrt(horizon_min)``,
   identical to ``app.research.tournament`` and ``app.profit``.
 * **Fills are never optimistic.**  A take-profit fills at ``tp_price`` even if
   the bar opened above it; a stop fills at ``min(sl_price, bar.open)``, because
   a bar that *opens* through the stop could not have filled at the stop.
+
+One assumption here does **not** match the backtester, and it is written down
+rather than hidden: ``app.backtest.engine``'s first pessimism is that a signal
+computed from bar *N*'s close fills against bar *N+1*'s **open** (latency is at
+least one bar).  These labels enter at bar *N*'s **close**.  That is the right
+frame for supervision — it is the price the decision actually saw — but it
+means the realised entry is one bar of drift worse than the label assumes.  On
+BTC/USD that drift is small (median absolute 1-minute move ~0.9 bps) but it is
+not zero against a 10-15 bps target, so whoever computes EV from these labels
+must charge that bar of latency somewhere.  It is deliberately *not* folded
+into ``round_trip_bps`` here, because ``round_trip_bps`` is a cost the venue
+charges and the latency is a modelling choice that belongs to the engine.
 
 When ``NO_EDGE`` is emitted — exhaustively
 ------------------------------------------

@@ -971,6 +971,29 @@ def test_a_feature_version_bump_invalidates_the_cache(tmp_path, monkeypatch):
     assert build_matrix(ds, labels, cache_dir=tmp_path).meta["cache_hits"] == 0
 
 
+def test_a_change_in_another_symbol_invalidates_this_symbols_cache(tmp_path):
+    """``risk_on`` is derived across symbols, so its inputs are part of the key."""
+    btc = make_bars(wavy(200), symbol="BTCUSD")
+    eth_flat = make_bars([100.0] * 200, symbol="ETHUSD")
+    eth_rally = make_bars([100.0 + i * 0.5 for i in range(200)], symbol="ETHUSD")
+    labels = labels_for(btc, first=100)
+
+    a = build_matrix(
+        {"BTCUSD": make_dataset(btc, symbol="BTCUSD"),
+         "ETHUSD": make_dataset(eth_flat, symbol="ETHUSD")},
+        labels, cache_dir=tmp_path,
+    )
+    clear_matrix_cache()
+    b = build_matrix(
+        {"BTCUSD": make_dataset(btc, symbol="BTCUSD"),
+         "ETHUSD": make_dataset(eth_rally, symbol="ETHUSD")},
+        labels, cache_dir=tmp_path,
+    )
+    # A stale ``risk_on`` served out of the cache would make these identical.
+    assert b.meta["cache_hits"] == 0
+    assert not np.array_equal(a.column("risk_on"), b.column("risk_on"))
+
+
 def test_a_different_group_selection_does_not_collide_in_the_cache(tmp_path):
     bars = make_bars(wavy(120))
     labels = labels_for(bars, first=60)
