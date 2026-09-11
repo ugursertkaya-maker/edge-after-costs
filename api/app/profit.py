@@ -277,7 +277,14 @@ class NetTargetEngine:
 
         # --- what the signal claims, bounded by what volatility allows --- #
         atr_bps = max(0.0, _finite(features.atr_bps))
-        budget_bps = float(self.cfg.max_target_atr_mult) * atr_bps
+        # The ATR is per *minute*; the target has a 25-60 minute window to be
+        # reached in. Comparing a one-hour target against a one-minute range is
+        # the wrong yardstick by a factor of ~sqrt(60). Diffusion scaling is
+        # crude but it is the right order of magnitude, and it is far better
+        # than pretending the horizon does not exist.
+        horizon_minutes = max(1.0, self.settings.horizon.time_stop_seconds / 60.0)
+        horizon_atr_bps = atr_bps * math.sqrt(horizon_minutes)
+        budget_bps = float(self.cfg.max_target_atr_mult) * horizon_atr_bps
         claim_bps = max(0.0, _finite(signal.target_bps))
         if budget_bps > 0 and claim_bps > budget_bps:
             notes.append(
@@ -298,7 +305,7 @@ class NetTargetEngine:
             notes.append(
                 f"gross move required {gross_move_bps:.1f} bps exceeds the ATR "
                 f"budget {budget_bps:.1f} bps ({self.cfg.max_target_atr_mult:g} "
-                f"x {atr_bps:.1f}) — unreachable inside the horizon"
+                f"x {horizon_atr_bps:.1f} bps over {horizon_minutes:.0f}m) — unreachable inside the horizon"
             )
 
         notes.append(

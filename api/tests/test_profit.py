@@ -378,13 +378,26 @@ def test_qualifies_is_false_for_a_zero_notional() -> None:
 # --------------------------------------------------------------------------- #
 
 
+def atr_budget_bps(atr_bps: float, settings: Settings | None = None) -> float:
+    """The ATR budget, scaled to the horizon exactly as the engine scales it.
+
+    Derived rather than hardcoded: the budget moved once already when the
+    yardstick was corrected from a 1-minute ATR to the 25-60 minute window, and
+    a baked-in number would have hidden that rather than caught it.
+    """
+    import math
+
+    s = settings or Settings()
+    horizon_minutes = max(1.0, s.horizon.time_stop_seconds / 60.0)
+    return s.profit.max_target_atr_mult * atr_bps * math.sqrt(horizon_minutes)
+
+
 def test_unreachable_when_the_required_move_exceeds_the_atr_budget() -> None:
     """A target the market cannot reach inside the horizon is a time stop
     wearing a costume."""
     eng = engine()
-    t = build(eng, profile="extended", features=make_features(atr_bps=5.0))
-    budget = Settings().profit.max_target_atr_mult * 5.0
-    assert t.gross_move_required_bps > budget
+    t = build(eng, profile="extended", features=make_features(atr_bps=1.0))
+    assert t.gross_move_required_bps > atr_budget_bps(1.0)
     assert t.reachable is False
     assert any("ATR budget" in n for n in t.notes)
     assert eng.qualifies(t, notional_usd=100.0) is False
@@ -396,6 +409,52 @@ def test_reachable_when_volatility_can_carry_the_move() -> None:
     assert t.reachable is True
 
 
+def test_the_budget_scales_with_the_horizon_not_the_bar() -> None:
+    """The regression: a 60-minute target was measured against a 1-minute ATR,
+    which flagged every profile unreachable and stopped the bot trading."""
+    assert atr_budget_bps(2.2) > Settings().profit.max_target_atr_mult * 2.2 * 5
+
+
+def typical_move_bps(atr_bps: float, settings: Settings | None = None) -> float:
+    """What the market usually does inside the horizon, diffusion-scaled."""
+    import math
+
+    s = settings or Settings()
+    return atr_bps * math.sqrt(max(1.0, s.horizon.time_stop_seconds / 60.0))
+
+
+def test_the_requested_profiles_ask_for_a_tail_move_on_this_venue() -> None:
+    """Binance.US BTC/USD: ~2.2 bps of 1m ATR, so ~17 bps in an hour.
+
+    The four profiles the brief asks for are not impossible — but every one of
+    them needs *more than the whole typical hour's move*, so they are tail
+    outcomes, not normal ones. That is the honest framing: the gate is not
+    rejecting them, the market just rarely gets there.
+    """
+    eng = engine()
+    feats = make_features(atr_bps=2.2)
+    usual = typical_move_bps(2.2)
+    for profile in Settings().profit.requested_profiles:
+        t = build(eng, profile=profile, features=feats)
+        assert t.gross_move_required_bps > usual, (
+            f"{profile} should need more than the typical {usual:.0f} bps hour"
+        )
+
+
+def test_the_venue_calibrated_profiles_sit_inside_a_normal_hour() -> None:
+    """0.05% and 0.10% NET are fractions of the typical hourly move, which is
+    what lets the bot actually trade here and produce evidence."""
+    eng = engine()
+    feats = make_features(atr_bps=2.2)
+    usual = typical_move_bps(2.2)
+    for profile in ("venue_micro", "venue_base"):
+        t = build(eng, profile=profile, features=feats)
+        assert t.reachable is True
+        assert t.gross_move_required_bps < usual, (
+            f"{profile} should fit inside the typical {usual:.0f} bps hour"
+        )
+
+
 def test_no_volatility_estimate_means_reachability_is_not_certified() -> None:
     eng = engine()
     t = build(eng, features=make_features(atr_bps=0.0))
@@ -405,12 +464,13 @@ def test_no_volatility_estimate_means_reachability_is_not_certified() -> None:
 
 def test_the_signal_claim_is_capped_by_the_atr_budget() -> None:
     eng = engine()
+    budget = atr_budget_bps(2.0)
     t = build(
         eng,
-        features=make_features(atr_bps=10.0),          # budget = 60 bps
-        signal=make_signal(target_bps=400.0),
+        features=make_features(atr_bps=2.0),
+        signal=make_signal(target_bps=budget * 4),
     )
-    assert t.expected_gross_profit_usd == pytest.approx(100.0 * 60.0 / 10_000.0)
+    assert t.expected_gross_profit_usd == pytest.approx(100.0 * budget / 10_000.0)
     assert any("capped to the ATR budget" in n for n in t.notes)
 
 
