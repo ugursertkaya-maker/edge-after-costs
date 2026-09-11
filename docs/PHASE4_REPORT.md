@@ -255,6 +255,59 @@ adverse selection, which is the profile under which 0% maker fees and an earned
 spread would be real money. ETH and SOL show adverse selection on eleven and ten
 fills respectively, which is to say on nothing.
 
+## 25b. The live paper engine started trading — and it is up $1.92
+
+After ~16 hours the deterministic V2 engine (no champion; nothing from Phase 4
+is deployed) has closed its first real set of paper trades:
+
+| | |
+|---|---|
+| Closed trades | **33** |
+| Win rate | **84.8%** |
+| Profit factor | **2.46** |
+| Gross P&L | +$2.71 |
+| Costs | −$1.81 |
+| **Net P&L** | **+$1.92** |
+| Equity | **$501.92** |
+| Exits | 14 take-profit, 14 trailing, 5 stop |
+| Strategies | flow_impulse 16 trades +$1.31, momentum_scalp 17 trades +$0.61 |
+
+**This is not evidence and must not be read as any.** Thirty-three trades over
+sixteen hours, against Phase 3's 590,306 out-of-sample trades at a profit factor
+of 0.22 and Phase 4's finding that the best achievable hit rate anywhere on this
+venue is about 67.5%. An 84.8% win rate over 33 trades in a single session is
+what a lucky stretch looks like, and the trades are not independent — they
+overlap, in the same few hours, across three correlated symbols. The brief's own
+instruction applies: several hours of live paper is not long-term proof.
+
+What it does establish is that the machinery runs end to end on live data
+without supervision: entries, trailing exits, stops, checkpoints, capital
+recycling and cost accounting all behave. Costs are 67% of gross, which is the
+same ratio every other measurement in this project has produced.
+
+### The finding inside it: maker-first fills nothing
+
+```
+maker_fills 0    maker_misses 1,789    TAKER_NOT_QUALIFIED 1,690
+```
+
+**Every post-only entry missed — 1,789 of them, a 0% fill rate.** All 33 trades
+were taker fallbacks, and 1,690 further attempts were correctly refused because
+the trade no longer cleared its economics as a taker.
+
+That sits against the tape replay's estimate of a **16.2%** maker fill rate on
+BTC/USD. The two disagree by the entire measurement, so at least one of them is
+wrong about something, and the difference is worth naming rather than averaging:
+the live engine rests one tick behind the touch and cancels on a 20-second
+timeout, while the replay sweeps offsets and timeouts as parameters. A 0% live
+fill rate says the live quoting parameters are not viable as configured — it
+does **not** say passive execution is dead here, which is exactly the question
+the 24-hour tape study exists to answer.
+
+Either way the honest reading is: the one structure that could remove the cost
+wall currently fills nothing in production, and that is now a measured fact
+rather than an assumption.
+
 ## 26–32. Housekeeping
 
 | | |
