@@ -13,7 +13,6 @@ from __future__ import annotations
 import gzip
 import importlib.util
 import json
-from argparse import Namespace
 from pathlib import Path
 
 import pytest

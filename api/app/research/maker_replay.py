@@ -249,11 +249,14 @@ def iter_tape_messages(
 
     Format-identical to :func:`app.recorder.replay` — a test pins that, because
     a reader that drifts from its writer produces a dataset nobody can use.
-    The one behaviour added is **truncation tolerance**: the hour currently
-    being recorded is an unterminated gzip member, and reading it raises
-    ``EOFError``, which would otherwise make "the data we are collecting right
-    now" the one slice of tape that cannot be replayed.  We keep the lines we
-    did read, report the file through *on_truncated*, and move to the next one.
+    Two things are added, both for the study's benefit rather than the format's:
+    the **filename** each row came from, and an explicit *on_truncated* callback.
+
+    Truncation is the normal case, not an error: the hour currently being
+    recorded is an unterminated gzip member, so reading it hits EOF partway —
+    and that file holds the freshest data there is.  Both readers keep what they
+    read and move on; this one also *reports* which file was short, so the
+    coverage summary can say so out loud instead of silently under-counting.
     """
     d = Path(directory)
     if not d.is_dir():
