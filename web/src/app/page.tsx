@@ -11,6 +11,9 @@ import { Trades } from "@/components/dashboard/Trades";
 import { Strategies } from "@/components/dashboard/Strategies";
 import { EquityCurve } from "@/components/dashboard/EquityCurve";
 import { Health } from "@/components/dashboard/Health";
+import { Tournament } from "@/components/dashboard/Tournament";
+import { Finalists } from "@/components/dashboard/Finalists";
+import { Champion } from "@/components/dashboard/Champion";
 import { Banner } from "@/components/ui/DataState";
 import { useApiHealth, useDashboard } from "@/lib/useDashboard";
 
@@ -119,6 +122,16 @@ export default function DashboardPage() {
         <Strategies rows={data?.strategies ?? null} loading={loading} />
 
         <Trades rows={data?.trades ?? null} loading={loading} />
+
+        {/* Phase 3 — the profitability search. These three read as one
+            argument and are kept in this order on purpose: every arm that was
+            tried, then the handful that survived the gates, then whatever of
+            it is actually running in paper. */}
+        <Tournament tournament={data?.tournament ?? null} loading={loading} now={now} />
+
+        <Finalists finalists={data?.finalists ?? null} loading={loading} />
+
+        <Champion champion={data?.champion ?? null} loading={loading} now={now} />
 
         <p className="footnote">
           Tüm işlemler simülasyondur. Binance.US herkese açık piyasa verisi

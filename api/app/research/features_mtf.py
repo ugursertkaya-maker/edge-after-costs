@@ -673,10 +673,3 @@ def _book_features(book: OrderBook) -> dict[str, float]:
         "depth_bid_usd": max(0.0, _finite(book.depth_usd("bid", DEPTH_BPS))),
         "depth_ask_usd": max(0.0, _finite(book.depth_usd("ask", DEPTH_BPS))),
     }
-EOF_DATASET_PY
-cd /home/user/crypto-trader/api && ../.venv/bin/python -c "
-from app.research.features_mtf import FEATURE_NAMES, MTFFeatureEngine
-print(len(FEATURE_NAMES), FEATURE_NAMES[:4])
-e=MTFFeatureEngine()
-print(e.intervals, e._price_interval)
-"

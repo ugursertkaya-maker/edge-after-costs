@@ -772,7 +772,11 @@ def evaluate_gates(
     else:
         detail += "; Monte Carlo not run (no trades)"
     if not survival_ok:
-        detail += " — capital survival fails: positive expectancy does not make this deployable"
+        detail += (
+            " — capital survival fails: too large a share of resampled histories "
+            "end below the starting capital, and positive expectancy does not "
+            "make that deployable on $500"
+        )
     reasons.append(_line(3, g3, "drawdown reasonable for the account", detail))
     gates[3] = g3
 
@@ -792,11 +796,10 @@ def evaluate_gates(
             + (f", {share:.0f}% of all net P&L" if share == share else "")
             + f") leaves expectancy ${ex_best.expectancy:+.4f} per trade"
         )
-        if not g4:
+        if not g4 and oos.expectancy > 0:
             detail += " — the result is one trade wearing a strategy's name"
     else:
         g4 = False
-        ex_best = PerfStats()
         detail = f"needs at least 2 trades to test; have {len(trades)}"
     if source == "trades" and trades:
         caveats.append(
