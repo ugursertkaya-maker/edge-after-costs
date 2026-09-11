@@ -15,15 +15,17 @@ candidates, four coins, ten strategy families, seven regimes and six holding
 horizons, pooling to **−$92,365** net. On the family, parameter, horizon,
 regime and coin axes the answer is unambiguous and the sample is large.
 
-**What that run did not vary was the exit and stop geometry.** Every one of the
-1,400 arms ran the baseline pair — a 17 bps net target against an `atr:2` stop.
-That stop is horizon-scaled (`mult × 1m-ATR × √horizon`), so at the 60-minute
-baseline it is ≈ **34 bps**: a reward:risk of **0.5 : 1**, which needs a **~67%
-hit rate** to break even. Nothing came close to 67%, and nothing should be
-expected to. A second sweep that varies the target and the stop across all 17
-exit profiles and 11 stop profiles is running now; its result is appended below
-when it lands, and until then the honest scope of the "NO" is *the families, at
-that geometry*.
+**That run did not vary the exit and stop geometry.** All 1,400 arms ran the
+baseline pair — a 17 bps net target against an `atr:2` stop. That stop is
+horizon-scaled (`mult × 1m-ATR × √horizon`), so at the 60-minute baseline it is
+≈ **34 bps**: a reward:risk of **0.5 : 1** needing a **~67% hit rate** to break
+even, which nothing reached.
+
+A second sweep (below) varied exactly that axis across 17 exit profiles and 11
+stop profiles — 1,452 more arms. **One arm came back clearing all seven gates.
+It is not being promoted, and section 15b explains why in detail:** three of its
+seven gates were computed against a different trade set than the one they
+report on, and one hit out of ~2,850 candidates is what noise produces.
 
 Nothing was tuned to reach this, and nothing was hidden to protect it. Every arm
 tested — including the losers, including the abandoned — is in
@@ -157,6 +159,77 @@ candidates abandoned for insufficient signal supply** (130 of them produced
 *zero* signals in 120 days), which is the thin-tape finding reappearing in the
 signal layer.
 
+## 15b. The exit/stop sweep — one apparent finalist, and why it was not promoted
+
+The main tournament held the exit and stop fixed. A second sweep varied them:
+**1,452 arms** on BTC/USD and SOL/USD, 120 days, all 17 exit profiles × 11 stop
+profiles × 9 horizons × 6 entry-score thresholds × 8 regime gates, four families
+(breakout, momentum_continuation, volume_impulse, mean_reversion).
+
+One arm cleared every gate:
+
+```
+volume_impulse / BTCUSD / 60m / net_fixed:75 / vol:3 / VOLATILITY_EXPANSION / q0.35
+  OUT OF SAMPLE   79 trades   win 54.4%   PF 1.26   expectancy +$0.0697   net +$5.51
+  IN SAMPLE      357 trades   win 46.2%   PF 1.11   expectancy +$0.0314   net +$11.21
+  max drawdown $4.29   Monte Carlo p95 drawdown $4.28   P(end below $500) 0.2%
+  gates: 7/7 PASS
+```
+
+A 75 bps target against a ~51 bps stop (`vol:3` ≈ 3 × horizon-scaled vol) is a
+**1.47 : 1** payoff — the opposite geometry to the baseline, and exactly the
+direction the analysis predicted would be needed. The mechanism is coherent:
+take a volume impulse only during a volatility expansion, aim well past the
+typical hourly move, and accept a low hit rate for a favourable payoff.
+
+**It is still not being promoted. Three reasons, in order of weight.**
+
+**1. Three of the seven gates were computed against a different trade set than
+they report on.** Gate 4 states the best trade was "$+1.41, 10% of all net P&L",
+which implies a set whose net is ≈ **$14.10** — but the reported out-of-sample
+net is **$5.51**. The fee-stress rows tell the same story: "fees +25%" reports a
+net of **$14.32**, which is *higher* than the unstressed $5.51 it is supposed to
+be degrading. Raising fees cannot raise net P&L. So gates 3, 4 and 6 — the
+not-dominated-by-one-trade test, the Monte Carlo, and the cost stress — ran over
+the arm's retained trade list (in-sample and out-of-sample together), not over
+the 79 out-of-sample trades whose numbers are in the headline. **Those three
+gates therefore do not verify the out-of-sample result**, and a 7/7 that is
+really a 4/7 is not a pass. This is a defect in the gate plumbing, not in the
+strategy, and it is the first thing to fix.
+
+**2. One hit in ~2,850 candidates is what noise produces.** Across both runs
+2,852 candidates were evaluated. Searching that many arms and finding a single
+one above a PF-1.20 bar is not evidence of an edge; it is the multiple
+comparisons problem stated out loud. The gates were designed to be hard, but
+they were applied once per arm, and nothing in them corrects for having asked
+the question 2,852 times.
+
+**3. Its out-of-sample result beats its in-sample result** (PF 1.26 vs 1.11,
+expectancy $0.070 vs $0.031). A genuine edge normally degrades from train to
+test. An edge that *improves* is more consistent with having drawn a favourable
+sample than with having found structure.
+
+Two further caveats worth stating plainly: the three stresses that were **not**
+evaluated — latency ×2, missed fills, random execution delay — are precisely the
+ones that matter most for a family whose thesis is reacting quickly to a volume
+spike. And the economics are modest even if real: **+$5.51 on $500 over 120
+days**, about 1.1%, at $0.07 a trade.
+
+### What would make it credible
+
+1. **Fix the gate plumbing** so gates 3, 4 and 6 run over the out-of-sample
+   trades only, then re-evaluate. That alone may fail it.
+2. **Supply the replay** so latency, missed-fill and delay stress can actually
+   be evaluated rather than reported as unevaluated.
+3. **Forward-test it in paper**, on data that did not exist when the search ran.
+   That is the only test the multiple-comparisons problem cannot corrupt, it
+   costs nothing but time, and the champion mechanism exists to run exactly it.
+
+Step 3 is the reason the arm is recorded here in full rather than discarded. It
+is a hypothesis with a coherent mechanism and a plausible geometry — it is just
+not yet a result, and promoting it today would be presenting a lottery ticket as
+a finding.
+
 ## 16. Stress tests
 
 Not yet meaningful, and the report says so rather than implying otherwise. The
@@ -251,7 +324,9 @@ historical search was for.
 
 ## 21–23. Does one robust profitable strategy exist?
 
-**NO.**
+**NO.** One arm out of 2,852 cleared the mechanical gates, and section 15b sets
+out why that is not a yes: three of its gates were measured against the wrong
+trade set, and a single hit at that search width is indistinguishable from noise.
 
 What remains structurally unprofitable, precisely:
 
