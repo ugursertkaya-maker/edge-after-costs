@@ -433,6 +433,56 @@ DEFAULT_STOP_PROFILES: tuple[str, ...] = (
 #: Entry-quality ladder — the minimum signal score a candidate will act on.
 DEFAULT_MIN_SCORES: tuple[float, ...] = (0.0, 0.35, 0.5, 0.65, 0.8, 0.9)
 
+#: Median absolute move by horizon, in bps, measured on the real 1m cache over
+#: 242 days by ``scripts/horizon_ceiling.py``.  This replaces the older framing
+#: — "the cost of trading is the same size as the move" — which is true at one
+#: minute and **wrong** at 25-60 minutes, where the median move is 4-10x the
+#: ~3 bps taker round trip.  V1 and V2 both lost money at 3-8 minute average
+#: holds; on this table that looks like an artefact of the exit logic, not
+#: proof that the venue cannot be traded, and the tournament report must not
+#: carry the old conclusion forward.
+MEASURED_MEDIAN_MOVE_BPS: dict[str, dict[int, float]] = {
+    "BTCUSD": {2: 0.9, 5: 4.5, 25: 12.9, 60: 19.7},
+    "ETHUSD": {60: 27.3},
+    "SOLUSD": {60: 33.3},
+}
+
+#: Fallback when a symbol was not measured: BTC's shape.
+_MOVE_FALLBACK = "BTCUSD"
+
+
+def median_move_bps(symbol: str, horizon_minutes: float) -> float:
+    """Typical absolute move over ``horizon_minutes``, in bps.
+
+    Measured where a measurement exists; otherwise diffusion-scaled
+    (``sqrt(t)``) from the nearest measured horizon for that symbol, which is
+    the same square-root law ``docs/ECONOMICS.md`` uses and which reproduces the
+    measured 2/5/25/60-minute BTC points to within a bp or two.
+    """
+    table = MEASURED_MEDIAN_MOVE_BPS.get(symbol) or MEASURED_MEDIAN_MOVE_BPS[_MOVE_FALLBACK]
+    h = max(float(horizon_minutes), 1e-6)
+    exact = table.get(int(round(h)))
+    if exact is not None:
+        return exact
+    anchor = min(table, key=lambda k: abs(math.log(k / h)))
+    return table[anchor] * math.sqrt(h / anchor)
+
+
+def required_hit_rate(symbol: str, horizon_minutes: float, round_trip_bps: float) -> float:
+    """The win rate a symmetric-payoff arm needs just to break even.
+
+    A strategy that wins and loses the typical move captures
+    ``(2p - 1) * E|move| - costs`` per trade, so break-even is
+    ``p > 0.5 + costs / (2 * E|move|)``.  Printing this next to a measured win
+    rate is the fastest way to tell a plausible result from noise: on BTC at 25
+    minutes it is about 67% as a taker and barely above 50% as a maker.
+    """
+    move = median_move_bps(symbol, horizon_minutes)
+    if move <= 0:
+        return 1.0
+    return min(1.0, 0.5 + max(0.0, round_trip_bps) / (2.0 * move))
+
+
 DEFAULT_SCHEMES: tuple[WalkForwardScheme, ...] = (
     WalkForwardScheme(30, 7),
     WalkForwardScheme(60, 14),
@@ -469,6 +519,8 @@ class TournamentConfig:
     latency_bars: int = 1
     min_net_edge_bps: float | None = None
 
+    tape_cache_dir: str | None = None
+
     # Search budget
     max_candidates: int = 2_000
     max_params_per_family: int = 8
@@ -485,6 +537,13 @@ class TournamentConfig:
 
     # Reporting
     top_n: int = 25
+    #: Estimated quoted spread, bps.  Only used to quote the required hit rate
+    #: — the simulator charges the real synthesised book, not this number.
+    spread_estimate_bps: float = 2.0
+
+    @property
+    def round_trip_bps(self) -> float:
+        return 2.0 * self.fee_bps_per_side + self.slippage_bps + self.spread_estimate_bps
 
     def scheme_order(self) -> list[WalkForwardScheme]:
         return sorted(self.schemes, key=lambda s: (s.cost_weight, s.train_days))
@@ -725,6 +784,17 @@ def prepare_window(
     regime_at_entry: dict[int, str] = {}
     prev_label = ""
 
+    # The multi-timeframe block first: it is what the regime classifier and the
+    # research families both read, and it is keyed by the same 1m close
+    # timestamp the live Features are.
+    mtf: dict[int, Any] = _build_mtf(symbol, bars, settings, tape_cache_dir) if want_mtf else {}
+    r7c = _regime7_classifier(settings)
+    if r7c is not None:
+        for ts, mf in mtf.items():
+            label = _classify_regime7(r7c, mf)
+            if label:
+                regime7[ts] = label
+
     for bar in bars:
         hist.append(bar)
         rq.append(bar.quote_volume)
@@ -751,13 +821,9 @@ def prepare_window(
         regime = rc.classify(f)
         features[ts] = f
         regimes[ts] = regime
-        if r7 is not None:
-            label = _classify_regime7(r7, f)
-            if label:
-                regime7[ts] = label
         prev_label = regime7.get(ts) or regime.regime.value
 
-    prepared = PreparedWindow(
+    return PreparedWindow(
         symbol=symbol,
         bars=list(bars),
         features=features,
@@ -765,10 +831,8 @@ def prepare_window(
         info=info,
         regime_at_entry=regime_at_entry,
         regime7=regime7,
+        mtf=mtf,
     )
-    if want_mtf:
-        prepared.mtf = _build_mtf(prepared, settings)
-    return prepared
 
 
 def _regime7_classifier(settings: Settings) -> Any | None:
@@ -795,30 +859,118 @@ def _classify_regime7(classifier: Any, f: Any) -> str:
     return getattr(regime, "value", str(regime))
 
 
-def _build_mtf(prepared: PreparedWindow, settings: Settings) -> dict[int, Any]:
-    """MTF features keyed by decision timestamp, when the module exists.
+def _aggregate_bars(bars: Sequence[Bar], factor: int) -> list[Bar]:
+    """1m bars folded up into ``factor``-minute bars, aligned to the epoch.
+
+    Only used on the bars-only fallback path: with the tape available
+    ``load_dataset`` builds every interval from the trades themselves, which is
+    strictly better.
+    """
+    out: list[Bar] = []
+    span = factor * 60_000
+    bucket: list[Bar] = []
+    current = None
+    for b in bars:
+        key = b.open_ms - (b.open_ms % span)
+        if current is None:
+            current = key
+        if key != current and bucket:
+            out.append(_fold(bucket))
+            bucket = []
+            current = key
+        bucket.append(b)
+    if bucket:
+        out.append(_fold(bucket))
+    return out
+
+
+def _fold(group: list[Bar]) -> Bar:
+    return Bar(
+        symbol=group[0].symbol,
+        open_ms=group[0].open_ms,
+        close_ms=group[-1].close_ms,
+        open=group[0].open,
+        high=max(b.high for b in group),
+        low=min(b.low for b in group),
+        close=group[-1].close,
+        volume=sum(b.volume for b in group),
+        quote_volume=sum(b.quote_volume for b in group),
+        trades=sum(b.trades for b in group),
+        taker_buy_quote=sum(b.taker_buy_quote for b in group),
+    )
+
+
+def _build_mtf(
+    symbol: str,
+    bars: Sequence[Bar],
+    settings: Settings,
+    tape_cache_dir: str | None,
+) -> dict[int, Any]:
+    """MTF features keyed by the 1m close timestamp.
 
     Degrades to ``{}`` — a family that needs MTF features then produces no
     signals and is abandoned by the signal-supply gate, which is visible in the
     report rather than silently wrong.
     """
+    return {int(mf.ts_ms): mf for mf in stream_mtf(symbol, bars, settings, tape_cache_dir)}
+
+
+def stream_mtf(
+    symbol: str,
+    bars: Sequence[Bar],
+    settings: Settings,
+    tape_cache_dir: str | None,
+) -> Iterator[Any]:
+    """The MTF feature block as a generator, so a long history need not be
+    materialised: the signal-supply gate reads 120 days per symbol and holding
+    124 floats per minute for all of it would cost about a gigabyte."""
+    if not bars:
+        return
     try:  # pragma: no cover - depends on a sibling workstream
         from app.research.dataset import Dataset  # type: ignore
         from app.research.features_mtf import MTFFeatureEngine  # type: ignore
     except Exception:
-        return {}
+        return
+
+    start_ms, end_ms = bars[0].open_ms, bars[-1].close_ms
+    dataset = None
+    if tape_cache_dir:
+        try:
+            from app.research.dataset import load_dataset  # type: ignore
+
+            dataset = load_dataset(symbol, start_ms, end_ms + 1, cache_dir=tape_cache_dir)
+            if not dataset.bars.get("1m"):
+                dataset = None
+        except Exception:
+            dataset = None
+    if dataset is None:
+        try:
+            dataset = Dataset(
+                symbol=symbol,
+                bars={
+                    "1m": list(bars),
+                    "3m": _aggregate_bars(bars, 3),
+                    "5m": _aggregate_bars(bars, 5),
+                    "15m": _aggregate_bars(bars, 15),
+                },
+                trades=[],
+                start_ms=start_ms,
+                end_ms=end_ms,
+            )
+        except Exception:
+            return
     try:
-        dataset = Dataset(
-            symbol=prepared.symbol,
-            bars={"1m": list(prepared.bars)},
-            trades=[],
-            start_ms=prepared.start_ms,
-            end_ms=prepared.end_ms,
-        )
         engine = MTFFeatureEngine(settings=settings)
-        return {int(mf.ts_ms): mf for mf in engine.stream(dataset, step="1m")}
+        stream = engine.stream(dataset, step="1m")
     except Exception:
-        return {}
+        return
+    # The dataset is the only strong reference to a 30-day 5s bar series; the
+    # engine holds what it needs, so let this frame drop it as we iterate.
+    del dataset
+    try:
+        yield from stream
+    except Exception:  # pragma: no cover - a partial block is still usable
+        return
 
 
 # --------------------------------------------------------------------------- #
@@ -1275,22 +1427,35 @@ def enumerate_candidates(
             exit_profile=x, stop_profile=s, regime=r,
         )
 
+    # Per group first, then interleaved.  ``max_candidates`` truncates a prefix,
+    # and a prefix of a family-major ordering would be "every arm of the first
+    # three families and none of the other seven" — a budget cut that silently
+    # changes which question is being asked.  Round-robin makes the cut
+    # proportional instead: every family, symbol and axis thins together.
+    groups: list[list[Candidate]] = []
     for src in sources:
         for symbol in cfg.symbols:
             for params in params_by_family.get(src.name, [{}]):
                 common = dict(family=src.name, symbol=symbol, params=params)
-                add(make(**common, h=base_h, x=base_x, s=base_s, q=base_q, r=None))
+                group = [make(**common, h=base_h, x=base_x, s=base_s, q=base_q, r=None)]
                 for h in cfg.horizons_minutes:
-                    add(make(**common, h=int(h) * 60, x=base_x, s=base_s,
-                             q=base_q, r=None))
+                    group.append(make(**common, h=int(h) * 60, x=base_x, s=base_s,
+                                      q=base_q, r=None))
                 for x in cfg.exit_profiles:
-                    add(make(**common, h=base_h, x=x, s=base_s, q=base_q, r=None))
+                    group.append(make(**common, h=base_h, x=x, s=base_s, q=base_q, r=None))
                 for s in cfg.stop_profiles:
-                    add(make(**common, h=base_h, x=base_x, s=s, q=base_q, r=None))
+                    group.append(make(**common, h=base_h, x=base_x, s=s, q=base_q, r=None))
                 for q in cfg.min_scores:
-                    add(make(**common, h=base_h, x=base_x, s=base_s, q=q, r=None))
+                    group.append(make(**common, h=base_h, x=base_x, s=base_s, q=q, r=None))
                 for r in cfg.regimes:
-                    add(make(**common, h=base_h, x=base_x, s=base_s, q=base_q, r=r))
+                    group.append(make(**common, h=base_h, x=base_x, s=base_s,
+                                      q=base_q, r=r))
+                groups.append(group)
+
+    for column in range(max((len(g) for g in groups), default=0)):
+        for group in groups:
+            if column < len(group):
+                add(group[column])
 
     ofat = len(out)
     budget = max(cfg.max_candidates - ofat, 0)
@@ -1301,6 +1466,17 @@ def enumerate_candidates(
 
     if extra > 0:
         rng = Random(cfg.seed)
+        # The one-factor sweeps already cover every horizon, 2 minutes
+        # included, so the negative result there is reported.  The interaction
+        # sample is budget, and budget does not go to horizons whose measured
+        # median move is smaller than the round trip it has to pay: on BTC the
+        # 2-minute median is 0.9 bps against a ~3 bps cost floor, and on ETH and
+        # SOL it is 0.0.  Optimising around a horizon that cannot clear its own
+        # costs is not a search, it is a way of spending an afternoon.
+        viable = [
+            h for h in cfg.horizons_minutes
+            if any(median_move_bps(sym, h) > cfg.round_trip_bps for sym in cfg.symbols)
+        ] or list(cfg.horizons_minutes)
         family_symbol_params = [
             (s.name, sym, p)
             for s in sources
@@ -1314,7 +1490,7 @@ def enumerate_candidates(
                 family, symbol, params = rng.choice(family_symbol_params)
                 add(make(
                     family=family, symbol=symbol, params=params,
-                    h=int(rng.choice(cfg.horizons_minutes)) * 60,
+                    h=int(rng.choice(viable)) * 60,
                     x=rng.choice(cfg.exit_profiles),
                     s=rng.choice(cfg.stop_profiles),
                     q=float(rng.choice(cfg.min_scores)),
@@ -1414,10 +1590,12 @@ class _WindowEvaluator:
         self.train = prepare_window(
             symbol, train_bars, settings=self.settings,
             spread_bps=cfg.spread_bps, seed=cfg.seed,
+            tape_cache_dir=cfg.tape_cache_dir,
         )
         self.test = prepare_window(
             symbol, test_bars, settings=self.settings,
             spread_bps=cfg.spread_bps, seed=cfg.seed,
+            tape_cache_dir=cfg.tape_cache_dir,
         )
         self._signal_cache: dict[tuple[str, str, int], dict[int, SignalPoint]] = {}
 
@@ -1484,6 +1662,20 @@ class _WindowEvaluator:
             settings=settings,
         )
 
+    def warm_signals(self, candidates: Sequence[Candidate]) -> None:
+        """Compute every family/params signal set, then drop the MTF block.
+
+        The MTF feature block is by far the largest thing a prepared window
+        holds — 124 floats per minute per window — and once the signals are
+        extracted nothing reads it again.  Dropping it here is what keeps four
+        parallel workers inside a laptop's memory.
+        """
+        for c in candidates:
+            self._signals(c.family, c.params, self.train)
+            self._signals(c.family, c.params, self.test)
+        self.train.mtf = {}
+        self.test.mtf = {}
+
     def signal_count(self, candidate: Candidate, prepared: PreparedWindow) -> int:
         pts = self._signals(candidate.family, candidate.params, prepared)
         floor = candidate.min_score
@@ -1516,6 +1708,7 @@ def _run_task(task: _Task) -> list[_WindowOutcome]:
         task.train_bars, task.test_bars,
         cfg=task.cfg, sources=sources,
     )
+    ev.warm_signals(task.candidates)
     out: list[_WindowOutcome] = []
     for c in task.candidates:
         try:
@@ -1670,23 +1863,54 @@ def _signal_supply(
     supply: dict[tuple[str, str, str], list[float]] = {}
     notes: dict[str, list[str]] = {}
     settings = base_settings(cfg)
+    research = [s for s in sources if isinstance(s, ResearchFamilySource)]
+    live = [s for s in sources if not isinstance(s, ResearchFamilySource)]
+
     for symbol, bars in bars_by_symbol.items():
         say(f"counting signal supply for {symbol} ({len(bars)} bars)")
-        prepared = prepare_window(
-            symbol, bars, settings=settings, spread_bps=cfg.spread_bps, seed=cfg.seed
-        )
-        if not prepared.mtf and any(isinstance(s, ResearchFamilySource) for s in sources):
+        combos = {
+            src.name: src.param_combinations(cfg.max_params_per_family, cfg.seed)
+            for src in sources
+        }
+        for src in sources:
+            for params in combos[src.name]:
+                pkey = ",".join(f"{k}={_fmt_param(params[k])}" for k in sorted(params))
+                supply.setdefault((symbol, src.name, pkey), [])
+
+        seen_mtf = 0
+        for mf in stream_mtf(symbol, bars, settings, cfg.tape_cache_dir):
+            seen_mtf += 1
+            for src in research:
+                for params in combos[src.name]:
+                    sig = src._family.signal(mf, dict(params))
+                    if sig is None:
+                        continue
+                    pkey = ",".join(
+                        f"{k}={_fmt_param(params[k])}" for k in sorted(params)
+                    )
+                    supply[(symbol, src.name, pkey)].append(float(sig.score))
+        if research and not seen_mtf:
             notes.setdefault(symbol, []).append(
                 "MTF features unavailable — research families saw no input"
             )
-        for src in sources:
-            for params in src.param_combinations(cfg.max_params_per_family, cfg.seed):
-                pkey = ",".join(f"{k}={_fmt_param(params[k])}" for k in sorted(params))
-                pts = src.signals(prepared, params)
-                supply[(symbol, src.name, pkey)] = sorted(
-                    (p.score for p in pts.values()), reverse=True
-                )
-        del prepared
+
+        if live:
+            prepared = prepare_window(
+                symbol, bars, settings=settings, spread_bps=cfg.spread_bps,
+                seed=cfg.seed, want_mtf=False,
+            )
+            for src in live:
+                for params in combos[src.name]:
+                    pkey = ",".join(
+                        f"{k}={_fmt_param(params[k])}" for k in sorted(params)
+                    )
+                    pts = src.signals(prepared, params)
+                    supply[(symbol, src.name, pkey)] = [p.score for p in pts.values()]
+            del prepared
+
+        for key in list(supply):
+            if key[0] == symbol:
+                supply[key].sort(reverse=True)
     return supply, notes
 
 
@@ -1936,14 +2160,48 @@ def _axis_table(
     return "\n".join(rows)
 
 
-def per_horizon_table(results: Sequence[ArmResult]) -> str:
-    return _axis_table(
+def per_horizon_table(
+    results: Sequence[ArmResult], *, config: TournamentConfig | None = None
+) -> str:
+    """Horizon curve, with the *required* hit rate printed beside the measured
+    one.  A win rate below the required one is arithmetic, not bad luck."""
+    table = _axis_table(
         results,
         "PER-HORIZON — OUT OF SAMPLE (the horizon is the time stop, not a lock)",
         "horizon",
         lambda r: f"{r.candidate.horizon_seconds // 60}m",
         order=lambda k: int(k[:-1]),
     )
+    if config is None:
+        return table
+    pooled: dict[int, list[ArmResult]] = {}
+    for r in _evaluated(results):
+        pooled.setdefault(r.candidate.horizon_seconds // 60, []).append(r)
+    if not pooled:
+        return table
+    rows = [
+        _rule(),
+        "Break-even arithmetic — a symmetric-payoff arm needs "
+        f"p > 0.5 + cost / (2 x median move); cost = {config.round_trip_bps:g} bps",
+        f"{'horizon':<10}{'median move':>13}{'required win%':>15}{'actual win%':>13}"
+        f"{'verdict':>12}",
+    ]
+    for minutes in sorted(pooled):
+        s = combine_stats([r.out_of_sample for r in pooled[minutes]])
+        symbols = {r.candidate.symbol for r in pooled[minutes]}
+        move = sum(median_move_bps(sym, minutes) for sym in symbols) / len(symbols)
+        need = required_hit_rate(sorted(symbols)[0], minutes, config.round_trip_bps) \
+            if len(symbols) == 1 else (
+                sum(required_hit_rate(sym, minutes, config.round_trip_bps)
+                    for sym in symbols) / len(symbols)
+            )
+        got = s.win_rate
+        verdict = "-" if s.trades == 0 else ("clears" if got >= need else "short")
+        rows.append(
+            f"{str(minutes) + 'm':<10}{move:>12.1f}b{need * 100:>14.1f}%"
+            f"{got * 100:>12.1f}%{verdict:>12}"
+        )
+    return table + "\n" + "\n".join(rows)
 
 
 def per_exit_table(results: Sequence[ArmResult]) -> str:
@@ -2012,13 +2270,21 @@ def per_family_table(results: Sequence[ArmResult]) -> str:
     )
 
 
-def arms_table(results: Sequence[ArmResult], *, limit: int = 25) -> str:
-    """Every arm, in-sample and out-of-sample side by side.  Losers included."""
+def arms_table(
+    results: Sequence[ArmResult], *, limit: int = 25,
+    config: TournamentConfig | None = None,
+) -> str:
+    """Every arm, in-sample and out-of-sample side by side.  Losers included.
+
+    ``need%`` is the hit rate this arm's horizon requires to break even at the
+    modelled round trip; a ``win%`` below it is arithmetic, not variance.
+    """
+    rt = config.round_trip_bps if config else 0.0
     rows = [
         _title(f"ARMS — in-sample vs out-of-sample (top {limit} by OOS expectancy)"),
-        f"{'':<46}{'|':>2}{'IN-SAMPLE':^24}{'|':>2}{'OUT-OF-SAMPLE':^24}",
+        f"{'':<46}{'|':>2}{'IN-SAMPLE':^24}{'|':>2}{'OUT-OF-SAMPLE':^40}",
         f"{'candidate':<46}{'|':>2}{'trades':>8}{'PF':>7}{'expect':>9}"
-        f"{'|':>2}{'trades':>8}{'PF':>7}{'expect':>9}",
+        f"{'|':>2}{'trades':>8}{'PF':>7}{'expect':>9}{'win%':>8}{'need%':>8}",
         _rule(),
     ]
     evaluated = _evaluated(results)
@@ -2028,9 +2294,13 @@ def arms_table(results: Sequence[ArmResult], *, limit: int = 25) -> str:
     for r in shown:
         i, o = r.in_sample, r.out_of_sample
         name = _short_key(r.candidate)
+        need = required_hit_rate(
+            r.candidate.symbol, r.candidate.horizon_minutes, rt
+        ) if config else 0.0
         rows.append(
             f"{name:<46}{'|':>2}{i.trades:>8}{_pf(i.profit_factor):>7}{i.expectancy:>9.4f}"
             f"{'|':>2}{o.trades:>8}{_pf(o.profit_factor):>7}{o.expectancy:>9.4f}"
+            f"{o.win_rate * 100:>7.1f}%{need * 100:>7.1f}%"
         )
     rows.append(_rule())
     losers = sum(1 for r in evaluated if r.out_of_sample.net_pnl <= 0)
@@ -2105,6 +2375,33 @@ def format_tournament(
     lines.append(f"wall clock       : {meta.get('elapsed', '-')}")
     lines.append(f"jobs             : {config.jobs}")
     lines.append("")
+    lines.append(_title("WHAT THE HORIZON ACTUALLY OFFERS (measured, 242 days)"))
+    lines.append(
+        "Median |move| by horizon, bps: "
+        + "; ".join(
+            f"{sym} " + ", ".join(f"{h}m={v:g}" for h, v in sorted(tbl.items()))
+            for sym, tbl in MEASURED_MEDIAN_MOVE_BPS.items()
+        )
+    )
+    lines.append(
+        f"Round trip modelled here: {config.round_trip_bps:g} bps "
+        f"({config.fee_bps_per_side:g} bps/side fee + {config.slippage_bps:g} bps "
+        f"slippage + {config.spread_estimate_bps:g} bps spread)."
+    )
+    lines.append(
+        "The earlier framing — that the cost of trading is the same size as the "
+        "move — holds at one minute and does NOT hold at 25-60 minutes, where the "
+        "median move is 4-10x the round trip. V1 and V2 lost money at 3-8 minute "
+        "average holds; on this table that is a fact about their exit logic, not "
+        "proof that the venue cannot be traded. That older conclusion is not "
+        "carried forward here."
+    )
+    lines.append(
+        "The 2-minute horizon is a different matter: 0.9 bps median on BTC and "
+        "0.0 on ETH/SOL against a ~3 bps floor. It is swept for completeness and "
+        "no search budget is spent optimising around it."
+    )
+    lines.append("")
 
     finalists = qualifying(results, config)
     marginal = [
@@ -2168,10 +2465,10 @@ def format_tournament(
     lines.append("")
 
     for table in (
-        arms_table(results, limit=config.top_n),
+        arms_table(results, limit=config.top_n, config=config),
         per_coin_table(results),
         per_family_table(results),
-        per_horizon_table(results),
+        per_horizon_table(results, config=config),
         per_exit_table(results),
         per_stop_table(results),
         entry_quality_table(results),

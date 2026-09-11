@@ -1,22 +1,26 @@
 """Tests for the ten Phase 3 strategy families.
 
 Deterministic and offline: no network, no clock, no RNG.  Every scenario is a
-hand-built feature block with numbers taken from the measured venue (1m ATR
-2.2 bps), so a threshold that looks reasonable here is reasonable there.
+hand-built feature block using ``features_mtf``'s published names and units,
+with numbers taken from the measured venue (1m ATR 2.2 bps), so a threshold
+that looks reasonable here is reasonable there.
 
-What is actually being asserted, family by family:
+What is asserted, family by family:
 
 * it fires on a setup built for its own hypothesis, **on both sides**, and the
   two sides score identically — an asymmetric score would mean the family is
   really a long-only proxy for drift;
-* it is silent on flat data, on an empty tape, and at cold start;
-* ``score`` is graded — a weaker version of the same setup scores strictly
-  lower;
+* it is silent on flat data, at cold start, and — for the tape families — on an
+  empty tape;
+* ``score`` is graded: a weaker version of the same setup scores strictly
+  lower, and the strong one does not saturate at 1.0;
 * **every parameter changes behaviour.**  A parameter that does nothing is a
-  bug that quadruples the search space for free, and with 444 combinations in
+  bug that multiplies the search space for free, and with 444 combinations in
   play that is the difference between a search and a lottery;
-* nothing returns NaN or infinity, and nothing raises when a feature is
-  missing.
+* nothing returns NaN or infinity, and nothing raises on a missing feature.
+
+Plus the cross-module checks: every name a family reads exists in
+``FEATURE_NAMES``, and the interval set matches the engine's default.
 """
 
 from __future__ import annotations
@@ -28,16 +32,24 @@ import pytest
 from app.research.families import (
     FAMILIES,
     FAMILY_BY_NAME,
+    INTERVALS,
     REQUIRED_FEATURES,
     ParamSpace,
     ResearchSignal,
+    feature_names_used,
     total_combinations,
+    validate_feature_names,
 )
 from app.types import Side
 
-# Measured on Binance.US BTC/USD (docs/ECONOMICS.md).  Every scenario below is
-# scaled off this number rather than off a round one.
-ATR = 2.2
+# Measured on Binance.US BTC/USD (docs/ECONOMICS.md): 1m ATR 2.2 bps.  The 5m
+# and 15m ATRs are the diffusion-scaled equivalents, which is what the venue
+# actually does (2.2 * sqrt(60) = 17 bps in an hour).
+ATR_1M = 2.2
+ATR_5M = ATR_1M * math.sqrt(5.0)
+ATR_15M = ATR_1M * math.sqrt(15.0)
+ATRS = {"atr_1m": ATR_1M, "atr_5m": ATR_5M, "atr_15m": ATR_15M}
+
 PRICE = 50_000.0
 TS = 1_700_000_000_000
 SYMBOL = "BTC/USD"
@@ -55,77 +67,52 @@ EXPECTED_FAMILY_NAMES = (
     "hybrid_multifactor",
 )
 
-# Pinned so the number quoted in the report is the number the code produces.
+#: Pinned so the number quoted in the report is the number the code produces.
 EXPECTED_TOTAL_COMBINATIONS = 444
 
-# Families whose signal depends on the trade tape being non-empty.
+#: Families that read the trade tape and must refuse when it is empty.
 TAPE_FAMILIES = ("volume_impulse", "orderflow_imbalance")
 
 
 # --------------------------------------------------------------------------- #
-# Feature double
+# Feature blocks
 # --------------------------------------------------------------------------- #
 
 
-class _FakeMTFFeatures:
-    """Stand-in for MTFFeatures until features_mtf.py lands.
-
-    Same four fields and the same ``get`` contract as the frozen dataclass in
-    PHASE3_SPEC.md; :func:`make_features` prefers the real class whenever it is
-    importable, so these tests switch over to it by themselves.
-    """
-
-    def __init__(self, symbol: str, ts_ms: int, price: float, values: dict):
-        self.symbol = symbol
-        self.ts_ms = ts_ms
-        self.price = price
-        self.values = values
-
-    def get(self, name: str, default: float = 0.0) -> float:
-        return self.values.get(name, default)
-
-
-def _mtf_class():
-    try:
-        from app.research.features_mtf import MTFFeatures  # noqa: WPS433
-    except Exception:  # pragma: no cover - module not written yet
-        return None
-    return MTFFeatures
-
-
 def make_features(values: dict, *, price: float = PRICE, ts_ms: int = TS):
-    """Build a feature block, using the real MTFFeatures when it exists."""
-    cls = _mtf_class()
-    if cls is not None:
-        try:
-            return cls(symbol=SYMBOL, ts_ms=ts_ms, price=price, values=dict(values))
-        except TypeError:  # pragma: no cover - signature drift
-            pass
-    return _FakeMTFFeatures(SYMBOL, ts_ms, price, dict(values))
+    """Build a real :class:`MTFFeatures` from a literal dict of values."""
+    from app.research.features_mtf import MTFFeatures
+
+    return MTFFeatures(symbol=SYMBOL, ts_ms=ts_ms, price=price, values=dict(values))
 
 
-# Directional feature prefixes: these flip sign when a scenario is mirrored.
-_SIGNED_PREFIXES = (
-    "ret_", "return_", "mom_",
-    "vwap_dev_", "mean_dev_", "dev_from_mean_",
-    "zscore_", "z_", "bb_z_",
-    "ema_slope_",
+#: Bases whose sign flips when a scenario is mirrored through the mid.
+_SIGNED_BASES = (
+    "ret", "ret5", "mom_slope", "accel", "ema_slope",
+    "zscore", "vwap_dist", "breakout_dist", "aggr_imb",
 )
-_SIGNED_EXACT = ("trade_flow_imbalance", "flow_imbalance", "aggressor_imbalance",
-                 "trade_flow_accel", "flow_accel")
-_POSITION_PREFIX = "range_pos"
+#: Bases that are reflected rather than negated.
+_REFLECTED = {"rsi": lambda v: 100.0 - v, "range_pos": lambda v: 1.0 - v}
 
 
 def mirror(values: dict) -> dict:
-    """Reflect a scenario through the mid: a long setup becomes its short twin."""
+    """Reflect a scenario: a long setup becomes its short twin."""
     out = {}
     for key, value in values.items():
-        if key.startswith(_POSITION_PREFIX):
-            out[key] = 1.0 - value
-        elif key in _SIGNED_EXACT or key.startswith(_SIGNED_PREFIXES):
+        base = key.rsplit("_", 1)[0]
+        if base in _REFLECTED:
+            out[key] = _REFLECTED[base](value)
+        elif base in _SIGNED_BASES:
             out[key] = -value
         else:
             out[key] = value
+    return out
+
+
+def _v(**kw) -> dict:
+    """A feature block seeded with the three ATRs every family needs."""
+    out = dict(ATRS)
+    out.update(kw)
     return out
 
 
@@ -133,102 +120,118 @@ def mirror(values: dict) -> dict:
 # Scenarios — one strong and one weak setup per family
 # --------------------------------------------------------------------------- #
 
-_BASE = {"atr_1m_bps": ATR}
-
-
-def _v(**kw) -> dict:
-    out = dict(_BASE)
-    out.update(kw)
-    return out
-
-
 SCENARIOS: dict[str, dict] = {
-    # A — a 1m impulse of 6 bps (2.7x the expected 2.2) running faster than the
-    # 5m leg that agrees with it.
+    # A — a 6 bps minute (2.7 ATR) inside an agreeing five-bar leg, with the
+    # momentum slope still steepening.
     "momentum_continuation": {
-        "params": {"impulse_window": "1m", "min_impulse_atr": 1.0, "accel_ratio": 1.25},
-        "strong": _v(ret_5s_bps=0.4, ret_15s_bps=0.9, ret_30s_bps=1.4,
-                     ret_1m_bps=6.0, ret_3m_bps=7.0, ret_5m_bps=8.0,
-                     ret_15m_bps=9.0, trend_strength=0.6),
-        # Same acceleration, a third of the impulse.
-        "weak": _v(ret_5s_bps=0.2, ret_15s_bps=0.4, ret_30s_bps=0.7,
-                   ret_1m_bps=3.0, ret_3m_bps=3.5, ret_5m_bps=4.0,
-                   ret_15m_bps=4.5, trend_strength=0.6),
+        "params": {"interval": "1m", "min_impulse_atr": 1.0, "min_accel_atr": 0.1},
+        "strong": _v(ret_1m=6.0, ret5_1m=10.0, accel_1m=1.0,
+                     ema_slope_1m=0.5, rsi_1m=65.0,
+                     ret_5m=2.0, ret5_5m=6.0, accel_5m=0.2,
+                     ema_slope_5m=0.3, rsi_5m=58.0,
+                     ret_15m=1.0, ret5_15m=3.0, accel_15m=0.1,
+                     ema_slope_15m=0.2, rsi_15m=54.0),
+        "weak": _v(ret_1m=3.0, ret5_1m=5.0, accel_1m=0.3,
+                   ema_slope_1m=0.2, rsi_1m=55.0,
+                   ret_5m=2.0, ret5_5m=6.0, accel_5m=0.2,
+                   ema_slope_5m=0.3, rsi_5m=58.0,
+                   ret_15m=1.0, ret5_15m=3.0, accel_15m=0.1,
+                   ema_slope_15m=0.2, rsi_15m=54.0),
     },
-    # B — a tight 5m coil left behind by a 5 bps minute.
+    # B — 5 bps outside a twenty-bar range whose realized vol sits in the tenth
+    # percentile: a coil that broke.
     "breakout": {
-        "params": {"range_window": "5m", "min_compression": 0.35, "break_atr": 1.25},
-        "strong": _v(compression_3m=0.6, compression_5m=0.7, compression_15m=0.55,
-                     range_pos_3m=0.97, range_pos_5m=0.99, range_pos_15m=0.96,
-                     ret_1m_bps=5.0, trade_flow_imbalance=0.4),
-        "weak": _v(compression_3m=0.4, compression_5m=0.45, compression_15m=0.4,
-                   range_pos_3m=0.97, range_pos_5m=0.99, range_pos_15m=0.96,
-                   ret_1m_bps=3.2, trade_flow_imbalance=0.1),
+        "params": {"interval": "1m", "max_rvol_pct": 0.3, "break_atr": 1.0},
+        "strong": _v(breakout_dist_1m=5.0, rvol_pct_1m=0.1, aggr_imb_1m=0.4,
+                     breakout_dist_5m=0.0, rvol_pct_5m=0.2, aggr_imb_5m=0.3,
+                     breakout_dist_15m=0.0, rvol_pct_15m=0.2, aggr_imb_15m=0.2),
+        "weak": _v(breakout_dist_1m=2.8, rvol_pct_1m=0.25, aggr_imb_1m=0.1,
+                   breakout_dist_5m=0.0, rvol_pct_5m=0.2, aggr_imb_5m=0.3,
+                   breakout_dist_15m=0.0, rvol_pct_15m=0.2, aggr_imb_15m=0.2),
     },
-    # C — an uptrend that retraced 6 bps over 3m and has started back up.
+    # C — an uptrend (EMA climbing, RSI 68) whose newest bar gave back 1.6 ATR
+    # while the five-bar leg stayed positive.
     "trend_pullback": {
-        "params": {"trend_min": 0.45, "pullback_atr": 1.0, "resume_atr": 0.2},
-        "strong": _v(ema_slope_5m_bps=1.0, trend_strength=0.7,
-                     ret_3m_bps=-6.0, ret_30s_bps=1.5),
-        "weak": _v(ema_slope_5m_bps=1.0, trend_strength=0.5,
-                   ret_3m_bps=-4.0, ret_30s_bps=0.5),
+        "params": {"interval": "1m", "trend_min": 0.45, "pullback_atr": 1.0},
+        "strong": _v(ema_slope_1m=0.6, rsi_1m=68.0, ret_1m=-3.5, ret5_1m=8.0,
+                     ema_slope_5m=0.0, rsi_5m=50.0, ret_5m=0.0, ret5_5m=0.0,
+                     ema_slope_15m=0.0, rsi_15m=50.0, ret_15m=0.0, ret5_15m=0.0),
+        "weak": _v(ema_slope_1m=0.3, rsi_1m=62.0, ret_1m=-2.4, ret5_1m=4.0,
+                   ema_slope_5m=0.0, rsi_5m=50.0, ret_5m=0.0, ret5_5m=0.0,
+                   ema_slope_15m=0.0, rsi_15m=50.0, ret_15m=0.0, ret5_15m=0.0),
     },
-    # D — 2.8 sigma above the 5m mean with the trend flat and flow turning.
+    # D — 2.8 sigma above the twenty-bar mean, no trend, flow already turning.
     "mean_reversion": {
-        "params": {"band_window": "5m", "extension_sigma": 2.0, "max_trend": 0.6},
-        "strong": _v(zscore_3m=2.4, zscore_5m=2.8, zscore_15m=2.1,
-                     trend_strength=0.2, trade_flow_accel=-0.3),
-        "weak": _v(zscore_3m=2.1, zscore_5m=2.2, zscore_15m=2.05,
-                   trend_strength=0.5, trade_flow_accel=-0.1),
+        "params": {"interval": "1m", "extension_sigma": 2.0, "max_trend": 0.6},
+        "strong": _v(zscore_1m=2.8, ema_slope_1m=0.1, rsi_1m=52.0,
+                     aggr_imb_1m=-0.2, aggr_imb_5m=0.1,
+                     zscore_5m=0.5, ema_slope_5m=0.1, rsi_5m=52.0,
+                     zscore_15m=0.2, ema_slope_15m=0.1, rsi_15m=51.0,
+                     aggr_imb_15m=0.0),
+        "weak": _v(zscore_1m=2.2, ema_slope_1m=0.2, rsi_1m=56.0,
+                   aggr_imb_1m=-0.05, aggr_imb_5m=0.05,
+                   zscore_5m=0.5, ema_slope_5m=0.1, rsi_5m=52.0,
+                   zscore_15m=0.2, ema_slope_15m=0.1, rsi_15m=51.0,
+                   aggr_imb_15m=0.0),
     },
-    # E — 12 prints in a minute (the venue averages 2.19) at volume z 4, and
-    # the price actually moved.
+    # E — twelve prints in a minute on a venue that averages 2.19, volume at
+    # five times its baseline, and the price actually moved.
     "volume_impulse": {
-        "params": {"min_trades": 5, "vol_z_min": 2.5, "response_atr": 1.0},
-        "strong": _v(trade_count_1m=12, quote_volume_1m_usd=9000.0,
-                     volume_z_1m=4.0, ret_1m_bps=5.0),
-        "weak": _v(trade_count_1m=8, quote_volume_1m_usd=4000.0,
-                   volume_z_1m=3.0, ret_1m_bps=3.0),
+        "params": {"min_trades": 5, "min_vol_accel": 2.5, "response_atr": 1.0},
+        "strong": _v(trades_1m=12.0, vol_accel_1m=5.0, ret_1m=5.0),
+        "weak": _v(trades_1m=8.0, vol_accel_1m=3.0, ret_1m=3.0),
     },
-    # F — 30 prints, $6k, three quarters of it on one side.
+    # F — thirty prints with three quarters of the notional on one side.
     "orderflow_imbalance": {
-        "params": {"imb_min": 0.4, "min_trades": 10, "min_notional_usd": 2000.0},
-        "strong": _v(trade_count_1m=30, quote_volume_1m_usd=6000.0,
-                     trade_flow_imbalance=0.75, trade_flow_accel=0.3),
-        "weak": _v(trade_count_1m=30, quote_volume_1m_usd=3000.0,
-                   trade_flow_imbalance=0.5, trade_flow_accel=0.1),
+        "params": {"interval": "1m", "imb_min": 0.4, "min_trades": 10},
+        "strong": _v(trades_1m=30.0, aggr_imb_1m=0.75, aggr_imb_5m=0.45,
+                     trades_5m=60.0, trades_15m=90.0, aggr_imb_15m=0.2),
+        "weak": _v(trades_1m=15.0, aggr_imb_1m=0.5, aggr_imb_5m=0.4,
+                   trades_5m=60.0, trades_15m=90.0, aggr_imb_15m=0.2),
     },
-    # G — 25 bps above the 15m VWAP, which is ~2.9 typical 15m moves.
+    # G — 15 bps above the rolling (sixty-bar = one hour) VWAP, which is nearly
+    # a full typical hour's excursion, with no trend to justify it.
     "vwap_reversion": {
-        "params": {"vwap_window": "15m", "dev_atr": 2.0, "max_trend": 0.5},
-        "strong": _v(vwap_dev_5m_bps=12.0, vwap_dev_15m_bps=25.0,
-                     vwap_dev_60m_bps=40.0, trend_strength=0.2,
-                     trade_flow_accel=-0.3),
-        "weak": _v(vwap_dev_5m_bps=9.0, vwap_dev_15m_bps=19.0,
-                   vwap_dev_60m_bps=30.0, trend_strength=0.4,
-                   trade_flow_accel=-0.1),
+        "params": {"interval": "1m", "dist_atr": 4.0, "max_trend": 0.5},
+        "strong": _v(vwap_dist_1m=15.0, ema_slope_1m=0.1, rsi_1m=52.0,
+                     aggr_imb_1m=-0.2, aggr_imb_5m=0.1,
+                     vwap_dist_5m=2.0, ema_slope_5m=0.1, rsi_5m=52.0,
+                     vwap_dist_15m=1.0, ema_slope_15m=0.1, rsi_15m=51.0,
+                     aggr_imb_15m=0.0),
+        "weak": _v(vwap_dist_1m=10.0, ema_slope_1m=0.2, rsi_1m=56.0,
+                   aggr_imb_1m=-0.05, aggr_imb_5m=0.05,
+                   vwap_dist_5m=2.0, ema_slope_5m=0.1, rsi_5m=52.0,
+                   vwap_dist_15m=1.0, ema_slope_15m=0.1, rsi_15m=51.0,
+                   aggr_imb_15m=0.0),
     },
-    # H — volatility 3.2x its slower baseline, at the 90th percentile.
+    # H — realized vol at the 95th percentile of its own trailing window, with
+    # a 2.3 ATR bar to point the way.
     "volatility_expansion": {
-        "params": {"expansion_ratio": 2.0, "min_vol_pct": 0.7, "direction_atr": 1.0},
-        "strong": _v(vol_expansion_ratio=3.2, vol_percentile=0.9, ret_1m_bps=5.0),
-        "weak": _v(vol_expansion_ratio=2.3, vol_percentile=0.75, ret_1m_bps=3.0),
+        "params": {"interval": "1m", "min_rvol_pct": 0.75, "direction_atr": 1.0},
+        "strong": _v(rvol_pct_1m=0.95, ret_1m=5.0, vol_accel_1m=3.0,
+                     rvol_pct_5m=0.5, ret_5m=2.0, vol_accel_5m=1.0,
+                     rvol_pct_15m=0.5, ret_15m=1.0, vol_accel_15m=1.0),
+        "weak": _v(rvol_pct_1m=0.8, ret_1m=3.0, vol_accel_1m=1.5,
+                   rvol_pct_5m=0.5, ret_5m=2.0, vol_accel_5m=1.0,
+                   rvol_pct_15m=0.5, ret_15m=1.0, vol_accel_15m=1.0),
     },
-    # I — a 30s leg 3.9x its expected size that has already started giving back.
+    # I — a five-bar run four times its diffusion expectation, with the newest
+    # bar already giving some of it back.
     "short_term_reversal": {
-        "params": {"window": "30s", "ext_atr": 2.5, "stall_frac": 0.25},
-        "strong": _v(ret_5s_bps=-0.3, ret_15s_bps=-0.8, ret_30s_bps=6.0,
-                     ret_1m_bps=7.0, trend_strength=0.2),
-        "weak": _v(ret_5s_bps=-0.15, ret_15s_bps=-0.4, ret_30s_bps=4.5,
-                   ret_1m_bps=5.0, trend_strength=0.5),
+        "params": {"interval": "1m", "ext_atr": 2.5, "stall_frac": 0.25},
+        "strong": _v(ret5_1m=20.0, ret_1m=-1.5, ema_slope_1m=0.1, rsi_1m=52.0,
+                     ret5_5m=2.0, ret_5m=0.0, ema_slope_5m=0.1, rsi_5m=52.0,
+                     ret5_15m=1.0, ret_15m=0.0, ema_slope_15m=0.1, rsi_15m=51.0),
+        "weak": _v(ret5_1m=14.0, ret_1m=-0.8, ema_slope_1m=0.2, rsi_1m=56.0,
+                   ret5_5m=2.0, ret_5m=0.0, ema_slope_5m=0.1, rsi_5m=52.0,
+                   ret5_15m=1.0, ret_15m=0.0, ema_slope_15m=0.1, rsi_15m=51.0),
     },
-    # J — momentum up, price below VWAP, buy-side flow: all three legs agree.
+    # J — a positive five-bar leg, price below the mean, and buy-side flow:
+    # all three legs agree, which is the only way a blend gets full marks.
     "hybrid_multifactor": {
         "params": {"momentum_tilt": 0.5, "min_conviction": 0.3, "flow_weight": 0.25},
-        "strong": _v(ret_1m_bps=5.0, vwap_dev_5m_bps=-10.0,
-                     trade_flow_imbalance=0.6),
-        "weak": _v(ret_1m_bps=3.0, vwap_dev_5m_bps=-6.0,
-                   trade_flow_imbalance=0.3),
+        "strong": _v(ret5_1m=12.0, zscore_1m=-2.0, aggr_imb_1m=0.6),
+        "weak": _v(ret5_1m=7.0, zscore_1m=-1.2, aggr_imb_1m=0.3),
     },
 }
 
@@ -243,7 +246,7 @@ def fire(name: str, values: dict, params: dict | None = None) -> ResearchSignal 
 
 
 # --------------------------------------------------------------------------- #
-# Registry
+# Registry and grids
 # --------------------------------------------------------------------------- #
 
 
@@ -264,8 +267,8 @@ def test_param_space_names_match_family_names():
 
 
 def test_allowed_regimes_is_none_unless_definitionally_inapplicable():
-    # The tournament measures which family belongs in which regime.  Hardcoding
-    # it here would be answering that question with an assumption.
+    # Which family belongs in which regime is what the tournament measures.
+    # Hardcoding it here would be answering that question with an assumption.
     for family in FAMILIES:
         assert family.allowed_regimes is None
 
@@ -317,16 +320,26 @@ def test_param_space_defaults_are_a_valid_combination():
         assert defaults in list(family.param_space.combinations())
 
 
+def test_the_horizon_is_a_search_dimension_not_a_constant():
+    """Both prior reports concluded the horizon is the lever, so most families
+    must actually search over it."""
+    with_interval = [f.name for f in FAMILIES if "interval" in f.param_space.grid]
+    assert len(with_interval) >= 8
+    for family in FAMILIES:
+        values = family.param_space.grid.get("interval")
+        if values is not None:
+            assert values == INTERVALS
+
+
 # --------------------------------------------------------------------------- #
 # Firing, both sides
 # --------------------------------------------------------------------------- #
 
 
 @pytest.mark.parametrize("name", EXPECTED_FAMILY_NAMES)
-def test_family_fires_long_on_its_own_setup(name):
+def test_family_fires_on_its_own_setup(name):
     sig = fire(name, scenario(name)["strong"])
     assert sig is not None, f"{name} did not fire on its own strong setup"
-    assert sig.side is Side.LONG or sig.side is Side.SHORT
     assert sig.family == name
     assert sig.symbol == SYMBOL
     assert sig.ts_ms == TS
@@ -339,10 +352,10 @@ def test_family_is_symmetric_across_sides(name):
     long_sig = fire(name, sc["strong"])
     short_sig = fire(name, mirror(sc["strong"]))
     assert long_sig is not None and short_sig is not None
-    assert long_sig.side is not short_sig.side, f"{name} did not flip side"
     assert {long_sig.side, short_sig.side} == {Side.LONG, Side.SHORT}
-    # Mirrored input must produce a mirrored opinion of identical conviction;
-    # an asymmetry here means the family is really a long-only drift proxy.
+    # A mirrored input must produce a mirrored opinion of identical conviction.
+    # Spot is long-only and the risk layer gates that, but an asymmetry here
+    # would mean the family is really a long-only proxy for drift.
     assert long_sig.score == pytest.approx(short_sig.score, abs=1e-12)
 
 
@@ -360,9 +373,10 @@ def test_score_is_graded_not_binary(name):
     assert weak.score < strong.score, f"{name} is not graded"
     assert weak.side is strong.side
     for sig in (strong, weak):
-        assert 0.0 < sig.score <= 1.0
         assert math.isfinite(sig.score)
-    # Not saturated at the top either — a family pinned at 1.0 is binary again.
+        assert 0.0 < sig.score <= 1.0
+    # Not pinned at the top either: a family that answers 1.0 is binary again,
+    # and the tournament has nothing left to threshold on.
     assert strong.score < 1.0
 
 
@@ -380,6 +394,7 @@ def test_score_stays_inside_the_unit_interval_across_the_whole_grid(name):
             seen += 1
             assert math.isfinite(sig.score)
             assert 0.0 < sig.score <= 1.0
+            assert sig.side in (Side.LONG, Side.SHORT)
     assert seen > 0, f"{name} never fired anywhere in its grid"
 
 
@@ -390,16 +405,14 @@ def test_score_stays_inside_the_unit_interval_across_the_whole_grid(name):
 
 def _outcome(family, features, params):
     sig = family.signal(features, params)
-    if sig is None:
-        return None
-    return (sig.side, round(sig.score, 9))
+    return None if sig is None else (sig.side, round(sig.score, 9))
 
 
 @pytest.mark.parametrize("name", EXPECTED_FAMILY_NAMES)
 def test_every_parameter_changes_behaviour(name):
     """A parameter that does nothing is a bug: it multiplies the search space
     without adding a hypothesis, and inflates the multiple-testing correction
-    the report has to apply."""
+    the report has to apply to whatever comes out on top."""
     family = FAMILY_BY_NAME[name]
     sc = scenario(name)
     features = make_features(sc["strong"])
@@ -408,9 +421,7 @@ def test_every_parameter_changes_behaviour(name):
     for param, candidates in family.param_space.grid.items():
         outcomes = set()
         for value in candidates:
-            params = dict(base)
-            params[param] = value
-            outcomes.add(_outcome(family, features, params))
+            outcomes.add(_outcome(family, features, {**base, param: value}))
         assert len(outcomes) > 1, (
             f"{name}.{param} has no effect on its own scenario "
             f"({len(candidates)} values, one outcome: {outcomes})"
@@ -421,22 +432,19 @@ def test_every_parameter_changes_behaviour(name):
 # Silence: flat, cold, empty tape, missing features
 # --------------------------------------------------------------------------- #
 
-FLAT = {
-    "atr_1m_bps": ATR,
-    "atr_5m_bps": ATR * math.sqrt(5.0),
-    "ret_5s_bps": 0.0, "ret_15s_bps": 0.0, "ret_30s_bps": 0.0,
-    "ret_1m_bps": 0.0, "ret_3m_bps": 0.0, "ret_5m_bps": 0.0, "ret_15m_bps": 0.0,
-    "ema_slope_5m_bps": 0.0, "trend_strength": 0.0,
-    "compression_3m": 0.0, "compression_5m": 0.0, "compression_15m": 0.0,
-    "range_pos_3m": 0.5, "range_pos_5m": 0.5, "range_pos_15m": 0.5,
-    "zscore_3m": 0.0, "zscore_5m": 0.0, "zscore_15m": 0.0,
-    "bb_width_3m_bps": 4.0, "bb_width_5m_bps": 9.0, "bb_width_15m_bps": 16.0,
-    "vwap_dev_5m_bps": 0.0, "vwap_dev_15m_bps": 0.0, "vwap_dev_60m_bps": 0.0,
-    "trade_count_1m": 2.0, "quote_volume_1m_usd": 753.0,
-    "volume_z_1m": 0.0, "volume_ratio_1m": 1.0,
-    "vol_percentile": 0.4, "vol_expansion_ratio": 1.0,
-    "trade_flow_imbalance": 0.0, "trade_flow_accel": 0.0,
-}
+#: A dead market, expressed in the engine's own neutral values: rvol_pct and
+#: vol_pct 0.5, vol_accel 1.0, rsi 50, everything signed at 0.0.  Two prints a
+#: minute is this venue's actual average.
+FLAT = dict(ATRS)
+for _iv in INTERVALS:
+    FLAT.update({
+        f"ret_{_iv}": 0.0, f"ret5_{_iv}": 0.0, f"accel_{_iv}": 0.0,
+        f"mom_slope_{_iv}": 0.0, f"ema_slope_{_iv}": 0.0, f"rsi_{_iv}": 50.0,
+        f"zscore_{_iv}": 0.0, f"vwap_dist_{_iv}": 0.0, f"breakout_dist_{_iv}": 0.0,
+        f"rv_{_iv}": 1.0, f"rvol_pct_{_iv}": 0.5, f"vol_pct_{_iv}": 0.5,
+        f"vol_accel_{_iv}": 1.0, f"trades_{_iv}": 2.0, f"aggr_imb_{_iv}": 0.0,
+        f"range_pos_{_iv}": 0.5,
+    })
 
 
 @pytest.mark.parametrize("name", EXPECTED_FAMILY_NAMES)
@@ -447,44 +455,98 @@ def test_silent_on_flat_data_across_the_whole_grid(name):
         assert family.signal(features, params) is None, f"{name} fired on flat data"
 
 
+#: Families whose entry gate includes a statistic the engine reports with an
+#: informative-looking neutral value (``vol_accel`` 1.0, ``rvol_pct`` 0.5) or
+#: with a tape reading.  These are the ones that could fire on cold start if a
+#: threshold were set on the wrong side of the neutral, so they get their own
+#: assertion.
+NEUTRAL_GATED_FAMILIES = (
+    "breakout", "volume_impulse", "orderflow_imbalance", "volatility_expansion",
+)
+
+
+def _loud_but_neutral() -> dict:
+    """Every *signed* feature screaming, every *neutral* statistic unmeasured."""
+    loud = dict(FLAT)
+    for iv in INTERVALS:
+        loud.update({
+            f"ret_{iv}": 40.0, f"ret5_{iv}": 90.0, f"accel_{iv}": 5.0,
+            f"zscore_{iv}": 9.0, f"vwap_dist_{iv}": 90.0,
+            f"breakout_dist_{iv}": 40.0, f"aggr_imb_{iv}": 0.9,
+        })
+    return loud
+
+
+@pytest.mark.parametrize("name", NEUTRAL_GATED_FAMILIES)
+def test_no_gate_can_be_satisfied_by_a_neutral_reading(name):
+    """The engine fills what it cannot measure with documented neutral values —
+    ``rvol_pct`` and ``vol_pct`` 0.5, ``vol_accel`` 1.0, ``rsi`` 50 — rather
+    than with NaN.  A gate set on the wrong side of one of those fires on cold
+    start and measures nothing, which looks exactly like a working strategy.
+    So these four must stay silent here no matter how loud the signed features
+    get: B's compression ceiling never reaches 0.5, H's expansion floor never
+    drops to it, E's volume floor stays above 1.0, and E/F both need prints."""
+    family = FAMILY_BY_NAME[name]
+    features = make_features(_loud_but_neutral())
+    for params in family.param_space.combinations():
+        assert family.signal(features, params) is None, (
+            f"{name} fired on a neutral volume/volatility reading with {params}"
+        )
+
+
+def test_the_loud_but_neutral_block_is_not_simply_dead():
+    """Control for the test above: the block does drive the families that read
+    signed features only, so the silence of the other four is a gate working
+    and not a feature block that says nothing."""
+    features = make_features(_loud_but_neutral())
+    fired = {
+        family.name
+        for family in FAMILIES
+        for params in family.param_space.combinations()
+        if family.signal(features, params) is not None
+    }
+    assert fired, "the loud block drives nothing at all"
+    assert not fired.intersection(NEUTRAL_GATED_FAMILIES)
+
+
 @pytest.mark.parametrize("name", EXPECTED_FAMILY_NAMES)
 def test_silent_at_cold_start(name):
-    """No volatility estimate yet, or no price: no opinion."""
+    """No ATR yet (Wilder needs fourteen bars), or no price: no opinion."""
     family = FAMILY_BY_NAME[name]
     sc = scenario(name)
-    cold_variants = [
-        make_features({k: v for k, v in sc["strong"].items() if k != "atr_1m_bps"}),
-        make_features({**sc["strong"], "atr_1m_bps": 0.0}),
+    no_atr = {k: v for k, v in sc["strong"].items() if not k.startswith("atr_")}
+    zero_atr = {**sc["strong"], **{k: 0.0 for k in ATRS}}
+    cold = [
+        make_features(no_atr),
+        make_features(zero_atr),
         make_features(sc["strong"], price=0.0),
         make_features({}),
     ]
-    for features in cold_variants:
+    for features in cold:
         for params in family.param_space.combinations():
             assert family.signal(features, params) is None, f"{name} fired cold"
 
 
 @pytest.mark.parametrize("name", TAPE_FAMILIES)
 def test_tape_families_are_silent_on_an_empty_tape(name):
-    """55% of this venue's minutes contain zero trades.  A tape family must
-    return None on those, never degrade into 'always fires'."""
+    """55% of this venue's minutes contain zero trades.  ``aggr_imb`` reads 0.0
+    both for balanced flow and for no flow at all, so without a trade-count
+    gate a family would be reading silence as information."""
     family = FAMILY_BY_NAME[name]
-    sc = scenario(name)
-    empty = dict(sc["strong"])
-    empty.update({"trade_count_1m": 0.0, "quote_volume_1m_usd": 0.0})
+    empty = dict(scenario(name)["strong"])
+    empty.update({f"trades_{iv}": 0.0 for iv in INTERVALS})
     features = make_features(empty)
     for params in family.param_space.combinations():
         assert family.signal(features, params) is None, f"{name} fired on an empty tape"
 
 
 @pytest.mark.parametrize("name", TAPE_FAMILIES)
-def test_tape_families_are_silent_when_tape_density_is_absent(name):
+def test_tape_families_are_silent_when_the_trade_count_is_absent(name):
     """Not merely zero — *missing*.  An absent trade count is not permission."""
     family = FAMILY_BY_NAME[name]
-    sc = scenario(name)
     without = {
-        k: v for k, v in sc["strong"].items()
-        if k not in {"trade_count_1m", "trades_1m", "n_trades_1m", "trades_per_min",
-                     "quote_volume_1m_usd"}
+        k: v for k, v in scenario(name)["strong"].items()
+        if not k.startswith("trades_")
     }
     features = make_features(without)
     for params in family.param_space.combinations():
@@ -492,15 +554,26 @@ def test_tape_families_are_silent_when_tape_density_is_absent(name):
 
 
 def test_an_empty_tape_silences_only_the_tape_families():
-    """Proof that the previous two tests test the tape gate and not the setup:
-    the same block still produces signals from the price-only families."""
+    """Proof that the two tests above exercise the tape gate and not the setup:
+    the same block still produces a signal from a price-only family."""
     values = dict(SCENARIOS["momentum_continuation"]["strong"])
-    values.update({"trade_count_1m": 0.0, "quote_volume_1m_usd": 0.0})
-    features = make_features(values)
-    sig = FAMILY_BY_NAME["momentum_continuation"].signal(
-        features, SCENARIOS["momentum_continuation"]["params"]
-    )
-    assert sig is not None
+    values.update({f"trades_{iv}": 0.0 for iv in INTERVALS})
+    assert fire("momentum_continuation", values) is not None
+
+
+@pytest.mark.parametrize("name", EXPECTED_FAMILY_NAMES)
+def test_silent_on_a_timeframe_the_engine_was_not_configured_for(name):
+    """``MTFFeatures`` carries only the intervals its engine was built with.
+    Asked about a missing one, a family must return None, not read a zero."""
+    family = FAMILY_BY_NAME[name]
+    only_15m = {
+        k: v for k, v in scenario(name)["strong"].items() if k.endswith("_15m")
+    }
+    features = make_features(only_15m)
+    for params in family.param_space.combinations():
+        if params.get("interval") == "15m":
+            continue
+        assert family.signal(features, params) is None
 
 
 # --------------------------------------------------------------------------- #
@@ -511,29 +584,21 @@ def test_an_empty_tape_silences_only_the_tape_families():
 @pytest.mark.parametrize("name", EXPECTED_FAMILY_NAMES)
 def test_missing_features_never_raise(name):
     family = FAMILY_BY_NAME[name]
-    blocks = [
-        make_features({}),
-        make_features({"atr_1m_bps": ATR}),
-        make_features({"atr_bps": ATR, "price": PRICE}),
-    ]
-    for features in blocks:
+    for features in (make_features({}), make_features(dict(ATRS))):
         for params in family.param_space.combinations():
             assert family.signal(features, params) is None
 
 
 @pytest.mark.parametrize("name", EXPECTED_FAMILY_NAMES)
 def test_nan_and_inf_features_never_raise_and_never_leak_into_score(name):
+    """``features_mtf`` guarantees finite values, but a family is the last line
+    of defence: a NaN score poisons every comparison the tournament makes with
+    it and silently ranks nonsense first."""
     family = FAMILY_BY_NAME[name]
     sc = scenario(name)
-    poisons = (float("nan"), float("inf"), float("-inf"))
-    for poison in poisons:
-        # Whole block poisoned.
-        everything = {k: poison for k in sc["strong"]}
-        # One value at a time poisoned, on top of a working setup.
-        blocks = [make_features(everything)]
-        blocks += [
-            make_features({**sc["strong"], key: poison}) for key in sc["strong"]
-        ]
+    for poison in (float("nan"), float("inf"), float("-inf")):
+        blocks = [make_features({k: poison for k in sc["strong"]})]
+        blocks += [make_features({**sc["strong"], key: poison}) for key in sc["strong"]]
         for features in blocks:
             for params in family.param_space.combinations():
                 sig = family.signal(features, params)
@@ -546,13 +611,13 @@ def test_nan_and_inf_features_never_raise_and_never_leak_into_score(name):
 @pytest.mark.parametrize("name", EXPECTED_FAMILY_NAMES)
 def test_partial_params_fall_back_to_grid_defaults(name):
     """The tournament always passes a full combination, but a family must not
-    explode when handed a partial dict or an unknown key."""
+    explode when handed a partial dict, an unknown key, or nothing at all."""
     family = FAMILY_BY_NAME[name]
     features = make_features(scenario(name)["strong"])
-    assert family.signal(features, {}) is None or True          # must not raise
-    assert family.signal(features, {"nonsense": 1}) is None or True
     full = family.param_space.defaults()
     assert _outcome(family, features, {}) == _outcome(family, features, full)
+    assert _outcome(family, features, {"nonsense": 1}) == _outcome(family, features, full)
+    assert family.signal(features) == family.signal(features, full)
 
 
 # --------------------------------------------------------------------------- #
@@ -560,152 +625,132 @@ def test_partial_params_fall_back_to_grid_defaults(name):
 # --------------------------------------------------------------------------- #
 
 
-def test_momentum_requires_the_slower_leg_to_agree():
-    sc = SCENARIOS["momentum_continuation"]
-    values = dict(sc["strong"])
-    values["ret_5m_bps"] = -8.0                     # 1m up, 5m down
+def test_momentum_requires_the_five_bar_leg_to_agree():
+    values = dict(SCENARIOS["momentum_continuation"]["strong"], ret5_1m=-10.0)
     assert fire("momentum_continuation", values) is None
 
 
 def test_momentum_requires_acceleration_not_just_size():
-    sc = SCENARIOS["momentum_continuation"]
-    values = dict(sc["strong"])
-    values["ret_5m_bps"] = 40.0                     # the 1m leg is decelerating
+    """A big bar with a flattening slope is an exhaustion print, not a trend."""
+    values = dict(SCENARIOS["momentum_continuation"]["strong"], accel_1m=-2.0)
     assert fire("momentum_continuation", values) is None
 
 
-def test_breakout_needs_compression_as_well_as_a_move():
-    sc = SCENARIOS["breakout"]
-    values = dict(sc["strong"])
-    values["compression_5m"] = 0.05                 # a move inside a wide range
+def test_breakout_needs_compression_as_well_as_a_break():
+    values = dict(SCENARIOS["breakout"]["strong"], rvol_pct_1m=0.8)
     assert fire("breakout", values) is None
 
 
-def test_breakout_needs_the_edge_of_the_range():
-    sc = SCENARIOS["breakout"]
-    values = dict(sc["strong"])
-    values["range_pos_5m"] = 0.55                   # mid-range: not a breakout
+def test_breakout_is_silent_inside_the_range():
+    """breakout_dist is exactly 0.0 inside the prior range, which is the whole
+    trigger: no threshold of its own is needed or wanted."""
+    values = dict(SCENARIOS["breakout"]["strong"], breakout_dist_1m=0.0)
     assert fire("breakout", values) is None
+
+
+def test_breakout_fades_with_a_wider_prior_range():
+    tight = fire("breakout", dict(SCENARIOS["breakout"]["strong"], rvol_pct_1m=0.05))
+    loose = fire("breakout", dict(SCENARIOS["breakout"]["strong"], rvol_pct_1m=0.29))
+    assert tight is not None and loose is not None
+    assert loose.score < tight.score
 
 
 def test_pullback_rejects_a_retrace_deep_enough_to_be_a_reversal():
-    sc = SCENARIOS["trend_pullback"]
-    values = dict(sc["strong"])
-    values["ret_3m_bps"] = -40.0
+    values = dict(SCENARIOS["trend_pullback"]["strong"], ret_1m=-40.0)
     assert fire("trend_pullback", values) is None
 
 
-def test_pullback_waits_for_the_turn():
-    sc = SCENARIOS["trend_pullback"]
-    values = dict(sc["strong"])
-    values["ret_30s_bps"] = -1.5                    # still falling
+def test_pullback_rejects_a_broken_trend_leg():
+    values = dict(SCENARIOS["trend_pullback"]["strong"], ret5_1m=-8.0)
+    assert fire("trend_pullback", values) is None
+
+
+def test_pullback_needs_a_trend_before_the_retrace():
+    values = dict(SCENARIOS["trend_pullback"]["strong"], ema_slope_1m=0.05, rsi_1m=51.0)
     assert fire("trend_pullback", values) is None
 
 
 def test_mean_reversion_refuses_to_fade_a_strong_trend():
-    sc = SCENARIOS["mean_reversion"]
-    values = dict(sc["strong"])
-    values["trend_strength"] = 0.95
+    values = dict(SCENARIOS["mean_reversion"]["strong"], ema_slope_1m=2.0, rsi_1m=85.0)
     assert fire("mean_reversion", values) is None
 
 
-def test_mean_reversion_falls_back_to_band_width_when_no_zscore_is_published():
-    """The band is mean +/- 2 sigma, so a 20 bps width means sigma = 5 bps."""
-    values = {
-        "atr_1m_bps": ATR,
-        "bb_width_5m_bps": 20.0,
-        "vwap_dev_5m_bps": 14.0,                    # 2.8 sigma
-        "trend_strength": 0.2,
-        "trade_flow_accel": -0.3,
-    }
-    sig = fire("mean_reversion", values)
+def test_mean_reversion_fades_the_stretch():
+    sig = fire("mean_reversion", SCENARIOS["mean_reversion"]["strong"])
     assert sig is not None and sig.side is Side.SHORT
-    weaker = dict(values, vwap_dev_5m_bps=11.0)     # 2.2 sigma
-    weak_sig = fire("mean_reversion", weaker)
-    assert weak_sig is not None and weak_sig.score < sig.score
-
-
-def test_mean_reversion_is_silent_when_no_deviation_feature_exists():
-    values = {"atr_1m_bps": ATR, "trend_strength": 0.2}
-    assert fire("mean_reversion", values) is None
 
 
 def test_volume_impulse_needs_a_price_response_not_just_volume():
-    sc = SCENARIOS["volume_impulse"]
-    values = dict(sc["strong"])
-    values["ret_1m_bps"] = 0.2                      # volume with no move
+    values = dict(SCENARIOS["volume_impulse"]["strong"], ret_1m=0.2)
     assert fire("volume_impulse", values) is None
 
 
-def test_volume_ratio_fallback_is_capped_against_the_v2_divide_by_zero_bug():
-    """V2 reported volume ratios like 1291x because the baseline is usually
-    zero here.  The ratio fallback is capped, so an absurd reading cannot buy
-    more conviction than a merely large one."""
-    base = {
-        "atr_1m_bps": ATR, "trade_count_1m": 12, "ret_1m_bps": 5.0,
-        "quote_volume_1m_usd": 9000.0,
-    }
-    params = {"min_trades": 5, "vol_z_min": 2.5, "response_atr": 1.0}
-    big = fire("volume_impulse", dict(base, volume_ratio_1m=50.0), params)
-    absurd = fire("volume_impulse", dict(base, volume_ratio_1m=1291.0), params)
-    assert big is not None and absurd is not None
-    assert big.score == pytest.approx(absurd.score)
+def test_volume_impulse_ignores_a_neutral_volume_reading():
+    """vol_accel reports 1.0 when its baseline window is too empty to support a
+    ratio — the guard that stopped V2's 1291x readings.  Every arm of this grid
+    is strictly above 1.0, so a neutral reading can never buy a signal."""
+    values = dict(SCENARIOS["volume_impulse"]["strong"], vol_accel_1m=1.0)
+    family = FAMILY_BY_NAME["volume_impulse"]
+    features = make_features(values)
+    for params in family.param_space.combinations():
+        assert family.signal(features, params) is None
 
 
-def test_orderflow_needs_notional_behind_the_imbalance():
-    sc = SCENARIOS["orderflow_imbalance"]
-    values = dict(sc["strong"])
-    values["quote_volume_1m_usd"] = 50.0            # one-sided, but it is dust
+def test_orderflow_needs_prints_behind_the_imbalance():
+    values = dict(SCENARIOS["orderflow_imbalance"]["strong"], trades_1m=4.0)
     assert fire("orderflow_imbalance", values) is None
 
 
-def test_vwap_reversion_refuses_a_trending_market():
-    sc = SCENARIOS["vwap_reversion"]
-    values = dict(sc["strong"])
-    values["trend_strength"] = 0.9
-    assert fire("vwap_reversion", values) is None
-
-
-def test_volatility_expansion_falls_back_to_the_atr_ratio():
-    """atr_1m * sqrt(5) / atr_5m is 1.0 under diffusion scaling and rises when
-    the one-minute series wakes up."""
-    quiet = {"atr_1m_bps": ATR, "atr_5m_bps": ATR * math.sqrt(5.0),
-             "vol_percentile": 0.9, "ret_1m_bps": 5.0}
-    assert fire("volatility_expansion", quiet) is None
-    loud = {"atr_1m_bps": 5.0, "atr_5m_bps": 5.0, "vol_percentile": 0.9,
-            "ret_1m_bps": 12.0}
-    sig = fire("volatility_expansion", loud)
+def test_orderflow_reads_the_side_of_the_aggressor():
+    sig = fire("orderflow_imbalance", SCENARIOS["orderflow_imbalance"]["strong"])
     assert sig is not None and sig.side is Side.LONG
 
 
-def test_volatility_expansion_requires_vol_to_actually_be_high():
-    sc = SCENARIOS["volatility_expansion"]
-    values = dict(sc["strong"])
-    values["vol_percentile"] = 0.2                  # a blip inside a dead tape
+def test_vwap_reversion_refuses_a_trending_market():
+    values = dict(SCENARIOS["vwap_reversion"]["strong"], ema_slope_1m=2.0, rsi_1m=85.0)
+    assert fire("vwap_reversion", values) is None
+
+
+def test_volatility_expansion_requires_vol_to_be_high_not_merely_moving():
+    values = dict(SCENARIOS["volatility_expansion"]["strong"], rvol_pct_1m=0.5)
     assert fire("volatility_expansion", values) is None
 
 
-def test_short_term_reversal_requires_the_move_to_have_stopped():
-    sc = SCENARIOS["short_term_reversal"]
-    values = dict(sc["strong"])
-    values["ret_15s_bps"] = 2.0                     # still extending
+def test_volatility_expansion_takes_its_side_from_the_expanding_bar():
+    up = fire("volatility_expansion", SCENARIOS["volatility_expansion"]["strong"])
+    down = fire("volatility_expansion",
+                dict(SCENARIOS["volatility_expansion"]["strong"], ret_1m=-5.0))
+    assert up is not None and down is not None
+    assert up.side is Side.LONG and down.side is Side.SHORT
+
+
+def test_short_term_reversal_requires_the_run_to_have_stopped():
+    values = dict(SCENARIOS["short_term_reversal"]["strong"], ret_1m=2.0)
     assert fire("short_term_reversal", values) is None
 
 
-def test_short_term_reversal_fades_the_move():
+def test_short_term_reversal_fades_the_run():
     sig = fire("short_term_reversal", SCENARIOS["short_term_reversal"]["strong"])
     assert sig is not None and sig.side is Side.SHORT
 
 
-def test_short_term_reversal_is_silent_without_sub_minute_returns():
-    values = {"atr_1m_bps": ATR, "ret_30s_bps": 6.0, "trend_strength": 0.2}
-    assert fire("short_term_reversal", values) is None
+def test_momentum_and_reversal_are_opposite_hypotheses_on_the_same_data():
+    """A and I disagree by construction.  One of them is wrong on this venue and
+    the tournament, not this module, decides which."""
+    values = _v(ret_1m=6.0, ret5_1m=20.0, accel_1m=1.0, ema_slope_1m=0.5, rsi_1m=65.0)
+    momentum = fire("momentum_continuation", values,
+                    {"interval": "1m", "min_impulse_atr": 1.0, "min_accel_atr": 0.1})
+    reversal = fire("short_term_reversal", dict(values, ret_1m=-1.5),
+                    {"interval": "1m", "ext_atr": 2.5, "stall_frac": 0.25})
+    assert momentum is not None and reversal is not None
+    assert momentum.side is Side.LONG
+    assert reversal.side is Side.SHORT
 
 
 def test_hybrid_tilt_moves_between_two_opposed_hypotheses():
-    """Momentum up while price is *above* VWAP: the two legs disagree, so the
-    tilt decides the side.  That is the whole point of the family."""
-    values = {"atr_1m_bps": ATR, "ret_1m_bps": 12.0, "vwap_dev_5m_bps": 30.0}
+    """A positive five-bar leg while price is *above* the mean: the two legs
+    disagree, so the tilt alone decides the side.  That is the family."""
+    values = _v(ret5_1m=30.0, zscore_1m=3.0)
     chase = fire("hybrid_multifactor", values,
                  {"momentum_tilt": 1.0, "min_conviction": 0.3, "flow_weight": 0.0})
     fade = fire("hybrid_multifactor", values,
@@ -713,25 +758,6 @@ def test_hybrid_tilt_moves_between_two_opposed_hypotheses():
     assert chase is not None and fade is not None
     assert chase.side is Side.LONG
     assert fade.side is Side.SHORT
-
-
-def test_hybrid_reads_features_only_and_never_calls_another_family():
-    """Families are evaluated independently before any blending, so the hybrid
-    must not reach into A-I: its conviction has to be reproducible from the
-    feature block and its own three parameters alone."""
-    import inspect
-
-    from app.research import families as mod
-
-    source = inspect.getsource(mod.HybridMultifactor)
-    for other in EXPECTED_FAMILY_NAMES:
-        if other == "hybrid_multifactor":
-            continue
-        assert other not in source
-    for cls in ("MomentumContinuation", "Breakout", "TrendPullback", "MeanReversion",
-                "VolumeImpulse", "OrderflowImbalance", "VwapReversion",
-                "VolatilityExpansion", "ShortTermReversal", "FAMILIES"):
-        assert cls not in source
 
 
 def test_hybrid_min_conviction_is_the_few_excellent_trades_dial():
@@ -744,25 +770,74 @@ def test_hybrid_min_conviction_is_the_few_excellent_trades_dial():
     assert strict is None
 
 
+def test_hybrid_ignores_the_tape_when_flow_weight_is_zero():
+    """The venue's tape is mostly empty, so the family has to stay runnable
+    without it."""
+    params = {"momentum_tilt": 0.5, "min_conviction": 0.3, "flow_weight": 0.0}
+    base = dict(SCENARIOS["hybrid_multifactor"]["strong"], aggr_imb_1m=0.6)
+    none = dict(SCENARIOS["hybrid_multifactor"]["strong"], aggr_imb_1m=0.0)
+    a = fire("hybrid_multifactor", base, params)
+    b = fire("hybrid_multifactor", none, params)
+    assert a is not None and b is not None
+    assert a.score == pytest.approx(b.score)
+
+
+def test_hybrid_reads_features_only_and_never_calls_another_family():
+    """Families are evaluated independently before any blending, so the hybrid
+    must not reach into A-I: its conviction has to be reproducible from the
+    feature block and its own three parameters alone."""
+    import inspect
+
+    from app.research import families as mod
+
+    source = inspect.getsource(mod.HybridMultifactor)
+    for other in EXPECTED_FAMILY_NAMES:
+        if other != "hybrid_multifactor":
+            assert other not in source
+    for cls in ("MomentumContinuation", "Breakout", "TrendPullback", "MeanReversion",
+                "VolumeImpulse", "OrderflowImbalance", "VwapReversion",
+                "VolatilityExpansion", "ShortTermReversal", "FAMILIES"):
+        assert cls not in source
+
+
 # --------------------------------------------------------------------------- #
-# Cross-module contract checks (active as soon as the sibling modules land)
+# Cross-module contracts
 # --------------------------------------------------------------------------- #
 
 
-def test_feature_names_exist_in_the_published_feature_block():
-    pytest.importorskip("app.research.features_mtf")
+def test_every_feature_a_family_reads_is_published_by_features_mtf():
     from app.research.features_mtf import FEATURE_NAMES
 
     published = set(FEATURE_NAMES)
-    missing = {
-        logical: aliases
-        for logical, aliases in REQUIRED_FEATURES.items()
-        if not published.intersection(aliases)
-    }
-    assert not missing, (
-        "families.py reads features that features_mtf.py does not publish: "
-        f"{sorted(missing)}"
+    unknown = [n for n in feature_names_used() if n not in published]
+    assert not unknown, (
+        f"families.py reads features features_mtf.py does not publish: {unknown}"
     )
+    assert validate_feature_names() == feature_names_used()
+
+
+def test_validate_feature_names_fails_loudly_on_a_rename(monkeypatch):
+    """MTFFeatures.get(name, default) cannot tell a typo from an absent
+    feature, so a rename would silently degrade a family into a generator of
+    neutral readings.  The check has to be explicit."""
+    import app.research.features_mtf as fm
+
+    monkeypatch.setattr(fm, "FEATURE_NAMES", ("atr_1m",), raising=True)
+    with pytest.raises(ValueError, match="does not publish"):
+        validate_feature_names()
+
+
+def test_interval_set_matches_the_feature_engine_default():
+    from app.research.features_mtf import DEFAULT_INTERVALS
+
+    assert INTERVALS == DEFAULT_INTERVALS
+
+
+def test_required_features_covers_every_base_used():
+    from app.research.features_mtf import FEATURE_BASES
+
+    for base in REQUIRED_FEATURES:
+        assert base in FEATURE_BASES
 
 
 def test_allowed_regimes_type_matches_the_regime_contract():
@@ -781,7 +856,6 @@ def test_research_signal_uses_the_frozen_side_enum():
     sig = fire("momentum_continuation", SCENARIOS["momentum_continuation"]["strong"])
     assert isinstance(sig, ResearchSignal)
     assert isinstance(sig.side, Side)
-    assert sig.side in (Side.LONG, Side.SHORT)
 
 
 def test_param_space_is_frozen():
@@ -789,3 +863,27 @@ def test_param_space_is_frozen():
     assert isinstance(space, ParamSpace)
     with pytest.raises(Exception):
         space.name = "mutated"  # type: ignore[misc]
+
+
+def test_families_never_look_at_money_risk_or_the_exchange():
+    """A family sees a feature block and nothing else.  The cheapest way to
+    enforce that is the import list: no fees, no capital, no positions, no risk
+    engine, no exchange client can reach this module, so none of them can be
+    silently duplicated inside it."""
+    import inspect
+
+    from app.research import families as mod
+
+    source = inspect.getsource(mod)
+    imports = [
+        line.strip() for line in source.splitlines()
+        if line.startswith(("from ", "import "))
+    ]
+    assert imports == [
+        "from __future__ import annotations",
+        "import itertools",
+        "import math",
+        "from dataclasses import dataclass, field",
+        "from typing import TYPE_CHECKING, Any, Iterator, Mapping, Sequence",
+        "from ..types import Side",
+    ], imports

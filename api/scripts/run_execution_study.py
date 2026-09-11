@@ -146,6 +146,7 @@ def run(args: argparse.Namespace) -> dict[str, Any]:
         "grid": [],
         "grid_pessimistic": [],
         "comparison": {},
+        "notes": [],
         "conclusion": "",
     }
 
@@ -192,10 +193,22 @@ def run(args: argparse.Namespace) -> dict[str, Any]:
     payload["params"]["comparison_offset_ticks"] = offset
     for sym in sorted(slices):
         sl = slices[sym]
+        # A probe whose exit horizon falls past the end of the tape is dropped,
+        # so on a very short tape every probe would vanish and the comparison
+        # would print three empty arms.  Shorten the hold instead, and say so
+        # rather than letting the reader assume the configured one was used.
+        hold_ms = args.hold_seconds * 1000
+        span_ms = max(0, sl.end_ms - sl.start_ms)
+        if hold_ms * 4 > span_ms and span_ms > 0:
+            hold_ms = max(1_000, span_ms // 4)
+            payload.setdefault("notes", []).append(
+                f"{sym}: probe hold shortened from {args.hold_seconds}s to "
+                f"{hold_ms // 1000}s — the tape spans only {span_ms / 1000:.0f}s"
+            )
         signals = replay.probe_signals(
             sl,
             cadence_ms=args.cadence_seconds * 1000,
-            hold_ms=args.hold_seconds * 1000,
+            hold_ms=hold_ms,
             notional_usd=args.notional,
             warmup_ms=args.warmup_seconds * 1000,
             limit=args.max_quotes,
@@ -386,6 +399,9 @@ def render(payload: dict[str, Any], log=print) -> None:
             for note in c.get("notes") or []:
                 log(f"       note: {note}")
 
+    for note in payload.get("notes") or []:
+        log(f"  note: {note}")
+
     log("")
     log("=" * 78)
     log(payload["conclusion"])
@@ -394,15 +410,25 @@ def render(payload: dict[str, Any], log=print) -> None:
 
 
 def _log_touch_note(grid: list[dict[str, Any]], log) -> None:
-    """Say out loud how many touches were not fills — the central lie."""
+    """Say out loud how many touches were not fills — the central lie.
+
+    Counted over grid *cells*, not quotes: the same probe appears once per
+    (timeout, offset) combination, and saying "touches" without that
+    qualification would inflate the denominator.
+    """
     touched = sum(r["touched"] for r in grid)
     fills = sum(r["fills"] for r in grid)
     if touched <= 0:
+        log(
+            "  nothing touched our quote level anywhere in the grid — with this "
+            "little tape that is a statement about the sample, not the venue."
+        )
         return
     log(
-        f"  touched-but-not-filled: {touched - fills} of {touched} touches "
-        f"({(1 - fills / touched) * 100:.1f}%) — a naive maker backtest would "
-        "have booked every one of them as a fill."
+        f"  touched-but-not-filled: {touched - fills} of {touched} touched "
+        f"quote-cells ({(1 - fills / touched) * 100:.1f}%) — a naive maker "
+        "backtest books every touch as a fill and would report the other "
+        f"{fills} as {touched}."
     )
 
 

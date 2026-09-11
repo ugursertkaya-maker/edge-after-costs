@@ -46,11 +46,10 @@ from __future__ import annotations
 
 import asyncio
 import json
-import math
 import tempfile
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from pathlib import Path
-from typing import Any, Iterable, Iterator, Sequence
+from typing import Any, Iterable, Sequence
 
 from ..config import Settings
 from ..types import Bar, OrderBook, Trade, now_ms
