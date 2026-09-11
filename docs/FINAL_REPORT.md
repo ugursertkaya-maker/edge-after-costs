@@ -117,11 +117,19 @@ from the bar range with a 2 bps floor, slippage from a synthesised book, entries
 filled one bar **after** the signal, and when a bar's range contains both the
 stop and the target the **stop is always assumed to hit first**.
 
-| Period | Bars | Trades | Win rate | Fees | Slippage | **NET P&L** | End equity |
-|---|---|---|---|---|---|---|---|
-| 7d | 40,248 | 8 | 12.5% | $0.28 | $0.86 | **−$4.56** | $495.44 (−0.91%) |
-| 30d | 170,580 | 185 | 36.8% | $6.18 | $19.22 | **−$39.94** | $460.06 (−7.99%) |
-| 90d | 516,176 | 424 | 40.8% | $13.58 | $42.60 | **−$80.32** | $419.68 (−16.06%) |
+| Period | Bars | Trades | Win rate | PF | Fees | Slippage | **NET P&L** | End equity |
+|---|---|---|---|---|---|---|---|---|
+| 7d | 40,320 | 2 | 0.0% | 0.00 | $0.07 | $0.23 | **−$1.21** | $498.79 (−0.24%) |
+| 30d | 170,628 | 72 | 44.4% | 0.30 | $2.49 | $7.86 | **−$13.49** | $486.51 (−2.70%) |
+| 90d | 516,228 | 147 | 45.6% | 0.29 | $5.01 | $15.84 | **−$27.67** | $472.33 (−5.53%) |
+| 180d | 1,034,628 | 189 | 46.6% | 0.29 | $6.38 | $20.10 | **−$35.80** | $464.20 (−7.16%) |
+| **365d** | **2,100,228** | **535** | **44.1%** | **0.25** | **$16.17** | **$52.23** | **−$113.31** | **$386.69 (−22.66%)** |
+
+Five periods, 2.1 million bars, every one negative, and the profit factor is
+flat at 0.25–0.30 across all of them. A win rate near 45% with a profit factor
+of 0.25 is the signature of a system whose wins are far smaller than its
+losses — which is exactly what happens when the target is 2 bps and the cost of
+getting it is 2 bps.
 
 90-day per-strategy leaderboard:
 
@@ -132,8 +140,8 @@ stop and the target the **stop is always assumed to hit first**.
 | momentum_scalp | 238 | 41.2% | $7.60 | $24.07 | **−$45.46** | 0.22 | LOSS (worst) |
 | mean_reversion / flow_impulse / book_imbalance | 0 | — | — | — | — | — | never qualified |
 
-**Slippage, not fees, is the dominant cost**: $42.60 of slippage against $13.58
-of fees over 90 days. On a venue with $753 of volume per minute, crossing the
+**Slippage, not fees, is the dominant cost**: over 365 days, $52.23 of slippage
+against $16.17 of fees — more than 3:1. On a venue with $753 of volume per minute, crossing the
 spread is expensive no matter how cheap the commission is.
 
 ### Walk-forward — the number that counts
