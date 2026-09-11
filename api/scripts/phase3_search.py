@@ -131,6 +131,15 @@ def main() -> int:
                     help="per symbol")
     ap.add_argument("--intervals", default=",".join(DEFAULT_INTERVALS))
     ap.add_argument("--equity", type=float, default=500.0)
+    ap.add_argument("--families", default=None,
+                    help="comma separated subset; default every family")
+    ap.add_argument("--max-params", type=int, default=8,
+                    help="parameter sets per family. Lower it to spend the "
+                         "budget on the exit/stop/entry axes instead: the "
+                         "one-factor sweeps are enumerated per (family, params), "
+                         "so 8 params x 10 families exhausts a small budget on "
+                         "the family axis before the exit axis is reached.")
+    ap.add_argument("--baseline-horizon", type=int, default=60)
     args = ap.parse_args()
 
     symbols = tuple(s.strip().upper() for s in args.symbols.split(",") if s.strip())
@@ -147,10 +156,16 @@ def main() -> int:
     # peak bounded and costs nothing, because a candidate never spans symbols.
     cfg = TournamentConfig(
         symbols=symbols,
+        families=(
+            tuple(f.strip() for f in args.families.split(",") if f.strip())
+            if args.families else None
+        ),
         fee_bps_per_side=args.fee_bps,
         starting_equity=args.equity,
         jobs=args.jobs,
         max_candidates=args.max_candidates,
+        max_params_per_family=args.max_params,
+        baseline_horizon_minutes=args.baseline_horizon,
         tape_cache_dir=args.tape_cache,
     )
 
