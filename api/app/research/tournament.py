@@ -562,7 +562,16 @@ class TournamentConfig:
     min_trades: int = 30
     screen_scheme_index: int = 0         # which scheme screens (cheapest first)
     screen_min_in_sample_expectancy: float = 0.0
+    #: Retain full out-of-sample trade lists so ``robustness.py`` can gate on
+    #: them.  When on, every window ships its trades to the merge — winning and
+    #: losing alike, because an arm's trade list must be its *whole*
+    #: out-of-sample history or nothing.  Filtering losing windows out of the
+    #: pipe is what produced the false Phase-3 finalist and must not come back;
+    #: the memory it used to save is instead bounded at the arm level, by
+    #: ``max_kept_trade_arms``, or given up entirely by turning this off.
     keep_trades_for_finalists: bool = True
+    #: How many arms may hold trades at once.  Once full, later arms keep
+    #: statistics only — never a partial list.
     max_kept_trade_arms: int = 40
 
     # Reporting
@@ -2742,6 +2751,11 @@ def to_json(results: Sequence[ArmResult], *, config: TournamentConfig,
                 "out_of_sample": stats(r.out_of_sample),
                 "windows_evaluated": r.windows_evaluated,
                 "windows_positive": r.windows_positive,
+                # Whether the gates that read individual trades had a complete
+                # trade set to read.  Published so a report can never again
+                # show a gate verdict without showing what it was computed on.
+                "trades_retained": len(r.out_of_sample_trades),
+                "trades_complete": r.trades_complete,
                 "signals_available": r.signals_available,
                 "exit_reasons": dict(r.exit_reasons),
                 "per_regime": {k: stats(v) for k, v in r.per_regime.items()},

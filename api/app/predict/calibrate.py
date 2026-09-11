@@ -51,6 +51,7 @@ __all__ = [
     "CalibrationLeak",
     "CalibrationReport",
     "Calibrator",
+    "DEFAULT_LEAK_FRACTION",
     "IdentityCalibrator",
     "IsotonicCalibrator",
     "PlattCalibrator",
@@ -365,11 +366,30 @@ def _fingerprint(p: "np.ndarray", y: "np.ndarray") -> frozenset[str]:
 
     Row-wise rather than whole-set, because the leak we care about is "these
     test rows were in the fit set", not "the sets are identical".
+
+    ``(p, y)`` is a *value* fingerprint and two genuinely different rows can
+    collide — a tree ensemble hands the same leaf probability to hundreds of
+    rows.  That is why :func:`fit_calibrator` also accepts ``keys`` (row
+    identities such as ``ts_ms``): with keys the check is exact and any overlap
+    at all is a leak, and without them it falls back to this and needs a
+    fraction of the evaluation set to overlap before it will call it one.
     """
     out = set()
     for pi, yi in zip(np.asarray(p, dtype=float).reshape(-1), np.asarray(y).reshape(-1)):
         out.add(hashlib.blake2b(f"{pi!r}|{int(yi)}".encode(), digest_size=8).hexdigest())
     return frozenset(out)
+
+
+def _as_keys(keys) -> frozenset:
+    if keys is None:
+        return frozenset()
+    return frozenset(np.asarray(keys).reshape(-1).tolist())
+
+
+#: Without row keys, this fraction of the evaluation set must look like fit rows
+#: before a leak is declared.  Full overlap — the mistake this exists to stop —
+#: is 1.0 and is always caught.
+DEFAULT_LEAK_FRACTION = 0.10
 
 
 @dataclass
@@ -379,6 +399,8 @@ class Calibrator:
     method: str = "identity"
     #: Digests of the rows this calibrator was fitted on (never serialised).
     fit_fingerprint: frozenset[str] = field(default_factory=frozenset, repr=False)
+    #: Exact row identities (e.g. ``ts_ms``) when the caller supplied them.
+    fit_keys: frozenset = field(default_factory=frozenset, repr=False)
     n_fit: int = 0
 
     def predict(self, p) -> "np.ndarray":  # pragma: no cover - abstract
@@ -499,6 +521,7 @@ def fit_calibrator(
     method: str = "isotonic",
     smoothing: bool = True,
     max_iter: int = 100,
+    keys=None,
 ) -> Calibrator:
     """Fit a calibrator **on validation data**.
 
@@ -507,13 +530,27 @@ def fit_calibrator(
     to score those rows — so the "fitted and evaluated on the same data" result,
     which always looks excellent and always means nothing, cannot be produced
     by accident.
+
+    Pass ``keys`` — the ``ts_ms`` of the validation rows, or any other row
+    identity — whenever you have them.  With keys the leak check is exact.
+    Without them it compares ``(probability, label)`` values, which cannot
+    distinguish a genuinely repeated prediction from a repeated *row*, so it
+    needs :data:`DEFAULT_LEAK_FRACTION` of the evaluation set to match before it
+    will refuse.
     """
     p, y = _as_pair(p_val, y_val)
     fp = _fingerprint(p, y)
+    kf = _as_keys(keys)
+    if kf and len(kf) != p.size:
+        raise ValueError(
+            f"keys must be unique per row: got {len(kf)} distinct for {p.size} rows"
+        )
     n = int(p.size)
 
     if method == "identity":
-        return IdentityCalibrator(method="identity", fit_fingerprint=fp, n_fit=n)
+        return IdentityCalibrator(
+            method="identity", fit_fingerprint=fp, fit_keys=kf, n_fit=n
+        )
 
     if method == "platt":
         n_pos = float(y.sum())
@@ -525,7 +562,15 @@ def fit_calibrator(
         else:
             t = y.astype(float)
         f = _logit(p)
+
+        def objective(aa: float, bb: float) -> float:
+            z = aa * f + bb
+            # log(1+exp(-z)) evaluated without overflowing on either branch.
+            pos = np.where(z >= 0, np.log1p(np.exp(-np.abs(z))), z + np.log1p(np.exp(-np.abs(z))))
+            return float(np.sum((t - 1.0) * z - pos))
+
         a, b = 1.0, 0.0
+        obj = objective(a, b)
         for _ in range(max_iter):
             z = a * f + b
             q = expit(z)
@@ -536,18 +581,31 @@ def fit_calibrator(
             h_ab = float(np.sum(wgt * f))
             h_bb = float(np.sum(wgt)) + 1e-9
             det = h_aa * h_bb - h_ab * h_ab
-            if abs(det) < 1e-18:
+            if abs(det) < 1e-18 or max(abs(g_a), abs(g_b)) < 1e-9:
                 break
             da = (h_bb * g_a - h_ab * g_b) / det
             db = (h_aa * g_b - h_ab * g_a) / det
-            a -= da
-            b -= db
-            if max(abs(da), abs(db)) < 1e-12:
+            # Backtracking line search (Lin, Weng & Lin 2007).  Without it the
+            # Newton step diverges on a near-separable validation set — a score
+            # that happens to order the labels perfectly sends the slope to
+            # 1e11 and the "calibrated" probability becomes a step function.
+            step = 1.0
+            improved = False
+            for _ in range(32):
+                cand_a, cand_b = a - step * da, b - step * db
+                cand = objective(cand_a, cand_b)
+                if cand < obj:
+                    a, b, obj = cand_a, cand_b, cand
+                    improved = True
+                    break
+                step *= 0.5
+            if not improved or max(abs(step * da), abs(step * db)) < 1e-12:
                 break
-        if not (math.isfinite(a) and math.isfinite(b)):
+        if not (math.isfinite(a) and math.isfinite(b)) or abs(a) > 1e6:
             a, b = 1.0, 0.0
         return PlattCalibrator(
-            method="platt", fit_fingerprint=fp, n_fit=n, a=float(a), b=float(b)
+            method="platt", fit_fingerprint=fp, fit_keys=kf, n_fit=n,
+            a=float(a), b=float(b),
         )
 
     if method == "isotonic":
@@ -558,6 +616,7 @@ def fit_calibrator(
         return IsotonicCalibrator(
             method="isotonic",
             fit_fingerprint=fp,
+            fit_keys=kf,
             n_fit=n,
             x=np.clip(xs, 0.0, 1.0),
             y=np.clip(fitted, 0.0, 1.0),
@@ -586,22 +645,53 @@ def calibrator_from_payload(payload: dict) -> Calibrator:
 # --------------------------------------------------------------------------- #
 
 
-def check_not_fit_rows(calibrator: Calibrator, p, y) -> None:
+def check_not_fit_rows(
+    calibrator: Calibrator,
+    p,
+    y,
+    *,
+    keys=None,
+    leak_fraction: float = DEFAULT_LEAK_FRACTION,
+) -> None:
     """Raise :class:`CalibrationLeak` if these rows were used to fit.
 
     The check is row-wise, so a partial overlap — a validation window that
     bleeds into the test window because somebody forgot the embargo — is caught
     just as loudly as scoring the exact fit set.
+
+    With ``keys`` on both sides the comparison is exact and **one** shared row
+    is enough to refuse.  Falling back to ``(probability, label)`` values, it
+    takes ``leak_fraction`` of the evaluation set, because identical
+    probabilities are ordinary — every leaf of a tree emits one — and a guard
+    that cried leak on a coincidence would simply be turned off.
     """
+    eval_keys = _as_keys(keys)
+    if calibrator.fit_keys and eval_keys:
+        shared = calibrator.fit_keys & eval_keys
+        if shared:
+            raise CalibrationLeak(
+                f"{calibrator.method} calibrator is being evaluated on "
+                f"{len(shared)} row(s) it was fitted on, matched by row id "
+                f"(fit n={calibrator.n_fit}, eval n={len(eval_keys)}). "
+                "Fit on validation, evaluate on test."
+            )
+        return
+
     if not calibrator.fit_fingerprint:
         return
     p_arr, y_arr = _as_pair(p, y)
-    overlap = _fingerprint(p_arr, y_arr) & calibrator.fit_fingerprint
-    if overlap:
+    eval_fp = _fingerprint(p_arr, y_arr)
+    overlap = eval_fp & calibrator.fit_fingerprint
+    if not overlap:
+        return
+    fraction = len(overlap) / max(len(eval_fp), 1)
+    if fraction >= leak_fraction:
         raise CalibrationLeak(
-            f"{calibrator.method} calibrator is being evaluated on "
-            f"{len(overlap)} row(s) it was fitted on (fit n={calibrator.n_fit}, "
-            f"eval n={p_arr.size}). Fit on validation, evaluate on test."
+            f"{calibrator.method} calibrator is being evaluated on rows it was "
+            f"fitted on: {fraction:.0%} of the evaluation set matches the fit set "
+            f"by (probability, label) (fit n={calibrator.n_fit}, "
+            f"eval n={p_arr.size}). Fit on validation, evaluate on test. "
+            "Pass keys= on both sides for an exact check."
         )
 
 
@@ -614,6 +704,7 @@ def calibrate_and_evaluate(
     tolerance: float = CALIBRATION_TOLERANCE,
     min_bin_count: int = 1,
     strict: bool = True,
+    keys=None,
 ) -> CalibrationReport:
     """Apply a calibrator to held-out rows and score the result.
 
@@ -621,7 +712,7 @@ def calibrate_and_evaluate(
     refuses to run on rows the calibrator was fitted on.
     """
     if strict:
-        check_not_fit_rows(calibrator, p, y)
+        check_not_fit_rows(calibrator, p, y, keys=keys)
     return evaluate_calibration(
         calibrator.predict(p),
         y,

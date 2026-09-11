@@ -182,20 +182,52 @@ direction the analysis predicted would be needed. The mechanism is coherent:
 take a volume impulse only during a volatility expansion, aim well past the
 typical hourly move, and accept a low hit rate for a favourable payoff.
 
-**It is still not being promoted. Three reasons, in order of weight.**
+**It was not promoted, and on recomputation it fails. The root cause was worse
+than "the wrong trade set" — it was survivorship.**
 
-**1. Three of the seven gates were computed against a different trade set than
-they report on.** Gate 4 states the best trade was "$+1.41, 10% of all net P&L",
-which implies a set whose net is ≈ **$14.10** — but the reported out-of-sample
-net is **$5.51**. The fee-stress rows tell the same story: "fees +25%" reports a
-net of **$14.32**, which is *higher* than the unstressed $5.51 it is supposed to
-be degrading. Raising fees cannot raise net P&L. So gates 3, 4 and 6 — the
-not-dominated-by-one-trade test, the Monte Carlo, and the cost stress — ran over
-the arm's retained trade list (in-sample and out-of-sample together), not over
-the 79 out-of-sample trades whose numbers are in the headline. **Those three
-gates therefore do not verify the out-of-sample result**, and a 7/7 that is
-really a 4/7 is not a pass. This is a defect in the gate plumbing, not in the
-strategy, and it is the first thing to fix.
+**1. A survivorship filter, since fixed.** `_run_task` in `tournament.py`
+discarded the trades of every walk-forward window whose out-of-sample net P&L
+was `<= 0`, while keeping that window's **statistics** in the merge. So
+`out_of_sample` described all 16 windows (79 trades, net +$5.51) while
+`out_of_sample_trades` held only the 9 profitable ones (45 trades, net
+**+$14.72**). Every strange number in the original output falls out of that
+exactly: the fee-stress base of $14.32 is `14.7176 − 0.25 × 1.5786`, and gate 4's
+"$1.41 = 10% of net" is `1.4115 / 14.7176`. The gates were being shown only the
+windows that worked.
+
+Recomputed against all 79 out-of-sample trades, **the arm fails gate 6**:
+
+| Gate | Reported (45-trade subset) | Corrected (79 trades) |
+|---|---|---|
+| MC p95 drawdown | $4.28 | **$11.03** |
+| P(ending below $500) | 0.2% | **21.2%** (limit 35%) |
+| Best trade share | 10% | **26%** |
+| Expectancy ex-best trade | +$0.3024 | **+$0.0525** |
+| fees +25% | $14.32 | +$4.82 |
+| **slippage ×2** | $9.93 | **−$2.84 — FAILS** |
+
+Doubling slippage costs $8.35 — **more than the entire edge**. On a venue where
+slippage already runs at three times fees, that is not a hypothetical stress.
+Gates 3 and 4 now pass only narrowly. The verdict is **6/7, rejected**.
+
+The fix is in two independent halves that do not trust each other: the producer
+raises if an arm's trade list stops reconciling with its own statistics, and the
+consumer re-checks before gating and reports **"not evaluated"** rather than a
+number when it cannot reconcile. A filter that drops trades without dropping
+statistics now fails on the window that caused it instead of surfacing as a
+plausible finalist three phases later.
+
+**1b. The trades were also double-counted.** The 79 out-of-sample trades are
+only **50 distinct round trips**. The 30/7 and 60/14 walk-forward schemes tile
+more than 40 days of the same calendar and their results are pooled, so 29
+trades are the same round trip counted twice. Deduplicated the arm is 50 trades
+netting +$3.48. This does not change the direction of any Phase 3 conclusion —
+everything was negative by wide margins — but it means **the effective sample
+everywhere in this report is about 1.6× smaller than the headline counts**, and
+that matters for anything that assumes independence, which the ≥30-trade gate
+and the Monte Carlo both do. The pooling has deliberately not been changed here
+(it would move every number in this report and is a decision, not a bug fix);
+Phase 4 deduplicates.
 
 **2. One hit in ~2,850 candidates is what noise produces.** Across both runs
 2,852 candidates were evaluated. Searching that many arms and finding a single
@@ -282,8 +314,8 @@ by how loudly the feature fired.
 
 ### What would make it credible
 
-1. **Fix the gate plumbing** so gates 3, 4 and 6 run over the out-of-sample
-   trades only, then re-evaluate. That alone may fail it.
+1. ~~Fix the gate plumbing~~ — **done, and it failed the arm.** Gates 3, 4 and 6
+   now run over the complete out-of-sample set, and the arm is 6/7.
 2. **Supply the replay** so latency, missed-fill and delay stress can actually
    be evaluated rather than reported as unevaluated.
 3. **Forward-test it in paper**, on data that did not exist when the search ran.
@@ -396,9 +428,11 @@ historical search was for.
 
 ## 21–23. Does one robust profitable strategy exist?
 
-**NO.** One arm out of 2,852 cleared the mechanical gates, and section 15b sets
-out why that is not a yes: three of its gates were measured against the wrong
-trade set, and a single hit at that search width is indistinguishable from noise.
+**NO.** One arm out of 2,852 appeared to clear the gates. On recomputation it
+fails gate 6 — doubling slippage costs more than its entire edge — and the
+reason it ever looked like a pass was a survivorship filter that showed the
+gates only the profitable walk-forward windows. Section 15b has the full
+accounting.
 
 What remains structurally unprofitable, precisely:
 
