@@ -429,3 +429,126 @@ export function strengthPct(value: Numeric): number | null {
   const pct = Math.abs(n) <= 1 ? n * 100 : n;
   return Math.max(0, Math.min(100, pct));
 }
+
+// --------------------------------------------------------------------------
+// Phase 3 vocabulary — the strategy tournament, the promotion gates and the
+// seven-regime classifier the research families are conditioned on.
+// --------------------------------------------------------------------------
+
+/** Regime7 from `app/research/regimes.py`. The V1 codes above stay valid; this
+    adds the finer set the tournament partitions its arms by. */
+Object.assign(REGIME_LABELS, {
+  TRENDING_UP: "TREND ↑",
+  TRENDING_DOWN: "TREND ↓",
+  VOLATILITY_EXPANSION: "OYNAKLIK GENİŞLEMESİ",
+  PANIC: "PANİK",
+});
+
+/**
+ * Where an arm stands against the out-of-sample gates.
+ *
+ * These are verdicts, not descriptions. "SINIRDA" exists so a profit factor
+ * between 1.0 and 1.2 can be reported without ever being called a finalist,
+ * and "ÖRNEKLEM YETERSİZ" exists so an arm with nine lucky trades is not
+ * mistaken for one that failed — it has not been judged at all.
+ */
+export const OOS_STATUS_LABELS: Record<string, string> = {
+  FINALIST: "FİNALİST",
+  MARGINAL: "SINIRDA",
+  FAILED: "ELENDİ",
+  INSUFFICIENT_SAMPLE: "ÖRNEKLEM YETERSİZ",
+};
+
+export const OOS_STATUS_NOTES: Record<string, string> = {
+  FINALIST: "Örneklem dışı tüm kapıları geçti",
+  MARGINAL: "Pozitif ama profit factor 1,20 barajının altında — finalist değildir",
+  FAILED: "Örneklem dışı kapılardan en az birini geçemedi",
+  INSUFFICIENT_SAMPLE:
+    "30 örneklem dışı işlemin altında — bu aday henüz değerlendirilemez, elenmiş değildir",
+};
+
+export function oosStatusLabel(v: string | null | undefined): string {
+  if (!v) return DASH;
+  return OOS_STATUS_LABELS[v] ?? v;
+}
+
+/** Tone class for a verdict. Unknown verdicts stay toneless rather than
+    borrowing a colour they have not earned. */
+export function oosStatusTone(v: string | null | undefined): string {
+  switch (v) {
+    case "FINALIST":
+      return "is-finalist";
+    case "MARGINAL":
+      return "is-marginal";
+    case "FAILED":
+      return "is-failed";
+    case "INSUFFICIENT_SAMPLE":
+      return "is-thin";
+    default:
+      return "is-unknown";
+  }
+}
+
+/** Strategy family identifiers arrive as module-style names. */
+export const familyLabel = strategyLabel;
+
+/** Hours of recorded tape. Below a day the hour count is the reading; above
+    it, days are, because "312 sa" stops being legible as a duration. */
+export function formatHours(value: Numeric): string {
+  const n = toNum(value);
+  if (n === null) return DASH;
+  if (n < 24) {
+    return `${n.toLocaleString("en-US", { maximumFractionDigits: 1 })} sa`;
+  }
+  const days = Math.floor(n / 24);
+  const rem = Math.round(n % 24);
+  return `${days} g ${String(rem).padStart(2, "0")} sa`;
+}
+
+/** Megabytes written. */
+export function formatMb(value: Numeric): string {
+  const n = toNum(value);
+  if (n === null) return DASH;
+  if (Math.abs(n) >= 1024) {
+    return `${(n / 1024).toLocaleString("en-US", {
+      minimumFractionDigits: 2,
+      maximumFractionDigits: 2,
+    })} GB`;
+  }
+  return `${n.toLocaleString("en-US", {
+    minimumFractionDigits: n < 10 ? 2 : 0,
+    maximumFractionDigits: n < 10 ? 2 : 0,
+  })} MB`;
+}
+
+/**
+ * A research holding horizon. The tournament sweeps from seconds to hours in
+ * one column, so this reads as a duration rather than as a raw second count.
+ */
+export function formatHorizon(value: Numeric): string {
+  const n = toNum(value);
+  if (n === null) return DASH;
+  return formatDuration(n);
+}
+
+/**
+ * Classify one gate line without inventing a verdict for it.
+ *
+ * `GateReport.reasons` carries one line per gate, pass or fail, written by the
+ * research module. The line's own wording is the only evidence of which it is,
+ * so a line that does not announce a verdict is rendered as a neutral
+ * statement — colouring it green because it sits under a passing candidate
+ * would be the dashboard asserting something it was not told.
+ */
+export function gateVerdict(line: string): "pass" | "fail" | "unknown" {
+  const s = line.trim();
+  if (/^(?:✗|✖|×|❌)/.test(s)) return "fail";
+  if (/^(?:✓|✔|✅)/.test(s)) return "pass";
+  if (/^\[\s*[xX✓]\s*\]/.test(s)) return "pass";
+  if (/^\[\s*\]/.test(s)) return "fail";
+  if (/^(?:fail|failed|reject|rejected)\b/i.test(s)) return "fail";
+  if (/^(?:pass|passed|ok)\b/i.test(s)) return "pass";
+  if (/\b(?:FAIL|FAILED|GEÇEMEDİ|KALDI)\b/.test(s)) return "fail";
+  if (/\b(?:PASS|PASSED|GEÇTİ)\b/.test(s)) return "pass";
+  return "unknown";
+}

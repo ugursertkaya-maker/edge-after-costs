@@ -38,6 +38,11 @@ log = logging.getLogger("cryptobot.recorder")
 ROLL_SECONDS = 3600
 FLUSH_EVERY = 200          # messages
 FLUSH_SECONDS = 5.0
+# gzip buffers internally, so bytes written are not bytes on disk. Sync the
+# stream periodically: a reader can then tail a live file, and a crash costs
+# seconds of tape instead of minutes. Syncing on every write would cost ~2x the
+# file size in flush markers, which is why this is time-based.
+SYNC_SECONDS = 30.0
 MIN_FREE_BYTES = 3 * 1024**3   # stop recording below 3 GB free
 
 
@@ -91,6 +96,7 @@ class TapeRecorder:
         self._current_key: str | None = None
         self._buffer: list[str] = []
         self._last_flush = time.time()
+        self._last_sync = time.time()
         self._last_sweep = 0.0
 
         if self.enabled:
@@ -162,6 +168,10 @@ class TapeRecorder:
             self._fh.write(payload)
             self.stats.bytes_written += len(payload)
             self.stats.last_write_ms = ts_ms
+            now_wall = time.time()
+            if (now_wall - self._last_sync) >= SYNC_SECONDS:
+                self._fh.flush()
+                self._last_sync = now_wall
         except Exception as exc:
             self._disable(f"write failed: {exc}")
             return
@@ -230,7 +240,16 @@ def replay(directory: str | Path, *, start_ms: int = 0, end_ms: int = 0):
     for path in sorted(d.glob("tape-*.ndjson.gz")):
         try:
             with gzip.open(path, "rt") as fh:
-                for line in fh:
+                # The newest file may still be open in a writer, so its final
+                # gzip member is unterminated and the reader hits EOF partway.
+                # That is expected, not corruption: read what is there and stop.
+                while True:
+                    try:
+                        line = fh.readline()
+                    except EOFError:
+                        break
+                    if not line:
+                        break
                     try:
                         row = json.loads(line)
                     except json.JSONDecodeError:
@@ -241,5 +260,5 @@ def replay(directory: str | Path, *, start_ms: int = 0, end_ms: int = 0):
                     if end_ms and r > end_ms:
                         return
                     yield r, row.get("m")
-        except OSError as exc:
+        except (OSError, EOFError) as exc:
             log.warning("replay skipped %s: %s", path.name, exc)

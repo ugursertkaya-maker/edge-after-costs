@@ -201,6 +201,30 @@ class TradingWorker:
 
         self.feed.ingest_message = recording_ingest  # type: ignore[method-assign]
 
+        # Depth diffs alone cannot rebuild an absolute book — they are deltas
+        # against a REST snapshot that arrives outside the stream. Recording the
+        # diffs without the snapshots would produce a tape nobody can replay, so
+        # tap the snapshot path too and write it as a synthetic stream event.
+        snapshot = getattr(self.books, "apply_snapshot", None)
+        if callable(snapshot):
+
+            def recording_snapshot(symbol, last_update_id, bids, asks, ts_ms,
+                                   _inner=snapshot):
+                self.recorder.record(
+                    {
+                        "e": "__snapshot",
+                        "s": symbol,
+                        "lastUpdateId": last_update_id,
+                        "b": [[p, q] for p, q in bids],
+                        "a": [[p, q] for p, q in asks],
+                        "E": ts_ms,
+                    },
+                    ts_ms,
+                )
+                return _inner(symbol, last_update_id, bids, asks, ts_ms)
+
+            self.books.apply_snapshot = recording_snapshot  # type: ignore[method-assign]
+
     # ------------------------------------------------------------------ #
     # Adaptive layer (§22): rolling, evidence-based, deliberately dumb.
     # ------------------------------------------------------------------ #

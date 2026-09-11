@@ -160,3 +160,81 @@ def test_inventory_reports_what_is_on_disk(tmp_path):
     assert inv["files"] == 1
     assert inv["mb"] >= 0
     assert inv["newest"] and inv["newest"].startswith("tape-")
+
+
+# --------------------------------------------------------------------------- #
+# Worker integration: the tape must be replayable, not just large
+# --------------------------------------------------------------------------- #
+
+
+def test_the_worker_records_rest_snapshots_as_well_as_diffs(tmp_path, monkeypatch):
+    """Depth diffs are deltas against a REST snapshot that never appears in the
+    stream. Recording only the diffs produces a tape nobody can replay."""
+    monkeypatch.setenv("TRADING_MODE", "PAPER")
+    monkeypatch.setenv("RECORD_TAPE", "true")
+    monkeypatch.setenv("TAPE_DIR", str(tmp_path))
+    from app.config import reload_settings
+
+    reload_settings()
+    from app.runtime import RuntimeStore
+    from app.worker.main import TradingWorker
+
+    store = RuntimeStore(client=None)
+    store._client = None
+    w = TradingWorker(store=store)
+
+    w.books.apply_snapshot("BTCUSD", 42, [(100.0, 1.0)], [(100.1, 2.0)], 1_700_000_000_000)
+    w.feed.ingest_message(
+        {"stream": "btcusd@aggTrade", "data": {"p": "100.05", "q": "0.1", "T": 1, "m": False}},
+        1_700_000_000_100,
+    )
+    w.recorder.close()
+    reload_settings()
+
+    kinds = [m.get("e") or m.get("stream") for _, m in replay(tmp_path)]
+    assert "__snapshot" in kinds, "the snapshot was not recorded"
+    assert "btcusd@aggTrade" in kinds, "the stream message was not recorded"
+
+    snap = next(m for _, m in replay(tmp_path) if m.get("e") == "__snapshot")
+    assert snap["s"] == "BTCUSD" and snap["lastUpdateId"] == 42
+    assert snap["b"] == [[100.0, 1.0]] and snap["a"] == [[100.1, 2.0]]
+
+
+def test_recording_the_snapshot_does_not_break_the_book(tmp_path, monkeypatch):
+    monkeypatch.setenv("TRADING_MODE", "PAPER")
+    monkeypatch.setenv("RECORD_TAPE", "true")
+    monkeypatch.setenv("TAPE_DIR", str(tmp_path))
+    from app.config import reload_settings
+
+    reload_settings()
+    from app.runtime import RuntimeStore
+    from app.worker.main import TradingWorker
+
+    store = RuntimeStore(client=None)
+    store._client = None
+    w = TradingWorker(store=store)
+    w.books.apply_snapshot("BTCUSD", 42, [(100.0, 1.0)], [(100.1, 2.0)], 1_700_000_000_000)
+    w.recorder.close()
+    reload_settings()
+
+    book = w.books.get("BTCUSD")
+    assert book is not None and book.best_bid == 100.0 and book.best_ask == 100.1
+
+
+def test_the_stream_is_synced_so_a_live_file_can_be_read(tmp_path, monkeypatch):
+    """gzip buffers internally: without a periodic sync a reader tailing the
+    current hour sees nothing, and a crash loses minutes of tape."""
+    import time as _time
+
+    rec = TapeRecorder(tmp_path)
+    rec.record({"a": 1}, 1_700_000_000_000)
+    rec.flush(1_700_000_000_000)
+
+    rec._last_sync = _time.time() - 120          # force the sync branch
+    rec.record({"a": 2}, 1_700_000_000_001)
+    rec.flush(1_700_000_000_001)
+
+    # Readable without closing the recorder.
+    seen = [m["a"] for _, m in replay(tmp_path)]
+    assert seen == [1, 2]
+    rec.close()
