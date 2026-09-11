@@ -696,15 +696,23 @@ def prepare_window(
     spread_bps: float | None = None,
     seed: int = 7,
     want_mtf: bool = True,
+    tape_cache_dir: str | None = None,
 ) -> PreparedWindow:
-    """Replay ``bars`` cold through the real feature/regime stack."""
+    """Replay ``bars`` cold through the real feature/regime stack.
+
+    ``tape_cache_dir`` switches the multi-timeframe block onto the real tape:
+    ``dataset.load_dataset`` rebuilds the 5s/15s/30s/1m/3m/5m/15m bars from
+    aggTrades for exactly this window.  Without it the MTF block is built from
+    the 1m bars alone, every sub-minute feature reads as missing, and the
+    families that live there correctly stay silent — a degradation the report
+    states rather than hides.
+    """
     from app.features import FeatureEngine
     from app.regime import RegimeClassifier
 
     bars = sorted(bars, key=lambda b: b.open_ms)
     fe = FeatureEngine(settings=settings)
     rc = RegimeClassifier(settings=settings)
-    r7 = _regime7_classifier(settings)
 
     hist: deque[Bar] = deque(maxlen=HISTORY_BARS)
     rq: deque[float] = deque(maxlen=BARS_PER_DAY)

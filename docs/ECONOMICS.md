@@ -116,6 +116,54 @@ selection instead of scanning and crossing — and it is the honest V2 direction
 The simulator already models resting limit orders, queue misses and maker fees,
 so the machinery to test it exists.
 
+## Part 4 — a correction: the horizon, measured properly
+
+Parts 2 and 3 scaled a 1-minute ATR up with `sqrt(t)` to estimate what price
+does over a holding period. That estimate was too pessimistic, and measuring it
+directly on 242 days of real data corrects it. Median **absolute** move, in bps
+(`api/scripts/horizon_ceiling.py`):
+
+| Horizon | BTC/USD | ETH/USD | SOL/USD | BTC: % of windows > 3 bps | > 6 bps |
+|---|---|---|---|---|---|
+| 2m | **0.9** | 0.0 | 0.0 | 38% | 26% |
+| 5m | 4.5 | 3.6 | 3.8 | 58% | 43% |
+| 15m | 9.9 | 12.6 | 15.3 | 78% | 65% |
+| **25m** | **12.9** | **17.4** | **21.2** | 84% | 72% |
+| **60m** | **19.7** | **27.3** | **33.3** | 91% | 82% |
+| 120m | 28.0 | 37.8 | 45.8 | 93% | 87% |
+
+The tails are much fatter than diffusion implies — BTC's 90th percentile at 60
+minutes is 68 bps against a 20 bps median.
+
+**This changes the conclusion, and the change is worth stating plainly.** The
+claim in Part 2 — that the move and the cost of capturing it are the same size —
+holds at **one minute** and is wrong at **25–60 minutes**, where the median move
+is four to ten times the ~3 bps taker cost floor. V1 and V2 lost money at an
+average hold of 3–8 minutes. That now looks like a consequence of exiting too
+early, not proof that the venue cannot be traded.
+
+What the venue actually demands is a **hit rate**. A symmetric-payoff strategy
+captures `(2p − 1) × E|move| − costs`, so break-even needs:
+
+```
+p > 0.5 + costs / (2 × E|move|)
+```
+
+| Horizon | E&#124;move&#124; (BTC) | Taker break-even p | Maker break-even p |
+|---|---|---|---|
+| 2m | 0.9 bps | **>90%** — hopeless | ~50% |
+| 25m | 12.9 bps | **~62%** | ~50% |
+| 60m | 19.7 bps | **~58%** | ~50% |
+
+So: as a **taker**, the system needs to call direction right about 58–62% of the
+time at a 25–60 minute horizon. That is demanding but not absurd for a
+selective, low-frequency signal. As a **maker**, with 0% fees and the spread
+earned rather than paid, break-even sits at roughly a coin flip — which is why
+the maker study is the priority and why the tournament weights longer horizons.
+
+SOL/USD moves the most (33 bps median at 60 minutes against BTC's 20) despite
+thinner depth, so it should not be dropped on liquidity alone.
+
 ## What this means for the user
 
 **The viability of this bot is a direct function of the Binance.US Tier-0

@@ -428,7 +428,28 @@ def stress_suite(
     results: list[StressResult] = []
 
     for scenario in scenarios:
-        if scenario.analytic:
+        if scenario.analytic and not base_trades:
+            # Re-pricing needs trades, and the tournament keeps them only for
+            # arms that could plausibly be finalists.  With none, this is
+            # unevaluated — emphatically not a failed stress, which would
+            # read as evidence against an arm we simply did not test.
+            if replay is None:
+                results.append(
+                    StressResult(
+                        label=scenario.label,
+                        stats=PerfStats(),
+                        survived=False,
+                        evaluated=False,
+                        method="not-evaluated",
+                        detail=(
+                            "this arm retained no trades to re-price and no "
+                            "replay was supplied"
+                        ),
+                        scenario=scenario,
+                    )
+                )
+                continue
+        elif scenario.analytic:
             stressed = apply_cost_stress(base_trades, scenario)
             stats = compute_stats(stressed, equity=equity)
             results.append(

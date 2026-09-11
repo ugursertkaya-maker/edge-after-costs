@@ -113,6 +113,14 @@ class FakeArm:
     # stress — must be measured on the out-of-sample trades specifically, not on
     # the combined set.
     out_of_sample_trades: list[ClosedTrade] = field(default_factory=list)
+    # Read through getattr by the gates, and the only way an arm whose trades
+    # were dropped (the tournament keeps them for plausible finalists only) can
+    # still be given a verdict on gates 4 and 5.
+    best_trade_usd: float = 0.0
+    worst_trade_usd: float = 0.0
+    windows_evaluated: int = 0
+    windows_positive: int = 0
+    abandoned: str | None = None
 
 
 def make_arm(
@@ -139,6 +147,10 @@ def make_arm(
         in_sample=stats,
         out_of_sample=oos if oos is not None else stats,
         out_of_sample_trades=list(trades),
+        best_trade_usd=max((t.net_pnl_usd for t in trades), default=0.0),
+        worst_trade_usd=min((t.net_pnl_usd for t in trades), default=0.0),
+        windows_evaluated=len(windows),
+        windows_positive=sum(1 for w in windows if w.net_pnl > 0),
     )
 
 
@@ -612,3 +624,152 @@ def test_format_gate_report_shows_every_gate_the_stresses_and_the_monte_carlo():
     assert "not evaluated" in rendered
     assert "P(end below $500)" in rendered
     assert "monte carlo" in rendered
+
+
+# --------------------------------------------------------------------------- #
+# Against the real ArmResult, and against an arm whose trades were dropped
+# --------------------------------------------------------------------------- #
+
+
+def real_arm(trades, *, windows, name="momentum"):
+    """A genuine ``tournament.ArmResult``, or a skip if it is not built yet."""
+    try:
+        from app.research.tournament import ArmResult, Candidate  # noqa: PLC0415
+    except Exception:  # pragma: no cover - tournament.py is written in parallel
+        pytest.skip("app.research.tournament is not available yet")
+    stats = compute_stats(trades, equity=EQUITY)
+    candidate = Candidate(
+        family=name,
+        symbol="BTCUSD",
+        params={"lookback": 20},
+        horizon_seconds=900,
+        exit_profile="net_fixed",
+        stop_profile="atr",
+    )
+    arm = ArmResult(
+        candidate=candidate,
+        trades=list(trades),
+        stats=stats,
+        fees_usd=stats.fees,
+        slippage_usd=stats.slippage,
+        windows=list(windows),
+        in_sample=stats,
+        out_of_sample=stats,
+    )
+    arm.out_of_sample_trades = list(trades)
+    arm.best_trade_usd = max((t.net_pnl_usd for t in trades), default=0.0)
+    arm.windows_evaluated = len(windows)
+    arm.windows_positive = sum(1 for w in windows if w.net_pnl > 0)
+    return arm
+
+
+def test_the_gates_run_end_to_end_against_a_real_arm_result():
+    windows = [PerfStats(trades=13, net_pnl=1.0) for _ in range(3)]
+    arm = real_arm(mk_trades(good_nets()), windows=windows)
+    report = evaluate_gates(
+        arm,
+        equity=EQUITY,
+        replay=lambda a, s: mk_trades(good_nets()),
+        samples=300,
+    )
+    assert report.candidate_key == arm.candidate.key()
+    assert report.gate_results == {n: True for n in range(1, 8)}
+    assert report.passed is True
+    # The real arm publishes out_of_sample_trades, so gate 4 ran on the right
+    # trades and the fallback caveat must not appear.
+    assert not any("full trade list" in c for c in report.caveats)
+
+
+def test_a_real_arm_that_is_one_trade_wearing_a_strategys_name_is_refused():
+    windows = [PerfStats(trades=13, net_pnl=1.0) for _ in range(3)]
+    arm = real_arm(mk_trades([20.0] + [-0.20] * 39), windows=windows, name="lucky")
+    report = evaluate_gates(arm, equity=EQUITY, samples=300)
+    assert report.gate_results[4] is False
+    assert report.passed is False
+    # The tournament's own view of gate 4 must agree with ours.
+    assert arm.expectancy_without_best_trade < 0
+
+
+def stats_only_arm(
+    trades, *, windows_evaluated=3, windows_positive=3, name="dropped/BTCUSD/900s"
+):
+    """An arm the tournament kept statistics for but dropped the trades of.
+
+    ``_merge`` retains trades only for arms that could plausibly be finalists,
+    so most arms reach the gates as numbers alone.  They must still get a
+    verdict, and the report must say which gates were answered the long way.
+    """
+    stats = compute_stats(trades, equity=EQUITY)
+    return FakeArm(
+        candidate=FakeCandidate(name),
+        trades=[],
+        stats=stats,
+        fees_usd=stats.fees,
+        slippage_usd=stats.slippage,
+        windows=[],
+        in_sample=stats,
+        out_of_sample=stats,
+        out_of_sample_trades=[],
+        best_trade_usd=max((t.net_pnl_usd for t in trades), default=0.0),
+        windows_evaluated=windows_evaluated,
+        windows_positive=windows_positive,
+    )
+
+
+def test_gate_4_falls_back_to_the_reported_best_trade_when_trades_were_dropped():
+    arm = stats_only_arm(mk_trades(good_nets()))
+    report = evaluate_gates(arm, equity=EQUITY, samples=200)
+    assert report.gate_results[4] is True
+    assert "trades were not retained for this arm" in report.reasons[3]
+    assert "reported best trade" in report.reasons[3]
+
+
+def test_gate_4_still_catches_one_trade_domination_without_the_trades():
+    arm = stats_only_arm(mk_trades([20.0] + [-0.20] * 39))
+    report = evaluate_gates(arm, equity=EQUITY, samples=200)
+    assert report.gate_results[4] is False
+    assert "one trade wearing a strategy's name" in report.reasons[3]
+
+
+def test_gate_5_falls_back_to_the_window_counters():
+    good = stats_only_arm(mk_trades(good_nets()), windows_evaluated=5, windows_positive=4)
+    bad = stats_only_arm(mk_trades(good_nets()), windows_evaluated=5, windows_positive=2)
+    assert evaluate_gates(good, equity=EQUITY, samples=200).gate_results[5] is True
+    report = evaluate_gates(bad, equity=EQUITY, samples=200)
+    assert report.gate_results[5] is False
+    assert "2/5 walk-forward windows net positive" in report.reasons[4]
+    assert "window counters" in report.reasons[4]
+
+
+def test_gate_6_says_an_arm_with_no_retained_trades_could_not_be_stressed():
+    report = evaluate_gates(stats_only_arm(mk_trades(good_nets())), samples=200)
+    assert report.gate_results[6] is False, "unstressed is unproven, never a pass"
+    assert "retained no trades" in report.reasons[5]
+    assert report.passed is False
+
+
+def test_an_abandoned_arm_says_so_and_is_not_promoted():
+    arm = stats_only_arm(mk_trades(good_nets()))
+    arm.abandoned = "signal supply 12 < min_trades 30"
+    report = evaluate_gates(arm, equity=EQUITY, samples=200)
+    assert report.passed is False
+    assert any("abandoned this arm" in c for c in report.caveats)
+    assert "signal supply 12" in format_gate_report(report)
+
+
+def test_stressing_an_arm_with_no_trades_is_unevaluated_not_failed():
+    """The distinction the whole module turns on: untested is not disproved."""
+    arm = stats_only_arm(mk_trades(good_nets()))
+    results = stress_suite(arm, replay=None, equity=EQUITY)
+    assert len(results) == len(SCENARIOS)
+    assert all(not r.evaluated for r in results)
+    assert all(not r.survived for r in results)
+    assert all("not evaluated" in r.line for r in results)
+
+    # Given a replay, even the analytic scenarios can be re-run from data.
+    with_replay = stress_suite(
+        arm, replay=lambda a, s: mk_trades(good_nets()), equity=EQUITY
+    )
+    assert all(r.evaluated for r in with_replay)
+    assert {r.method for r in with_replay} == {"replay"}
+    assert all(r.survived for r in with_replay)

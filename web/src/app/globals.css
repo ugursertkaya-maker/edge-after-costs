@@ -1944,13 +1944,15 @@ table.tbl-tour th.gh.g-id {
 
 table.tbl-tour th.gh.g-oos {
   color: var(--info);
-  background: rgba(90, 169, 230, 0.1);
+  background-color: var(--bg-2);
+  background-image: linear-gradient(rgba(90, 169, 230, 0.12), rgba(90, 169, 230, 0.12));
   border-bottom: 2px solid rgba(90, 169, 230, 0.55);
 }
 
 table.tbl-tour th.gh.g-is {
   color: var(--warn);
-  background: rgba(240, 180, 41, 0.08);
+  background-color: var(--bg-2);
+  background-image: linear-gradient(rgba(240, 180, 41, 0.09), rgba(240, 180, 41, 0.09));
   border-bottom: 2px solid rgba(240, 180, 41, 0.45);
 }
 
@@ -1977,8 +1979,13 @@ table.tbl-tour tr.cols th:not(.c-all) + th.c-all {
   border-left: 1px solid var(--line-strong);
 }
 
-table.tbl-tour td.c-oos {
-  background: rgba(90, 169, 230, 0.04);
+table.tbl-tour td.c-oos,
+table.tbl-tour tbody tr:hover td.c-oos {
+  background-color: rgba(90, 169, 230, 0.05);
+}
+
+table.tbl-tour tbody tr:hover td.c-oos {
+  background-color: rgba(90, 169, 230, 0.1);
 }
 
 /* The hatch is the point: an in-sample figure is visibly not a clean
@@ -1986,6 +1993,17 @@ table.tbl-tour td.c-oos {
 table.tbl-tour td.c-is {
   color: var(--fg-3);
   background-color: rgba(240, 180, 41, 0.03);
+  background-image: repeating-linear-gradient(
+    -45deg,
+    rgba(240, 180, 41, 0.07) 0,
+    rgba(240, 180, 41, 0.07) 1px,
+    transparent 1px,
+    transparent 6px
+  );
+}
+
+table.tbl-tour tbody tr:hover td.c-is {
+  background-color: rgba(240, 180, 41, 0.06);
   background-image: repeating-linear-gradient(
     -45deg,
     rgba(240, 180, 41, 0.07) 0,
@@ -2358,6 +2376,10 @@ table.tbl-tour tbody tr:hover td.stick {
   grid-template-columns: minmax(0, 1fr) auto minmax(0, 1fr);
   border: 1px solid var(--line);
   background: var(--bg-1);
+  /* Capped: two figures meant to be compared have to sit near each other. On
+     a 1600px panel an uncapped grid pushes them to opposite edges and the
+     comparison stops being one. */
+  max-width: 880px;
 }
 
 .vs-cell {
