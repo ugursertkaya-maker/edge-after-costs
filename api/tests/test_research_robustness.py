@@ -33,6 +33,7 @@ from app.research.robustness import (
     format_gate_report,
     format_gate_reports,
     monte_carlo,
+    reconcile_trade_set,
     stress_suite,
 )
 from app.types import ClosedTrade, ExitReason, PerfStats, Side
@@ -773,3 +774,173 @@ def test_stressing_an_arm_with_no_trades_is_unevaluated_not_failed():
     assert all(r.evaluated for r in with_replay)
     assert {r.method for r in with_replay} == {"replay"}
     assert all(r.survived for r in with_replay)
+
+
+# --------------------------------------------------------------------------- #
+# The trade-set invariant — gates must reconcile with what they report against
+# --------------------------------------------------------------------------- #
+
+
+def test_reconcile_accepts_a_trade_list_that_is_the_reported_result():
+    trades = mk_trades(good_nets())
+    check = reconcile_trade_set(trades, compute_stats(trades, equity=EQUITY))
+    assert check.reconciled is True
+    assert check.usable is True
+    assert check.trade_count == check.reported_trades == 40
+    assert "reconciles" in check.line
+
+
+def test_reconcile_rejects_a_subset_by_count():
+    trades = mk_trades(good_nets())
+    stats = compute_stats(trades, equity=EQUITY)
+    check = reconcile_trade_set(trades[:25], stats, source="out_of_sample_trades")
+    assert check.reconciled is False
+    assert check.usable is False
+    assert "25 trades" in check.reason and "40" in check.reason
+    assert "DOES NOT RECONCILE" in check.line
+
+
+def test_reconcile_rejects_the_same_count_with_different_money():
+    trades = mk_trades(good_nets())
+    stats = compute_stats(trades, equity=EQUITY)
+    stats.net_pnl += 1.0
+    check = reconcile_trade_set(trades, stats)
+    assert check.reconciled is False
+    assert "difference $+1.0000" in check.reason or "-1.0000" in check.reason
+
+
+def test_reconcile_tolerates_float_association_error_only():
+    """Summing the same nets in a different order must not trip the invariant."""
+    trades = mk_trades([0.1, 0.2, 0.30000000000000004] * 20)
+    stats = compute_stats(list(reversed(trades)), equity=EQUITY)
+    assert reconcile_trade_set(trades, stats).reconciled is True
+
+    stats.net_pnl += 0.01                       # one cent is not rounding
+    assert reconcile_trade_set(trades, stats).reconciled is False
+
+
+def test_reconcile_treats_an_absent_trade_list_as_absence_not_disagreement():
+    trades = mk_trades(good_nets())
+    check = reconcile_trade_set([], compute_stats(trades, equity=EQUITY))
+    assert check.reconciled is True
+    assert check.usable is False, "nothing to compute on, but nothing contradicted"
+    assert "statistics only" in check.reason
+
+
+def winning_windows_only_arm() -> FakeArm:
+    """The published Phase-3 'finalist', rebuilt to scale.
+
+    ``out_of_sample`` is the real headline — 79 trades, +$5.51 — and the
+    retained list is what the tournament actually handed the gates: the trades
+    of the nine *winning* walk-forward windows only, 45 of them netting
+    +$14.72.  Every number below is from the reproduction of that run.
+    """
+    kept = mk_trades([0.327] * 45)               # 45 trades, net ~+$14.72
+    reported = PerfStats(
+        trades=79, wins=43, losses=36, net_pnl=5.5078, profit_factor=1.2562,
+        expectancy=0.069718, max_drawdown=4.292, fees=2.7672, slippage=8.3495,
+    )
+    return make_arm(kept, oos=reported)
+
+
+def test_the_phase3_finalist_is_refused_rather_than_gated_on_the_wrong_trades():
+    report = evaluate_gates(winning_windows_only_arm(), equity=EQUITY, samples=400)
+
+    # The gates that read the aggregates are untouched and still pass.
+    assert report.gate_results[1] is True
+    assert report.gate_results[2] is True
+    assert report.gate_results[5] is True
+    assert report.gate_results[7] is True
+    # The three that read individual trades refuse to produce a number.
+    assert report.gate_results[3] is False
+    assert report.gate_results[4] is False
+    assert report.gate_results[6] is False
+    assert report.passed is False
+
+    assert "NOT EVALUATED" in report.reasons[2]
+    assert "NOT EVALUATED" in report.reasons[3]
+    assert "45 trades" in report.reasons[3] and "79" in report.reasons[3]
+    assert report.trade_set is not None and report.trade_set.reconciled is False
+    assert any("REFUSED TO GATE" in c for c in report.caveats)
+
+
+def test_the_refused_arm_never_prints_a_stressed_net_above_the_unstressed_one():
+    """The tell that started this: 'fees +25%' reporting a *higher* net."""
+    arm = winning_windows_only_arm()
+    report = evaluate_gates(arm, equity=EQUITY, samples=200)
+    unstressed = arm.out_of_sample.net_pnl
+    for result in report.stress:
+        assert result.evaluated is False
+        assert result.survived is False
+        assert result.stats.net_pnl <= unstressed
+    assert all("not evaluated" in r.line for r in report.stress)
+
+
+def test_gate_4_does_not_fall_back_to_the_reported_best_trade_when_refused():
+    """Falling back would answer the question a different way and print a number.
+
+    The stats-only fallback exists for arms whose trades were never retained.
+    An arm holding a *contradictory* list is a different situation: something
+    upstream is wrong, and the only honest output is "not evaluated".
+    """
+    arm = winning_windows_only_arm()
+    arm.best_trade_usd = 1.4115
+    report = evaluate_gates(arm, equity=EQUITY, samples=200)
+    assert report.gate_results[4] is False
+    assert "trades were not retained" not in report.reasons[3]
+    assert "removing the single best trade" not in report.reasons[3]
+
+
+def test_a_replay_can_still_answer_the_cost_stress_over_a_refused_trade_list():
+    """A replay re-runs from data, so it does not inherit the broken list."""
+    arm = winning_windows_only_arm()
+    results = stress_suite(arm, replay=lambda a, s: mk_trades(good_nets()), equity=EQUITY)
+    assert all(r.evaluated for r in results)
+    assert {r.method for r in results} == {"replay"}
+
+
+def test_stress_suite_refuses_an_unreconciled_list_without_a_replay():
+    results = stress_suite(winning_windows_only_arm(), replay=None, equity=EQUITY)
+    assert all(not r.evaluated for r in results)
+    analytic = [r for r in results if r.scenario is not None and r.scenario.analytic]
+    assert analytic
+    assert all("does not reconcile" in r.detail or "45 trades" in r.detail
+               for r in analytic)
+
+
+def test_the_formatted_report_leads_with_the_mismatch():
+    text = format_gate_report(evaluate_gates(winning_windows_only_arm(), samples=100))
+    assert "TRADE SET DOES NOT RECONCILE" in text
+    assert text.index("TRADE SET DOES NOT RECONCILE") < text.index("gate 1")
+
+
+def test_a_reconciling_arm_carries_a_reconciled_check_and_still_passes():
+    report = evaluate_gates(
+        good_arm(), equity=EQUITY, replay=lambda a, s: mk_trades(good_nets()),
+        samples=300,
+    )
+    assert report.trade_set is not None
+    assert report.trade_set.reconciled is True
+    assert report.passed is True
+    assert "TRADE SET DOES NOT RECONCILE" not in format_gate_report(report)
+
+
+def test_falling_back_to_the_arms_trades_must_still_reconcile():
+    """The other suspected route to the same lie: silently using ``trades``.
+
+    An arm that exposes no ``out_of_sample_trades`` falls back to ``trades``.
+    If that list is the combined in-sample-plus-out-of-sample set — which is
+    what the brief suspected — it cannot match the out-of-sample statistics,
+    and the fallback is refused instead of being quietly gated on.
+    """
+    oos = mk_trades(good_nets())
+    combined = oos + [mk_trade(0.05, index=100 + i) for i in range(60)]
+    arm = make_arm(oos)
+    arm.trades = combined
+    arm.out_of_sample_trades = []
+    report = evaluate_gates(arm, equity=EQUITY, samples=200)
+    assert report.trade_set is not None
+    assert report.trade_set.source == "trades"
+    assert report.trade_set.reconciled is False
+    assert report.gate_results[4] is False
+    assert report.passed is False

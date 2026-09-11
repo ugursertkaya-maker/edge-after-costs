@@ -59,11 +59,14 @@ def test_worker_refuses_to_construct_in_live_mode(monkeypatch):
 
 
 def test_api_refuses_to_start_in_live_mode(monkeypatch):
+    # Import before switching the mode: ``app.main`` builds an app at module
+    # scope, so importing it under LIVE raises during the import itself and the
+    # assertion below would never be reached.
+    from app.main import create_app
+
     monkeypatch.setenv("TRADING_MODE", LIVE)
     reload_settings()
     try:
-        from app.main import create_app
-
         with pytest.raises(LiveTradingDisabled):
             create_app()
     finally:
@@ -79,3 +82,49 @@ def test_guard_actually_catches_a_planted_violation(tmp_path):
     )
     violations = source_tree_is_paper_only(tmp_path)
     assert violations, "the guard failed to notice an obvious live-order path"
+
+
+# --------------------------------------------------------------------------- #
+# The guard must not cry wolf on ordinary English
+# --------------------------------------------------------------------------- #
+
+
+def test_a_cache_signature_outside_the_trading_path_is_not_a_violation(tmp_path):
+    """A guard that fires on ordinary words gets switched off by someone.
+
+    "signature" is also a cache fingerprint, a file magic number and a
+    function's parameter list. A research module using it that way took the
+    whole API down once; it must not again.
+    """
+    research = tmp_path / "research"
+    research.mkdir()
+    (research / "matrix.py").write_text(
+        "def cache_key(grid):\n"
+        "    signature = f'{grid.interval}:{grid.size}'\n"
+        "    return FeatureGrid(signature=signature)\n"
+    )
+    assert source_tree_is_paper_only(tmp_path) == []
+
+
+def test_a_request_signature_inside_the_trading_path_is_still_caught(tmp_path):
+    """Narrowing the rule must not blunt it where it matters."""
+    exchange = tmp_path / "exchange"
+    exchange.mkdir()
+    (exchange / "signer.py").write_text(
+        "def place(params, key):\n"
+        "    params['signature'] = sign(params)\n"
+        "    return post(url, signature=params['signature'])\n"
+    )
+    violations = source_tree_is_paper_only(tmp_path)
+    assert violations, "a signed order in exchange/ must still be caught"
+    assert any("signature" in v for v in violations)
+
+
+def test_a_request_signature_next_to_the_exchange_is_still_caught(tmp_path):
+    """Outside the trading path, exchange vocabulary on the line is enough."""
+    (tmp_path / "helper.py").write_text(
+        "URL = 'https://api.binance.us/api/v3/order'\n"
+        "def go(p):\n"
+        "    return requests.post(URL, params={'signature': s}, signature=s)\n"
+    )
+    assert source_tree_is_paper_only(tmp_path)

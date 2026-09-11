@@ -14,6 +14,9 @@ import { Health } from "@/components/dashboard/Health";
 import { Tournament } from "@/components/dashboard/Tournament";
 import { Finalists } from "@/components/dashboard/Finalists";
 import { Champion } from "@/components/dashboard/Champion";
+import { PredictiveEngine } from "@/components/dashboard/PredictiveEngine";
+import { ModelQuality } from "@/components/dashboard/ModelQuality";
+import { Explanations } from "@/components/dashboard/Explanations";
 import { Banner } from "@/components/ui/DataState";
 import { useApiHealth, useDashboard } from "@/lib/useDashboard";
 
@@ -132,6 +135,18 @@ export default function DashboardPage() {
         <Finalists finalists={data?.finalists ?? null} loading={loading} />
 
         <Champion champion={data?.champion ?? null} loading={loading} now={now} />
+
+        {/* Phase 4 — the predictive entry engine. Same order as the Phase 3
+            block above and for the same reason: what the model says about
+            each candidate, then what the model itself is worth, then the
+            stored values behind every decision it actually took. The panels
+            share one `predictive` object and each one renders its own absent
+            state, because that object is expected to be missing. */}
+        <PredictiveEngine predictive={data?.predictive ?? null} loading={loading} />
+
+        <ModelQuality predictive={data?.predictive ?? null} loading={loading} />
+
+        <Explanations predictive={data?.predictive ?? null} loading={loading} now={now} />
 
         <p className="footnote">
           Tüm işlemler simülasyondur. Binance.US herkese açık piyasa verisi

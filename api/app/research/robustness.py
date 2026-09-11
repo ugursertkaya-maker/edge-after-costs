@@ -32,6 +32,16 @@ Three honesty rules are wired into the code rather than left to the reader:
     always carries one line per gate, pass or fail.
 3.  **Marginal is not a finalist.**  A profit factor in [1.00, 1.20) is
     reported as MARGINAL and never promoted.
+4.  **A gate must reconcile with the result it is printed beside.**  Gates 3,
+    4 and 6 are the only gates that read individual trades.  Before any of them
+    computes anything, :func:`reconcile_trade_set` checks that the trade list
+    in hand has the same count and the same net P&L as the out-of-sample
+    statistics being reported — and if it does not, all three report "not
+    evaluated" instead of a number.  This is not hypothetical: the Phase-3
+    exit sweep printed ``7/7 PASS`` for an arm whose gates 3, 4 and 6 ran over
+    45 trades netting +$14.72 while its headline was 79 trades netting +$5.51,
+    which is why "fees +25%" appeared to *raise* net P&L.  A 2.6x mismatch
+    passing silently was the real defect; this check is what makes it loud.
 
 Accounting notes that matter for the arithmetic below:
 
@@ -73,8 +83,10 @@ __all__ = [
     "StressScenario",
     "MonteCarloResult",
     "GateReport",
+    "TradeSetCheck",
     "compute_stats",
     "apply_cost_stress",
+    "reconcile_trade_set",
     "stress_suite",
     "monte_carlo",
     "evaluate_gates",
@@ -88,6 +100,8 @@ __all__ = [
     "MAX_DRAWDOWN_PCT",
     "MAX_PROB_BELOW_START",
     "SPREAD_STRESS_BPS_PER_SIDE",
+    "TRADE_SET_ABS_TOLERANCE_USD",
+    "TRADE_SET_REL_TOLERANCE",
 ]
 
 _BPS = 10_000.0
@@ -121,6 +135,16 @@ MAX_PROB_BELOW_START = 0.35
 #: Measured Binance.US spreads are 0.50 bps (BTC), 0.53 (ETH), 2.02 (SOL), so
 #: this is roughly a doubling on the majors — see docs/ECONOMICS.md.
 SPREAD_STRESS_BPS_PER_SIDE = 0.5
+
+#: Reconciliation tolerance between a trade list and the statistics it is being
+#: gated against.  Both numbers are sums of the *same* per-trade nets, so the
+#: only legitimate difference is float association order: summing 79 values of
+#: order $1 accumulates ~1e-13 of error.  The absolute floor keeps an all-zero
+#: set from demanding exactness it cannot have; the relative term scales with
+#: the size of the book.  Anything above this is a different trade set, not a
+#: rounding difference.
+TRADE_SET_ABS_TOLERANCE_USD = 1e-6
+TRADE_SET_REL_TOLERANCE = 1e-9
 
 
 # --------------------------------------------------------------------------- #
@@ -213,6 +237,54 @@ class MonteCarloResult:
         return self.prob_below_start * 100.0
 
 
+@dataclass(frozen=True)
+class TradeSetCheck:
+    """Does the trade list a gate is about to use *describe* the reported result?
+
+    This is the invariant that the Phase-3 exit sweep violated silently.  Three
+    of its seven gates — the Monte Carlo, "not dominated by one trade" and the
+    cost stress — are the only gates that read individual trades, and they were
+    handed a 45-trade, +$14.72 subset while reporting against a 79-trade,
+    +$5.51 out-of-sample result.  Nothing checked, so a 2.6x mismatch printed
+    as ``[PASS]``.
+
+    A trade list may legitimately be **absent** — the tournament retains trades
+    only for arms that could plausibly be finalists — and that case is handled
+    by the stats-only fallbacks and by "not evaluated".  What may never happen
+    is a list that is *present and disagrees*: that is evidence of a defect
+    upstream, and every gate that would have consumed it reports "not
+    evaluated" instead of a number.
+
+    ``usable`` is the single question the gates ask: is there a trade list here
+    that I am allowed to compute on?
+    """
+
+    source: str
+    reconciled: bool
+    reason: str
+    trade_count: int = 0
+    reported_trades: int = 0
+    trade_net: float = 0.0
+    reported_net: float = 0.0
+
+    @property
+    def present(self) -> bool:
+        return self.trade_count > 0
+
+    @property
+    def usable(self) -> bool:
+        return self.present and self.reconciled
+
+    @property
+    def line(self) -> str:
+        if self.reconciled:
+            return (
+                f"trade set ({self.source}): reconciles — {self.trade_count} trades, "
+                f"net ${self.trade_net:+.4f}"
+            )
+        return f"TRADE SET DOES NOT RECONCILE ({self.source}): {self.reason}"
+
+
 @dataclass
 class GateReport:
     """Why one candidate is, or is not, allowed to be called profitable."""
@@ -226,6 +298,7 @@ class GateReport:
     marginal: bool = False
     caveats: list[str] = field(default_factory=list)
     gate_results: dict[int, bool] = field(default_factory=dict)
+    trade_set: TradeSetCheck | None = None
 
     @property
     def failed_gates(self) -> list[int]:
@@ -297,6 +370,94 @@ def compute_stats(
     if equity > 0:
         stats.capital_turnover = sum(t.notional_usd for t in trades) / equity
     return stats
+
+
+def reconcile_trade_set(
+    trades: Sequence[ClosedTrade],
+    stats: PerfStats,
+    *,
+    source: str = "trades",
+    abs_tolerance: float = TRADE_SET_ABS_TOLERANCE_USD,
+    rel_tolerance: float = TRADE_SET_REL_TOLERANCE,
+) -> TradeSetCheck:
+    """Check a trade list against the statistics it is being gated against.
+
+    Two questions, because the two failure modes look nothing alike in a
+    report and only one of them is a bug:
+
+    * **same count** — a subset (a retention cap, a per-window filter, a
+      survivorship prune) changes ``len`` while leaving everything else
+      plausible-looking;
+    * **same net, to within float association error** — a different trade set
+      with coincidentally the same length still sums differently.
+
+    Absence reconciles: ``trades=[]`` against ``PerfStats()`` is consistent, and
+    ``trades=[]`` against a non-empty stat block is "not retained", which the
+    gates handle by falling back to the reported aggregates and saying so.  The
+    thing this refuses is a **present** list that contradicts the numbers it is
+    supposed to explain.
+    """
+    trades = list(trades)
+    n = len(trades)
+    reported_n = int(getattr(stats, "trades", 0) or 0)
+    net = math.fsum(t.net_pnl_usd for t in trades)
+    reported_net = float(getattr(stats, "net_pnl", 0.0) or 0.0)
+
+    common = dict(
+        source=source,
+        trade_count=n,
+        reported_trades=reported_n,
+        trade_net=net,
+        reported_net=reported_net,
+    )
+
+    if n == 0:
+        if reported_n == 0:
+            return TradeSetCheck(
+                reconciled=True, reason="no trades on either side", **common
+            )
+        return TradeSetCheck(
+            reconciled=True,
+            reason=(
+                f"no trades retained for this arm; {reported_n} reported "
+                "out-of-sample trades are available as statistics only"
+            ),
+            **common,
+        )
+
+    if n != reported_n:
+        return TradeSetCheck(
+            reconciled=False,
+            reason=(
+                f"{n} trades in '{source}' against {reported_n} in the reported "
+                f"out-of-sample statistics (net ${net:+.4f} vs ${reported_net:+.4f}) "
+                "— these are different trade sets, so any gate computed on the "
+                "list would not be describing the result it is printed beside"
+            ),
+            **common,
+        )
+
+    scale = abs(reported_net) + math.fsum(abs(t.net_pnl_usd) for t in trades)
+    tolerance = max(abs_tolerance, rel_tolerance * scale)
+    if abs(net - reported_net) > tolerance:
+        return TradeSetCheck(
+            reconciled=False,
+            reason=(
+                f"{n} trades in '{source}' net ${net:+.4f} against a reported "
+                f"out-of-sample net of ${reported_net:+.4f} "
+                f"(difference ${net - reported_net:+.4f}, tolerance ${tolerance:.2e})"
+            ),
+            **common,
+        )
+
+    return TradeSetCheck(
+        reconciled=True,
+        reason=(
+            f"{n} trades net ${net:+.4f}, matching the reported out-of-sample "
+            "statistics"
+        ),
+        **common,
+    )
 
 
 def _drawdown_usd(pnls: Sequence[float], equity: float) -> float:
@@ -405,6 +566,7 @@ def stress_suite(
     equity: float = 500.0,
     trades: Sequence[ClosedTrade] | None = None,
     scenarios: Sequence[StressScenario] = SCENARIOS,
+    check: TradeSetCheck | None = None,
 ) -> list[StressResult]:
     """Re-run an arm under worse conditions and report what survives.
 
@@ -423,8 +585,31 @@ def stress_suite(
     ``evaluated=False`` and ``method="not-evaluated"`` — **never** as a pass.
     Silently reporting the analytic approximation as if it covered latency would
     be the same lie this module exists to prevent.
+
+    **The trade set is checked before it is priced.**  Re-pricing a trade list
+    that does not reconcile with the arm's reported out-of-sample statistics
+    produces a stressed net that degrades *a different result* — which is how
+    the Phase-3 sweep came to report "fees +25% -> net $14.32" underneath an
+    unstressed net of $5.51.  When ``check`` says the list does not reconcile
+    (or one derived from ``arm`` says so), the analytic scenarios come back
+    ``evaluated=False`` with the mismatch named, exactly as if no trades had
+    been retained at all.
     """
-    base_trades = list(trades if trades is not None else _stress_trades(arm))
+    if trades is not None:
+        base_trades = list(trades)
+        if check is None:
+            check = reconcile_trade_set(
+                base_trades, _oos_stats(arm), source="supplied trades"
+            )
+    else:
+        base_trades, derived = _trade_set(arm)
+        check = check if check is not None else derived
+
+    unusable = "" if check.reconciled else check.reason
+    if unusable:
+        # Present but wrong is worse than absent: refuse to price it at all.
+        base_trades = []
+
     results: list[StressResult] = []
 
     for scenario in scenarios:
@@ -442,7 +627,8 @@ def stress_suite(
                         evaluated=False,
                         method="not-evaluated",
                         detail=(
-                            "this arm retained no trades to re-price and no "
+                            unusable
+                            or "this arm retained no trades to re-price and no "
                             "replay was supplied"
                         ),
                         scenario=scenario,
@@ -695,6 +881,12 @@ def _oos_trades(arm: Any) -> tuple[list[ClosedTrade], str]:
     return [], "trades"
 
 
+def _trade_set(arm: Any) -> tuple[list[ClosedTrade], TradeSetCheck]:
+    """The trade list to gate on, and whether it is allowed to be gated on."""
+    trades, source = _oos_trades(arm)
+    return trades, reconcile_trade_set(trades, _oos_stats(arm), source=source)
+
+
 def _stress_trades(arm: Any) -> list[ClosedTrade]:
     return _oos_trades(arm)[0]
 
@@ -739,10 +931,26 @@ def evaluate_gates(
     key = _candidate_key(arm)
     oos = _oos_stats(arm)
     trades, source = _oos_trades(arm)
+    check = reconcile_trade_set(trades, oos, source=source)
     windows = _windows(arm)
     reasons: list[str] = []
     caveats: list[str] = []
     gates: dict[int, bool] = {}
+
+    # THE INVARIANT.  Gates 3, 4 and 6 are the only gates that read individual
+    # trades; every other gate reads the aggregates.  So those three, and only
+    # those three, are allowed to compute a number here — and only when the
+    # list in front of them is the same trade set the aggregates describe.  A
+    # list that is present and disagrees is a defect upstream: it is refused
+    # rather than used, each affected gate reports "not evaluated", and a gate
+    # that could not be evaluated has never been a pass in this module.
+    if not check.reconciled:
+        trades = []
+        caveats.append(
+            "REFUSED TO GATE ON THE RETAINED TRADES — " + check.reason
+            + "; gates 3, 4 and 6 are reported as not evaluated rather than "
+            "computed against a trade set that is not the reported result"
+        )
 
     # Defaulted extras the tournament publishes alongside the frozen fields.
     # They are what makes a verdict possible for an arm whose trades were
@@ -760,7 +968,9 @@ def evaluate_gates(
     stress_results = (
         list(stress)
         if stress is not None
-        else stress_suite(arm, replay=replay, equity=equity, trades=trades)
+        else stress_suite(
+            arm, replay=replay, equity=equity, trades=trades, check=check
+        )
     )
 
     # -- gate 1: OOS net expectancy > 0 ------------------------------------- #
@@ -794,12 +1004,18 @@ def evaluate_gates(
     dd = oos.max_drawdown
     dd_ok = dd <= dd_limit
     survival_ok = mc.samples == 0 or mc.prob_below_start <= max_prob_below_start
-    g3 = dd_ok and survival_ok
+    g3 = dd_ok and survival_ok and check.reconciled
     detail = (
         f"max drawdown ${dd:.2f} vs ${dd_limit:.2f} "
         f"({max_drawdown_pct:.0f}% of a ${equity:.0f} account)"
     )
-    if mc.samples:
+    if not check.reconciled:
+        detail += (
+            "; Monte Carlo NOT EVALUATED — " + check.reason
+            + ". Resampling a trade set that is not the reported result sizes "
+            "the risk of a different strategy, so no number is given"
+        )
+    elif mc.samples:
         detail += (
             f"; Monte Carlo p95 drawdown ${mc.p95_drawdown:.2f} "
             f"({mc.p95_drawdown_pct:.1f}%), probability of ending below "
@@ -818,7 +1034,14 @@ def evaluate_gates(
     gates[3] = g3
 
     # -- gate 4: not dominated by one trade ---------------------------------- #
-    if len(trades) >= 2:
+    if not check.reconciled:
+        # The stats-only fallback below is *not* reached here on purpose.  It
+        # would quietly answer the question a different way and print a number,
+        # and the whole point of the invariant is that a gate whose evidence is
+        # corrupt says so instead of producing a figure.
+        g4 = False
+        detail = "NOT EVALUATED — " + check.reason
+    elif len(trades) >= 2:
         best = max(trades, key=lambda t: t.net_pnl_usd)
         remaining = [t for t in trades if t is not best]
         ex_best = compute_stats(remaining, equity=equity)
@@ -897,6 +1120,11 @@ def evaluate_gates(
             f"{len(evaluated) - len(failed)}/{len(evaluated)} evaluated stresses "
             "survived"
         )
+    elif not check.reconciled:
+        detail = (
+            "no stress could be evaluated: the retained trades were refused — "
+            + check.reason
+        )
     elif not trades:
         detail = (
             "no stress could be evaluated: this arm retained no trades to "
@@ -953,6 +1181,7 @@ def evaluate_gates(
         marginal=marginal,
         caveats=caveats,
         gate_results=gates,
+        trade_set=check,
     )
     return report
 
@@ -980,6 +1209,8 @@ def evaluate_all(arms: Sequence["ArmResult"], **kw: Any) -> list[GateReport]:
 def format_gate_report(report: GateReport) -> str:
     """One candidate, rendered so the verdict and its reasons cannot separate."""
     lines = [f"{report.candidate_key} — {report.verdict}"]
+    if report.trade_set is not None and not report.trade_set.reconciled:
+        lines.append(f"  {report.trade_set.line}")
     lines.extend(f"  {r}" for r in report.reasons)
     if report.stress:
         lines.append("  stress:")

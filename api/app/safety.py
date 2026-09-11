@@ -94,8 +94,23 @@ _FORBIDDEN: tuple[tuple[re.Pattern[str], str], ...] = (
     (re.compile(r"/sapi/"), "authenticated SAPI endpoint"),
     (re.compile(r"\bapi_secret\b", re.IGNORECASE), "stored exchange API secret"),
     (re.compile(r"\bapiSecret\b"), "stored exchange API secret"),
-    (re.compile(r"(?<![\w.])signature\s*="), "request signature parameter"),
 )
+
+# ``signature`` is split into two rules, because the word does two jobs.
+#
+# As a **query parameter** — ``?signature=`` or ``&signature=``, or the string
+# key ``"signature"`` being assigned into a params dict — it is unambiguously a
+# signed HTTP request and is a violation anywhere, unconditionally.
+#
+# As a **bare assignment** it is ordinary English: a cache fingerprint, a file
+# magic number, a function's parameter list.  Flagging that everywhere produced
+# a false positive on a research cache key and took the whole API down with it,
+# and a guard that cries wolf on ordinary words is one somebody eventually
+# switches off.  So the bare form is judged in context, exactly as ``hmac`` is.
+_SIGNATURE_PARAM = re.compile(
+    r"[?&]signature\s*=|[\"\']signature[\"\']\s*[:=]", re.IGNORECASE
+)
+_SIGNATURE_ASSIGN = re.compile(r"(?<![\w.])signature\s*=")
 
 # ``secret_key=`` on its own is not damning (the web app has a JWT cookie key);
 # it is a violation only when it shares a line with signing vocabulary.
@@ -209,11 +224,20 @@ def source_tree_is_paper_only(root: Path) -> list[str]:
         except ValueError:
             shown = str(path)
         masked = _mask_inert(text)
-        hmac_matters = _in_trading_path(path, root_resolved) or bool(
+        contextual_matters = _in_trading_path(path, root_resolved) or bool(
             _EXCHANGE_CONTEXT.search("\n".join(masked))
         )
         for lineno, line in enumerate(masked, start=1):
-            if hmac_matters and _HMAC.search(line):
+            if _SIGNATURE_PARAM.search(line):
+                violations.append(
+                    f"{shown}:{lineno}: request signature parameter"
+                )
+            elif contextual_matters and _SIGNATURE_ASSIGN.search(line):
+                violations.append(
+                    f"{shown}:{lineno}: request signature parameter "
+                    "in the exchange/trading path"
+                )
+            if contextual_matters and _HMAC.search(line):
                 violations.append(
                     f"{shown}:{lineno}: HMAC request-signing machinery "
                     "in the exchange/trading path"

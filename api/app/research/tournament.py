@@ -60,7 +60,11 @@ Efficiency
 * trades are aggregated inside the worker and only *statistics* cross the
   process boundary.  Full trade lists are retained only for arms that could
   plausibly be finalists (positive out-of-sample, enough trades), because
-  ``robustness.py`` needs them and nothing else does.
+  ``robustness.py`` needs them and nothing else does.  That retention is
+  **all-or-nothing per arm**: a partial trade list is not a cheaper complete
+  one, it is a different result under the same name, and it is what made the
+  Phase-3 exit sweep report 7/7 for an arm that had not been tested.  See
+  :func:`trade_set_mismatch`, which is asserted on every merge.
 """
 
 from __future__ import annotations
@@ -131,6 +135,9 @@ __all__ = [
     "stats_from_trades",
     "load_sources",
     "prepare_window",
+    "TradeSetIntegrityError",
+    "trade_set_mismatch",
+    "validate_trade_set",
 ]
 
 _BPS = 10_000.0
@@ -337,11 +344,34 @@ class ArmResult:
     #: gate 4 ("not dominated by one trade") and the cost-stress re-pricing are
     #: both defined on the out-of-sample half, and an arm whose ``trades`` ever
     #: grew to include in-sample round trips would silently answer both wrong.
+    #:
+    #: **All or nothing.**  This list is either every out-of-sample trade that
+    #: ``out_of_sample`` was computed from, or empty.  A partial list is not a
+    #: cheaper version of a complete one — it is a different strategy wearing
+    #: the same name — so ``_merge`` empties it rather than let it drift.
     out_of_sample_trades: list[ClosedTrade] = field(default_factory=list)
+    #: How many merged walk-forward windows contributed to the list above.
+    #: Bookkeeping for the all-or-nothing rule: the moment this falls behind
+    #: ``windows_evaluated`` the list is incomplete and is dropped.
+    trade_windows_kept: int = 0
 
     @property
     def key(self) -> str:
         return self.candidate.key()
+
+    @property
+    def trades_complete(self) -> bool:
+        """True when ``out_of_sample_trades`` is the whole out-of-sample set.
+
+        The gates in ``robustness.py`` re-derive this independently, from the
+        count and the net, so neither side has to trust the other; this is the
+        producing end's own view of the same fact.
+        """
+        return (
+            bool(self.out_of_sample_trades)
+            and self.trade_windows_kept == self.windows_evaluated
+            and len(self.out_of_sample_trades) == self.out_of_sample.trades
+        )
 
     @property
     def oos_expectancy(self) -> float:
@@ -1719,11 +1749,28 @@ def _run_task(task: _Task) -> list[_WindowOutcome]:
                 in_sample=PerfStats(), out_of_sample=PerfStats(),
                 abandoned=f"error: {exc!r}",
             )
-        # Trades are the bulk of an outcome and most arms lose, so a losing
-        # window returns statistics only.  This is what keeps a large search
-        # from holding every trade of every arm in memory (or pushing it
-        # through a process-pool pipe).
-        if not task.keep_trades or outcome.out_of_sample.net_pnl <= 0:
+        # Trades are the bulk of an outcome, so they ride the process-pool pipe
+        # only when the search asked for them at all.
+        #
+        # What used to be here, and must never come back:
+        #
+        #     if not task.keep_trades or outcome.out_of_sample.net_pnl <= 0:
+        #         outcome.trades = []
+        #
+        # That second clause dropped the trades of every *losing* window while
+        # keeping the winners, so an arm's retained trade list was a
+        # survivorship-filtered subset of the out-of-sample trades its
+        # statistics were computed from.  It is what produced the Phase-3 "7/7
+        # PASS" finalist: 45 trades netting +$14.72 kept out of 79 netting
+        # +$5.51 (the 7 losing windows held the other 34, netting −$9.21), so
+        # the cost stresses degraded a base 2.6x larger than the headline and
+        # "fees +25%" printed a *higher* net than the unstressed result.
+        #
+        # The retention decision belongs one level up, in ``_merge``, where the
+        # whole arm is visible and the answer can be all-or-nothing: a trade
+        # list that is a biased subset of the result it is filed under is worse
+        # than no trade list at all.
+        if not task.keep_trades:
             outcome.trades = []
         out.append(outcome)
     return out
@@ -1973,6 +2020,134 @@ def _evaluate(
     return out
 
 
+class TradeSetIntegrityError(AssertionError):
+    """An arm's retained trades do not describe the arm's reported result.
+
+    Raised at the *producing* end, loudly and immediately, because by the time
+    ``robustness.py`` sees it the only honest thing left to do is refuse to
+    gate — and a search that has already spent two hours deserves to fail on
+    the window that broke it rather than in the report.
+    """
+
+
+#: Reconciliation tolerance in USD.  Both sides sum the same per-trade nets,
+#: so the only legitimate difference is float association order.
+_TRADE_SET_ABS_TOLERANCE_USD = 1e-6
+_TRADE_SET_REL_TOLERANCE = 1e-9
+
+
+def trade_set_mismatch(arm: ArmResult) -> str:
+    """Describe how an arm's retained trades fail to match its statistics.
+
+    Empty string when they match — including the legitimate "no trades were
+    retained for this arm" case, which is absence, not disagreement.
+    """
+    trades = arm.out_of_sample_trades
+    if not trades:
+        if arm.trade_windows_kept:
+            return (
+                f"no trades retained but trade_windows_kept={arm.trade_windows_kept} "
+                "— the bookkeeping says there should be some"
+            )
+        return ""
+    reported_n = int(arm.out_of_sample.trades)
+    if len(trades) != reported_n:
+        return (
+            f"{len(trades)} retained out-of-sample trades against {reported_n} in "
+            f"out_of_sample — retained net ${math.fsum(t.net_pnl_usd for t in trades):+.4f} "
+            f"vs reported ${arm.out_of_sample.net_pnl:+.4f}"
+        )
+    if arm.trade_windows_kept != arm.windows_evaluated:
+        return (
+            f"trades were absorbed from {arm.trade_windows_kept} of "
+            f"{arm.windows_evaluated} evaluated windows"
+        )
+    net = math.fsum(t.net_pnl_usd for t in trades)
+    reported_net = float(arm.out_of_sample.net_pnl)
+    scale = abs(reported_net) + math.fsum(abs(t.net_pnl_usd) for t in trades)
+    tolerance = max(_TRADE_SET_ABS_TOLERANCE_USD, _TRADE_SET_REL_TOLERANCE * scale)
+    if abs(net - reported_net) > tolerance:
+        return (
+            f"retained trades net ${net:+.4f} against a reported out-of-sample net "
+            f"of ${reported_net:+.4f} (difference ${net - reported_net:+.4f})"
+        )
+    return ""
+
+
+def _assert_trade_set_reconciles(arm: ArmResult) -> None:
+    problem = trade_set_mismatch(arm)
+    if problem:
+        raise TradeSetIntegrityError(f"{arm.key}: {problem}")
+
+
+def validate_trade_set(
+    trades: Sequence[ClosedTrade],
+    *,
+    symbol: str | None = None,
+    window: WalkForwardWindow | None = None,
+    regime_at_entry: dict[int, str] | None = None,
+) -> list[str]:
+    """Structural validity of a trade list, as a list of violations.
+
+    These are the neighbouring questions to the gate-reconciliation one: a
+    trade list can have the right count and the right net and still be wrong
+    about *which* trades they are.  Each check earns its place by naming a way
+    a walk-forward search can leak or double-count:
+
+    ``coin``
+        Every trade belongs to the symbol its arm names.  A candidate never
+        spans symbols, so a foreign trade is a mis-merge.
+    ``window``
+        Entry *and* exit fall inside the window the trade is attributed to.  An
+        entry before ``test_start_ms`` is a trade taken on training data; an
+        exit after ``test_end_ms`` is a result the window could not have known.
+    ``duplicates``
+        No two trades share ``(symbol, entry_ms, exit_ms)``.  Overlapping
+        samples counted as independent observations inflate every aggregate
+        and every gate that assumes independence — the Monte Carlo above all.
+    ``regime``
+        The regime on the trade is the regime at **entry**.  Attributing the
+        exit regime would let a trade be filed under a state that only existed
+        because the trade had already run.
+    """
+    problems: list[str] = []
+    for t in trades:
+        if symbol is not None and t.symbol != symbol:
+            problems.append(f"{t.id}: symbol {t.symbol!r}, expected {symbol!r}")
+        if window is not None:
+            if not (window.test_start_ms <= t.entry_ms < window.test_end_ms):
+                problems.append(
+                    f"{t.id}: entry {t.entry_ms} outside test window "
+                    f"[{window.test_start_ms}, {window.test_end_ms})"
+                )
+            if t.exit_ms >= window.test_end_ms:
+                problems.append(
+                    f"{t.id}: exit {t.exit_ms} straddles the end of the test "
+                    f"window at {window.test_end_ms}"
+                )
+            if t.exit_ms < t.entry_ms:
+                problems.append(f"{t.id}: exit {t.exit_ms} precedes entry {t.entry_ms}")
+        if regime_at_entry is not None:
+            expected = regime_at_entry.get(t.entry_ms)
+            if expected is not None and t.regime != expected:
+                problems.append(
+                    f"{t.id}: regime {t.regime!r} is not the regime at entry "
+                    f"({expected!r})"
+                )
+
+    seen: dict[tuple[str, int, int], int] = {}
+    for t in trades:
+        k = (t.symbol, t.entry_ms, t.exit_ms)
+        seen[k] = seen.get(k, 0) + 1
+    for k, n in seen.items():
+        if n > 1:
+            problems.append(
+                f"{k[0]} {k[1]}->{k[2]} appears {n} times — the same round trip "
+                "counted as independent observations"
+            )
+    return problems
+
+
 def _merge(
     arms: dict[str, ArmResult], outcomes: Sequence[_WindowOutcome], cfg: TournamentConfig
 ) -> None:
@@ -2019,19 +2194,45 @@ def _merge(
         # Trades are only kept for arms that could plausibly be finalists —
         # robustness.py needs them, and nothing else does.  Everything else
         # keeps statistics only, which is what makes a large search fit in RAM.
+        #
+        # The rule is **all or nothing**, and it has to be, because ``_merge``
+        # is called once per walk-forward scheme: an arm that starts retaining
+        # only at the second scheme would end up holding half its own history
+        # and reporting gates against it.  Three things can break completeness,
+        # and each one empties the list instead of shrinking it:
+        #
+        #   * the arm was not promising when an earlier group was merged, so
+        #     those windows' trades were never absorbed (``contiguous``);
+        #   * the global retention cap was already full when it first became
+        #     eligible (``under_cap``);
+        #   * it stopped being promising, in which case the list goes and the
+        #     slot it held is returned to the cap.
         promising = (
             arm.out_of_sample.net_pnl > 0 and arm.out_of_sample.trades >= cfg.min_trades
         )
-        if cfg.keep_trades_for_finalists and promising and kept < cfg.max_kept_trade_arms:
+        already_kept = bool(arm.out_of_sample_trades)
+        contiguous = arm.trade_windows_kept == arm.windows_evaluated - len(group)
+        under_cap = already_kept or kept < cfg.max_kept_trade_arms
+        retain = cfg.keep_trades_for_finalists and promising and contiguous and under_cap
+        if retain:
             for o in group:
                 arm.out_of_sample_trades.extend(o.trades)
-            arm.out_of_sample_trades.sort(key=lambda t: (t.exit_ms, t.id))
+            # ``id`` is a per-backtest-run counter and collides across windows,
+            # so it cannot carry the tie-break on its own; entry time does, and
+            # the pair is stable.
+            arm.out_of_sample_trades.sort(key=lambda t: (t.exit_ms, t.entry_ms, t.id))
             arm.trades = arm.out_of_sample_trades
-            if arm.out_of_sample_trades:
+            arm.trade_windows_kept = arm.windows_evaluated
+            if arm.out_of_sample_trades and not already_kept:
                 kept += 1
         else:
+            if already_kept:
+                kept -= 1
             arm.out_of_sample_trades = []
             arm.trades = []
+            arm.trade_windows_kept = 0
+
+        _assert_trade_set_reconciles(arm)
 
 
 # --------------------------------------------------------------------------- #

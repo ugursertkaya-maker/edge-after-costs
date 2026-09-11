@@ -2590,3 +2590,845 @@ table.tbl-tour tbody tr:hover td.stick {
 .fin-body.is-solo {
   grid-template-columns: minmax(0, 1fr);
 }
+
+/* ==========================================================================
+   PHASE 4 — the predictive entry engine, its calibration and its refusals
+   --------------------------------------------------------------------------
+   One rule governs everything below, and it is the same shape as the V2 and
+   Phase 3 rules above it: a number that has not earned its authority is not
+   drawn as though it had. In V2 that was gross vs net; in Phase 3 it was
+   in-sample vs out-of-sample; here it is an UNCALIBRATED probability vs a
+   calibrated one.
+
+   So the probability columns carry the same hatch the in-sample columns
+   carry, for the same reason and in the same visual language: at any zoom
+   level, without reading a word, those cells are visibly not a clean
+   measurement surface. A calibrated model clears the hatch. Nothing else
+   does — not a high number, not a confident-looking model name.
+   ========================================================================== */
+
+/* ------------------------------------------------------- calibration strip */
+/* Drawn above the table rather than hidden in a tooltip because it governs
+   how every figure beneath it must be read. It is shown in the good case too:
+   a screen that only speaks up when something is wrong gives the operator no
+   way to tell "checked and fine" from "never checked". */
+.calstrip {
+  display: flex;
+  align-items: baseline;
+  gap: 10px;
+  flex-wrap: wrap;
+  padding: 7px 12px;
+  border-bottom: 1px solid var(--line);
+  background: var(--bg-2);
+}
+
+.calstrip-tag {
+  font-family: var(--font-mono);
+  font-size: 9.5px;
+  font-weight: 600;
+  letter-spacing: 0.1em;
+  padding: 1px 8px;
+  border: 1px solid var(--line);
+  color: var(--fg-3);
+  white-space: nowrap;
+}
+
+.calstrip-x {
+  font-size: 11px;
+  line-height: 1.5;
+  color: var(--fg-3);
+  max-width: 110ch;
+}
+
+.calstrip.is-trusted {
+  background: linear-gradient(90deg, var(--pos-wash), transparent 60%);
+}
+.calstrip.is-trusted .calstrip-tag {
+  color: var(--pos);
+  border-color: rgba(53, 210, 154, 0.4);
+  background: var(--pos-wash);
+}
+
+.calstrip.is-poor,
+.calstrip.is-uncal {
+  background: linear-gradient(90deg, var(--warn-wash), transparent 60%);
+}
+.calstrip.is-poor .calstrip-tag,
+.calstrip.is-uncal .calstrip-tag {
+  color: var(--warn);
+  border-color: rgba(240, 180, 41, 0.4);
+  background: var(--warn-wash);
+}
+.calstrip.is-poor .calstrip-x,
+.calstrip.is-uncal .calstrip-x,
+.calstrip.is-unmeasured .calstrip-x {
+  color: var(--fg-2);
+}
+
+.calstrip.is-unmeasured .calstrip-tag {
+  color: var(--fg-2);
+  border-style: dashed;
+  border-color: var(--line-strong);
+}
+
+/* ------------------------------------------------------- candidates table */
+table.tbl-pred {
+  font-size: 11px;
+}
+
+table.tbl-pred thead tr.grp th {
+  top: 0;
+  height: 21px;
+  padding: 3px 10px;
+  text-align: center;
+  font-size: 9px;
+  letter-spacing: 0.14em;
+  border-bottom: 1px solid var(--line);
+}
+
+table.tbl-pred thead tr.cols th {
+  top: 21px;
+}
+
+table.tbl-pred th.gh.g-pid {
+  text-align: left;
+  color: var(--fg-4);
+}
+
+table.tbl-pred th.gh.g-prob {
+  color: var(--info);
+  background-color: var(--bg-2);
+  background-image: linear-gradient(rgba(90, 169, 230, 0.1), rgba(90, 169, 230, 0.1));
+  border-bottom: 2px solid rgba(90, 169, 230, 0.45);
+}
+
+/* The moment calibration fails, the probability band stops being an input
+   band and becomes a warning. It changes colour with the hatch below it so
+   the two are read as one statement. */
+table.tbl-pred.is-uncal th.gh.g-prob {
+  color: var(--warn);
+  background-image: linear-gradient(rgba(240, 180, 41, 0.1), rgba(240, 180, 41, 0.1));
+  border-bottom: 2px solid rgba(240, 180, 41, 0.5);
+}
+
+.gh-warn {
+  font-weight: 400;
+  letter-spacing: 0.06em;
+  text-transform: none;
+  color: var(--warn);
+}
+
+table.tbl-pred th.gh.g-ev {
+  color: var(--fg-1);
+  background-color: var(--bg-2);
+  background-image: linear-gradient(rgba(53, 210, 154, 0.07), rgba(53, 210, 154, 0.07));
+  border-bottom: 2px solid rgba(53, 210, 154, 0.42);
+}
+
+table.tbl-pred th.gh.g-dec {
+  color: var(--fg-4);
+  background: var(--bg-2);
+}
+
+table.tbl-pred td:not(.c-prob) + td.c-prob,
+table.tbl-pred tr.cols th:not(.c-prob) + th.c-prob {
+  border-left: 2px solid rgba(90, 169, 230, 0.45);
+}
+
+table.tbl-pred.is-uncal td:not(.c-prob) + td.c-prob,
+table.tbl-pred.is-uncal tr.cols th:not(.c-prob) + th.c-prob {
+  border-left: 2px solid rgba(240, 180, 41, 0.5);
+}
+
+table.tbl-pred td:not(.c-ev) + td.c-ev,
+table.tbl-pred tr.cols th:not(.c-ev) + th.c-ev {
+  border-left: 2px solid rgba(53, 210, 154, 0.42);
+}
+
+table.tbl-pred td:not(.c-dec) + td.c-dec,
+table.tbl-pred tr.cols th:not(.c-dec) + th.c-dec {
+  border-left: 1px solid var(--line-strong);
+}
+
+table.tbl-pred td.c-prob {
+  background-color: rgba(90, 169, 230, 0.04);
+}
+
+table.tbl-pred tbody tr:hover td.c-prob {
+  background-color: rgba(90, 169, 230, 0.09);
+}
+
+/* The hatch. Identical to the in-sample hatch in the tournament table, on
+   purpose: this dashboard already means one thing by it — "this figure is not
+   a clean measurement" — and a second visual idiom for the same idea would
+   dilute both. */
+table.tbl-pred.is-uncal td.c-prob,
+table.tbl-pred.is-uncal tbody tr:hover td.c-prob {
+  color: var(--fg-3);
+  background-color: rgba(240, 180, 41, 0.03);
+  background-image: repeating-linear-gradient(
+    -45deg,
+    rgba(240, 180, 41, 0.07) 0,
+    rgba(240, 180, 41, 0.07) 1px,
+    transparent 1px,
+    transparent 6px
+  );
+}
+
+/* Expected value is the column the decision is actually made on, so it is the
+   only figure in the row drawn at full weight. */
+table.tbl-pred td.c-ev.is-head {
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--fg-0);
+}
+
+table.tbl-pred td.c-ev.is-head.pos {
+  color: var(--pos);
+}
+table.tbl-pred td.c-ev.is-head.neg {
+  color: var(--neg);
+}
+table.tbl-pred td.c-ev.is-head.muted {
+  color: var(--fg-3);
+}
+
+table.tbl-pred th.stick,
+table.tbl-pred td.stick {
+  position: sticky;
+  left: 0;
+  background: var(--bg-1);
+  z-index: 1;
+  border-right: 1px solid var(--line);
+}
+
+table.tbl-pred th.stick {
+  background: var(--bg-2);
+  z-index: 3;
+}
+
+table.tbl-pred tbody tr:hover td.stick {
+  background: var(--bg-2);
+}
+
+/* --------------------------------------------------------- confidence cell */
+/* The most important cell on the panel, and the only one that refuses to
+   print a number. A percentage here would be the most authoritative-looking
+   thing on the screen, so it is spent only when the calibration block has
+   earned it; every other state says which state it is, in words. */
+.conf {
+  display: inline-block;
+  min-width: 108px;
+  padding: 0 7px;
+  font-family: var(--font-mono);
+  font-variant-numeric: tabular-nums slashed-zero;
+  font-size: 10px;
+  font-weight: 600;
+  letter-spacing: 0.06em;
+  text-align: center;
+  border: 1px solid var(--line);
+  background: var(--bg-2);
+  color: var(--fg-3);
+  cursor: help;
+  white-space: nowrap;
+}
+
+.conf.is-trusted {
+  color: var(--fg-0);
+  border-color: rgba(53, 210, 154, 0.34);
+  background: var(--pos-wash);
+}
+
+.conf.is-poor,
+.conf.is-uncal {
+  color: var(--warn);
+  border-color: rgba(240, 180, 41, 0.36);
+  background: var(--warn-wash);
+  font-size: 9px;
+  letter-spacing: 0.08em;
+}
+
+.conf.is-unmeasured {
+  color: var(--fg-2);
+  border-style: dashed;
+  border-color: var(--line-strong);
+  font-size: 9px;
+  letter-spacing: 0.08em;
+}
+
+.conf.is-absent {
+  color: var(--fg-4);
+  border-color: var(--line-soft);
+}
+
+/* The refusal reason, under the decision badge — item 34 is not a tooltip. */
+.pred-why {
+  display: block;
+  margin-top: 2px;
+  font-size: 9.5px;
+  letter-spacing: 0.02em;
+  color: var(--fg-4);
+  cursor: help;
+}
+
+.pred-foot {
+  padding: 8px 12px 9px;
+  border-top: 1px solid var(--line);
+  font-family: var(--font-mono);
+  font-variant-numeric: tabular-nums slashed-zero;
+  font-size: 10px;
+  color: var(--fg-4);
+}
+
+/* The absent-model state, which is the expected one for most of this phase. */
+.pred-empty {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  padding: 12px;
+}
+
+.panel-body:not(.flush) .pred-empty {
+  padding: 0;
+}
+
+/* ------------------------------------------------------------ model quality */
+.mq {
+  display: flex;
+  flex-direction: column;
+  gap: 13px;
+}
+
+.mq-cols {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
+  gap: 1px;
+  background: var(--line-soft);
+  border: 1px solid var(--line);
+}
+
+@media (max-width: 980px) {
+  .mq-cols {
+    grid-template-columns: minmax(0, 1fr);
+  }
+}
+
+.mq .fgroup {
+  border: 1px solid var(--line);
+}
+
+.mq-cols .fgroup {
+  border: 0;
+}
+
+/* ---------------------------------------------------------- split timeline */
+/* The ordering IS the claim. Three dated blocks left to right, sized by their
+   real spans, so "test comes last and was touched once" is a shape rather
+   than six dates the reader has to compare. */
+.tline {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.tline-bar {
+  display: flex;
+  align-items: stretch;
+  gap: 2px;
+  border: 1px solid var(--line);
+  background: var(--bg-0);
+  padding: 2px;
+}
+
+.tline-seg {
+  flex: 1 1 0;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  padding: 9px 12px 10px;
+  background: var(--bg-2);
+  border-top: 2px solid var(--line);
+  overflow: hidden;
+}
+
+.tline-seg.is-train {
+  border-top-color: var(--fg-4);
+}
+
+.tline-seg.is-validate {
+  border-top-color: rgba(240, 180, 41, 0.6);
+  background: linear-gradient(180deg, rgba(240, 180, 41, 0.05), var(--bg-2));
+}
+
+/* The last block is the only measurement window, so it is the only one drawn
+   as a surface rather than as a stage. */
+.tline-seg.is-test {
+  border-top-color: rgba(90, 169, 230, 0.75);
+  background: linear-gradient(180deg, rgba(90, 169, 230, 0.09), var(--bg-2));
+}
+
+.tline-seg.is-empty {
+  background: repeating-linear-gradient(
+    -45deg,
+    var(--bg-2) 0,
+    var(--bg-2) 5px,
+    var(--bg-1) 5px,
+    var(--bg-1) 10px
+  );
+  border-top-style: dashed;
+}
+
+.tline-k {
+  font-family: var(--font-mono);
+  font-size: 9px;
+  letter-spacing: 0.14em;
+  color: var(--fg-3);
+}
+
+.tline-seg.is-test .tline-k {
+  color: var(--info);
+}
+
+.tline-v {
+  font-family: var(--font-mono);
+  font-variant-numeric: tabular-nums slashed-zero;
+  font-size: 12.5px;
+  font-weight: 600;
+  color: var(--fg-0);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.tline-seg.is-empty .tline-v {
+  color: var(--fg-3);
+}
+
+.tline-n {
+  font-family: var(--font-mono);
+  font-size: 9.5px;
+  color: var(--fg-4);
+}
+
+.tline-legend {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px 18px;
+}
+
+.tline-dot {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 10.5px;
+  color: var(--fg-4);
+}
+
+.tline-dot i {
+  width: 8px;
+  height: 8px;
+  flex: none;
+  background: var(--fg-4);
+}
+
+.tline-dot.is-validate i {
+  background: rgba(240, 180, 41, 0.7);
+}
+
+.tline-dot.is-test i {
+  background: var(--info);
+}
+
+.tline-note {
+  font-size: 10.5px;
+  line-height: 1.55;
+  color: var(--fg-4);
+  max-width: 104ch;
+}
+
+.tline-warn {
+  padding: 7px 10px;
+  border: 1px solid rgba(255, 95, 109, 0.34);
+  background: var(--neg-wash);
+  font-size: 11px;
+  line-height: 1.55;
+  color: var(--fg-1);
+}
+
+/* ------------------------------------------------------ calibration verdict */
+.calverdict {
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+  padding: 8px 10px 9px;
+  margin-bottom: 9px;
+  border: 1px solid var(--line);
+  background: var(--bg-2);
+}
+
+.calverdict-v {
+  font-family: var(--font-mono);
+  font-size: 13px;
+  font-weight: 600;
+  letter-spacing: 0.1em;
+  color: var(--fg-0);
+}
+
+.calverdict-x {
+  font-size: 10.5px;
+  line-height: 1.55;
+  color: var(--fg-3);
+}
+
+.calverdict.is-trusted {
+  border-color: rgba(53, 210, 154, 0.34);
+}
+.calverdict.is-trusted .calverdict-v {
+  color: var(--pos);
+}
+
+.calverdict.is-poor,
+.calverdict.is-uncal {
+  border-color: rgba(240, 180, 41, 0.36);
+  background: var(--warn-wash);
+}
+.calverdict.is-poor .calverdict-v,
+.calverdict.is-uncal .calverdict-v {
+  color: var(--warn);
+}
+
+.calverdict.is-unmeasured {
+  border-style: dashed;
+  border-color: var(--line-strong);
+}
+.calverdict.is-unmeasured .calverdict-v {
+  color: var(--fg-2);
+}
+
+/* ------------------------------------------------ explanations & refusals */
+.xwrap {
+  display: grid;
+  grid-template-columns: minmax(0, 340px) minmax(0, 1fr);
+  gap: 1px;
+  background: var(--line-soft);
+  border: 1px solid var(--line);
+}
+
+@media (max-width: 1080px) {
+  .xwrap {
+    grid-template-columns: minmax(0, 1fr);
+  }
+}
+
+.xside,
+.xmain {
+  background: var(--bg-1);
+  padding: 10px 12px 12px;
+  min-width: 0;
+}
+
+.xlist {
+  display: flex;
+  flex-direction: column;
+  gap: 7px;
+  max-height: 520px;
+  overflow-y: auto;
+}
+
+/* One decision, as it was stored. Not a sentence — a record with its keys
+   still attached, so a missing field is visibly missing. */
+.xcard {
+  border: 1px solid var(--line);
+  border-left: 2px solid var(--line-strong);
+  background: var(--bg-2);
+  padding: 8px 11px 9px;
+}
+
+.xcard.buy {
+  border-left-color: var(--pos-dim);
+}
+
+.xcard.sell {
+  border-left-color: var(--neg-dim);
+}
+
+.xcard-head {
+  display: flex;
+  align-items: baseline;
+  gap: 10px;
+  flex-wrap: wrap;
+  padding-bottom: 6px;
+  margin-bottom: 6px;
+  border-bottom: 1px solid var(--line-soft);
+}
+
+.xcard-sym {
+  font-family: var(--font-mono);
+  font-size: 12.5px;
+  font-weight: 600;
+  letter-spacing: 0.05em;
+  color: var(--fg-0);
+}
+
+.xcard-side {
+  font-family: var(--font-mono);
+  font-size: 9.5px;
+  letter-spacing: 0.1em;
+  color: var(--fg-3);
+}
+
+.xcard-meta {
+  margin-left: auto;
+  font-family: var(--font-mono);
+  font-size: 9.5px;
+  color: var(--fg-4);
+}
+
+.xcard-lines {
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+}
+
+.xline {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: 4px 0;
+}
+
+/* The middot separators are drawn by the layout rather than typed into the
+   copy, so a token that is absent never leaves a dangling separator behind. */
+.xtok + .xtok::before {
+  content: "·";
+  color: var(--fg-4);
+  margin: 0 8px;
+}
+
+.xtok {
+  display: inline-flex;
+  align-items: baseline;
+  gap: 5px;
+  font-size: 11px;
+}
+
+.xtok-k {
+  color: var(--fg-4);
+}
+
+.xtok-v {
+  font-family: var(--font-mono);
+  font-variant-numeric: tabular-nums slashed-zero;
+  font-size: 11px;
+  color: var(--fg-0);
+}
+
+/* Same hatch, same meaning, one panel over: a probability from a model whose
+   calibration was never measured is a number wearing a percent sign. */
+.xtok-v.is-uncal {
+  color: var(--warn);
+  padding: 0 4px;
+  background-image: repeating-linear-gradient(
+    -45deg,
+    rgba(240, 180, 41, 0.14) 0,
+    rgba(240, 180, 41, 0.14) 1px,
+    transparent 1px,
+    transparent 5px
+  );
+  cursor: help;
+}
+
+.xtok-v.muted {
+  color: var(--fg-4);
+}
+
+/* ------------------------------------------------------ rejection tally */
+/* The diagnosis, not a list of counts: "found no edge" and "refuses
+   everything" are the same P&L and different defects, so the nine reasons are
+   stacked by family first and only then itemised. */
+.rej {
+  display: flex;
+  flex-direction: column;
+  gap: 9px;
+}
+
+.rej-head {
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+}
+
+.rej-total {
+  font-family: var(--font-mono);
+  font-variant-numeric: tabular-nums slashed-zero;
+  font-size: 24px;
+  font-weight: 600;
+  line-height: 1.05;
+  color: var(--fg-0);
+}
+
+.rej-total-k {
+  font-family: var(--font-mono);
+  font-size: 9.5px;
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+  color: var(--fg-4);
+}
+
+.rej-stack {
+  display: flex;
+  height: 18px;
+  gap: 1px;
+  background: var(--bg-0);
+  border: 1px solid var(--line);
+}
+
+.rej-seg {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 0;
+  overflow: hidden;
+  font-family: var(--font-mono);
+  font-size: 9px;
+  font-weight: 600;
+  color: var(--bg-0);
+  cursor: help;
+}
+
+.rej-seg.is-model {
+  background: var(--info);
+}
+.rej-seg.is-venue {
+  background: var(--warn);
+}
+.rej-seg.is-scope {
+  background: var(--fg-3);
+}
+.rej-seg.is-other {
+  background: var(--fg-4);
+}
+
+.rej-legend {
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+}
+
+.rej-dot {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  font-size: 10.5px;
+  color: var(--fg-3);
+}
+
+.rej-dot i {
+  width: 8px;
+  height: 8px;
+  flex: none;
+  background: var(--fg-4);
+}
+
+.rej-dot.is-model i {
+  background: var(--info);
+}
+.rej-dot.is-venue i {
+  background: var(--warn);
+}
+.rej-dot.is-scope i {
+  background: var(--fg-3);
+}
+
+.rej-dot b {
+  margin-left: auto;
+  font-family: var(--font-mono);
+  font-variant-numeric: tabular-nums slashed-zero;
+  color: var(--fg-1);
+}
+
+.rej-read {
+  padding: 7px 9px 8px;
+  border: 1px solid var(--line);
+  background: var(--bg-2);
+  font-size: 10.5px;
+  line-height: 1.55;
+  color: var(--fg-2);
+}
+
+.rej-read strong {
+  color: var(--fg-0);
+  font-weight: 600;
+}
+
+.rej-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+}
+
+.rej-row {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) 64px 34px 34px;
+  align-items: center;
+  gap: 8px;
+}
+
+.rej-k {
+  font-size: 10.5px;
+  color: var(--fg-2);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  cursor: help;
+}
+
+.rej-bar {
+  height: 7px;
+  background: var(--bg-3);
+  border: 1px solid var(--line-soft);
+}
+
+.rej-fill {
+  display: block;
+  height: 100%;
+  background: var(--fg-4);
+}
+
+.rej-fill.is-model {
+  background: var(--info);
+}
+.rej-fill.is-venue {
+  background: var(--warn);
+}
+.rej-fill.is-scope {
+  background: var(--fg-3);
+}
+
+.rej-n {
+  font-family: var(--font-mono);
+  font-variant-numeric: tabular-nums slashed-zero;
+  font-size: 10.5px;
+  text-align: right;
+  color: var(--fg-1);
+}
+
+.rej-p {
+  font-family: var(--font-mono);
+  font-variant-numeric: tabular-nums slashed-zero;
+  font-size: 10px;
+  text-align: right;
+  color: var(--fg-4);
+}
+
+.rej-missing {
+  padding-top: 7px;
+  border-top: 1px solid var(--line-soft);
+  font-size: 10px;
+  line-height: 1.5;
+  color: var(--fg-4);
+}

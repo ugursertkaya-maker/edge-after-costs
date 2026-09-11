@@ -350,6 +350,14 @@ export interface DashboardPayload {
   finalists?: FinalistRow[] | null;
   /** What is running in live paper. `null` is a legitimate answer. */
   champion?: ChampionState | null;
+
+  // ---- Phase 4 -------------------------------------------------------------
+  /**
+   * The predictive entry engine. Absent until the worker serves it, and that
+   * is the expected state — Phase 3 ended with no champion, so there may
+   * never be a model here at all. The panels say so rather than waiting.
+   */
+  predictive?: PredictiveState | null;
 }
 
 export interface HealthResponse {
@@ -506,4 +514,148 @@ export interface TapeState {
   /** Epoch ms of the oldest / newest retained hour. */
   oldest?: Num;
   newest?: Num;
+}
+
+// ===========================================================================
+// PHASE 4 — the predictive entry engine
+// ---------------------------------------------------------------------------
+// Every field below is OPTIONAL and the whole `predictive` key is expected to
+// be absent for most of this phase: the worker that fills it is being built
+// concurrently, and Phase 3 ended with no champion at all. So the absent case
+// is the design case, not an edge case, and each panel renders it as a
+// statement rather than as an empty table.
+//
+// The one distinction this section exists to protect: a probability from an
+// UNCALIBRATED model is a number, not a probability. `calibration` is what
+// decides which of the two the screen is allowed to call it, and no panel
+// here renders a confidence figure that the calibration block has not earned.
+// ===========================================================================
+
+/** Why the predictive engine refused a candidate (Phase 4 spec, item 34). */
+export type PredictiveRejectReasonCode =
+  | "LOW_PROBABILITY"
+  | "NEGATIVE_EV"
+  | "COST_TOO_HIGH"
+  | "MODEL_UNCERTAIN"
+  | "CORRELATED_RISK"
+  | "SPREAD_TOO_WIDE"
+  | "NO_LIQUIDITY"
+  | "STALE_DATA"
+  | "REGIME_NOT_SUPPORTED";
+
+/** `[start_ms, end_ms]` — one leg of the chronological split. */
+export type PeriodMs = [number, number];
+
+/**
+ * What `calibrate.evaluate_calibration` measured.
+ *
+ * `max_abs_error` is the promotion gate the Phase 4 spec names: a maximum
+ * absolute reliability error above 0.10 means a 70% prediction does not win
+ * 70% of the time, and the dashboard refuses to print a confidence figure
+ * derived from it.
+ */
+export interface PredictiveCalibration {
+  brier?: Num;
+  log_loss?: Num;
+  auc?: Num;
+  pr_auc?: Num;
+  /** Largest gap between predicted and realised frequency across the bins. */
+  max_abs_error?: Num;
+  calibrated?: boolean | null;
+  /** "isotonic" | "platt" | "none", as the research module names it. */
+  method?: string | null;
+  status?: string | null;
+}
+
+/** The champion artifact's out-of-sample record — the only half that judges. */
+export interface PredictiveOos {
+  trades?: Num;
+  win_rate?: Num;
+  profit_factor?: Num;
+  expectancy?: Num;
+  net_pnl?: Num;
+  /** USD, reported as a positive magnitude. */
+  max_drawdown?: Num;
+}
+
+/**
+ * One live candidate as the entry engine scored it.
+ *
+ * `confidence_known` is separate from `confidence` on purpose: a model that
+ * cannot say how sure it is reports that, and the UI must not read a missing
+ * confidence as a low one or a present one as a trustworthy one.
+ */
+export interface PredictiveCandidate {
+  symbol?: string | null;
+  regime?: string | null;
+  model?: string | null;
+  /** P(take profit first), in [0, 1]. */
+  p_tp?: Num;
+  /** P(stop first), in [0, 1]. */
+  p_sl?: Num;
+  /** P(neither barrier inside the horizon), in [0, 1]. */
+  p_timeout?: Num;
+  /** USD the win branch is modelled to net. */
+  expected_net_win?: Num;
+  /** USD the loss branch is modelled to cost. May arrive as a magnitude. */
+  expected_net_loss?: Num;
+  /** p·win − p·loss − cost. The column the decision is actually made on. */
+  expected_value?: Num;
+  execution_cost?: Num;
+  confidence?: Num;
+  confidence_known?: boolean | null;
+  decision?: DecisionCode | string | null;
+  reject_reason?: PredictiveRejectReasonCode | string | null;
+}
+
+/**
+ * The stored model and risk values behind one paper decision.
+ *
+ * This is a record, not a narrative. Every token the explanation panel prints
+ * comes from a field here; nothing on that panel is composed prose.
+ */
+export interface PredictiveExplanation {
+  trade_id?: string | null;
+  symbol?: string | null;
+  side?: Side | string | null;
+  decision?: string | null;
+  /** P(profitable NET exit before the stop), in [0, 1]. */
+  p_win?: Num;
+  expected_net_win?: Num;
+  expected_net_loss?: Num;
+  expected_value?: Num;
+  regime?: string | null;
+  spread_ok?: boolean | null;
+  /** A label ("STRONG") or a measured depth reading, as the worker sends it. */
+  liquidity?: string | number | null;
+  execution_style?: MakerTaker | string | null;
+  model_version?: string | null;
+  ts_ms?: Num;
+}
+
+/**
+ * `{REASON: count}`. Kept as an open record rather than a closed map so a
+ * reason the worker adds later still appears on screen instead of vanishing.
+ */
+export type RejectionTally = Record<string, number | null | undefined>;
+
+export interface PredictiveState {
+  model_version?: string | null;
+  model_name?: string | null;
+  feature_version?: string | null;
+  /** The `BarrierSpec.key()` the model was labelled against. */
+  spec_key?: string | null;
+  /** The last bar the model was allowed to see. */
+  trained_to_ms?: Num;
+  train_period?: PeriodMs | null;
+  validate_period?: PeriodMs | null;
+  /** Touched once, and last. */
+  test_period?: PeriodMs | null;
+  probability_threshold?: Num;
+  ev_threshold_usd?: Num;
+  calibration?: PredictiveCalibration | null;
+  oos?: PredictiveOos | null;
+  candidates?: PredictiveCandidate[] | null;
+  rejections?: RejectionTally | null;
+  explanations?: PredictiveExplanation[] | null;
 }

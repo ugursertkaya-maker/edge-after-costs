@@ -552,3 +552,337 @@ export function gateVerdict(line: string): "pass" | "fail" | "unknown" {
   if (/\b(?:PASS|PASSED|GEÇTİ)\b/.test(s)) return "pass";
   return "unknown";
 }
+
+// --------------------------------------------------------------------------
+// Phase 4 vocabulary — the predictive entry engine, its calibration and the
+// reasons it refuses.
+//
+// One rule governs this whole block and it is the reason the helpers below
+// return a *reading* rather than a formatted string: an uncalibrated model's
+// output is a number, not a probability, and no caller is allowed to print it
+// as a confidence. Turning that check into a shared function is what stops it
+// from being forgotten in one of the three panels.
+// --------------------------------------------------------------------------
+
+/** Why the predictive engine refused a candidate (Phase 4 spec, item 34). */
+export const PREDICT_REJECT_REASON_LABELS: Record<string, string> = {
+  LOW_PROBABILITY: "Olasılık eşiğin altında",
+  NEGATIVE_EV: "Beklenen değer negatif",
+  COST_TOO_HIGH: "İcra maliyeti beklentiyi yiyor",
+  MODEL_UNCERTAIN: "Model kararsız",
+  CORRELATED_RISK: "Korelasyonlu risk sınırı",
+  SPREAD_TOO_WIDE: "Makas çok geniş",
+  NO_LIQUIDITY: "Likidite yok",
+  STALE_DATA: "Veri bayat",
+  REGIME_NOT_SUPPORTED: "Rejim modelin kapsamı dışında",
+};
+
+Object.assign(REJECT_REASON_LABELS, PREDICT_REJECT_REASON_LABELS);
+
+/**
+ * The nine reasons, grouped by what a large count in that group would mean.
+ *
+ * This grouping is the diagnosis the brief asks for. "Found no edge" and
+ * "refuses everything" produce the same flat P&L and are different problems:
+ * a tall `model` bar says the model looked and found nothing, a tall `venue`
+ * bar says it never got to look, and a tall `scope` bar says the engine is
+ * outside the conditions it was trained and sized for.
+ */
+export type RejectFamily = "model" | "venue" | "scope";
+
+export const PREDICT_REJECT_FAMILY: Record<string, RejectFamily> = {
+  LOW_PROBABILITY: "model",
+  NEGATIVE_EV: "model",
+  MODEL_UNCERTAIN: "model",
+  COST_TOO_HIGH: "venue",
+  SPREAD_TOO_WIDE: "venue",
+  NO_LIQUIDITY: "venue",
+  STALE_DATA: "venue",
+  REGIME_NOT_SUPPORTED: "scope",
+  CORRELATED_RISK: "scope",
+};
+
+export const REJECT_FAMILY_LABELS: Record<RejectFamily, string> = {
+  model: "Model kenar bulamadı",
+  venue: "Piyasa koşulu ve maliyet",
+  scope: "Kapsam ve portföy sınırı",
+};
+
+export const REJECT_FAMILY_NOTES: Record<RejectFamily, string> = {
+  model:
+    "Model baktı ve yeterli olasılık ya da pozitif beklenen değer bulamadı. Bu, motorun çalıştığı ve piyasada kenar olmadığı okumasıdır.",
+  venue:
+    "Model kararına hiç gelemedi: makas, derinlik, maliyet veya veri tazeliği adayı daha önce eledi. Bu, kenarın yokluğu değil, ölçülememesidir.",
+  scope:
+    "Aday, modelin eğitildiği rejimin veya portföyün taşıyabileceği korelasyonlu riskin dışında kaldı. Kenar hakkında hiçbir şey söylemez.",
+};
+
+export function predictRejectLabel(v: string | null | undefined): string {
+  if (!v) return DASH;
+  return PREDICT_REJECT_REASON_LABELS[v] ?? REJECT_REASON_LABELS[v] ?? v;
+}
+
+export function rejectFamily(code: string): RejectFamily | null {
+  return PREDICT_REJECT_FAMILY[code] ?? null;
+}
+
+// ------------------------------------------------------------- calibration
+
+/**
+ * The promotion gate from the Phase 4 spec: a maximum absolute reliability
+ * error above this means a 70% prediction does not win ~70% of the time, so
+ * the number is not a probability and must not be shown as one.
+ */
+export const CALIBRATION_MAX_ABS_ERROR = 0.1;
+
+export const CALIBRATION_STATUS_LABELS: Record<string, string> = {
+  CALIBRATED: "KALİBRE",
+  UNCALIBRATED: "KALİBRE DEĞİL",
+  POOR: "KALİBRASYON ZAYIF",
+  BAD: "KALİBRASYON ZAYIF",
+  FAILED: "KALİBRASYON BAŞARISIZ",
+  UNMEASURED: "ÖLÇÜLMEDİ",
+  NOT_MEASURED: "ÖLÇÜLMEDİ",
+  PENDING: "ÖLÇÜLMEDİ",
+  UNKNOWN: "ÖLÇÜLMEDİ",
+};
+
+export const CALIBRATION_METHOD_LABELS: Record<string, string> = {
+  isotonic: "izotonik",
+  platt: "Platt",
+  sigmoid: "Platt",
+  none: "yok",
+};
+
+export function calibrationMethodLabel(v: string | null | undefined): string {
+  if (!v) return DASH;
+  return CALIBRATION_METHOD_LABELS[v] ?? CALIBRATION_METHOD_LABELS[v.toLowerCase()] ?? v;
+}
+
+/**
+ * Which of the four things the calibration block is actually saying.
+ *
+ *   trusted      — measured, calibrated, inside the 0.10 reliability gate
+ *   poor         — measured and outside it
+ *   uncalibrated — the model itself reports it was never calibrated
+ *   unmeasured   — nobody measured it, which is NOT the same as it passing
+ */
+export type ConfidenceKind = "trusted" | "poor" | "uncalibrated" | "unmeasured" | "absent";
+
+export interface ConfidenceReading {
+  kind: ConfidenceKind;
+  /** What goes in the cell. Never a number unless `usable` is true. */
+  text: string;
+  /** The reason, in one line — for the cell's title and the panel's strip. */
+  note: string;
+  /** Whether this model's outputs may be read as probabilities at all. */
+  usable: boolean;
+}
+
+const UNMEASURED_NOTE =
+  "Kalibrasyon ölçülmedi. Ölçülmemiş bir kalibrasyon, geçmiş bir kalibrasyon değildir — modelin olasılıkları bu hâliyle olasılık sayılmaz.";
+const UNCALIBRATED_NOTE =
+  "Model kalibre edilmedi. Çıktısı sıralama üretebilir ama %70 dediğinde %70 kazandığının hiçbir güvencesi yoktur.";
+const POOR_NOTE = `Kalibrasyon ölçüldü ve geçemedi: azami mutlak güvenilirlik hatası ${CALIBRATION_MAX_ABS_ERROR
+  .toLocaleString("en-US", { minimumFractionDigits: 2 })} sınırının üzerinde. Bu çıktı bir sayıdır, olasılık değildir.`;
+const TRUSTED_NOTE =
+  "Kalibrasyon ölçüldü ve sınırın içinde: modelin verdiği olasılık, gerçekleşme sıklığıyla uyumlu.";
+
+const UNMEASURED_STATUSES = new Set(["UNMEASURED", "NOT_MEASURED", "PENDING", "UNKNOWN"]);
+const POOR_STATUSES = new Set(["POOR", "BAD", "FAILED"]);
+
+export interface CalibrationLike {
+  max_abs_error?: Numeric;
+  calibrated?: boolean | null;
+  status?: string | null;
+}
+
+/**
+ * Read the calibration block into a verdict.
+ *
+ * The order of the checks is the honesty: a model is only trusted when it
+ * says it was calibrated AND the reliability error was measured AND that
+ * measurement is inside the gate. Anything else — including a calibration
+ * block that simply says nothing — falls through to "unmeasured", because
+ * absent evidence is not evidence of a pass.
+ */
+export function calibrationReading(
+  cal: CalibrationLike | null | undefined,
+): ConfidenceReading {
+  const unmeasured: ConfidenceReading = {
+    kind: "unmeasured",
+    text: "ÖLÇÜLMEDİ",
+    note: UNMEASURED_NOTE,
+    usable: false,
+  };
+  if (!cal) return unmeasured;
+
+  const status = cal.status ? String(cal.status).toUpperCase() : null;
+  const err = toNum(cal.max_abs_error);
+
+  if (cal.calibrated === false) {
+    return {
+      kind: "uncalibrated",
+      text: "KALİBRE DEĞİL",
+      note: UNCALIBRATED_NOTE,
+      usable: false,
+    };
+  }
+  if (status && UNMEASURED_STATUSES.has(status)) return unmeasured;
+  if (err !== null && err > CALIBRATION_MAX_ABS_ERROR) {
+    return { kind: "poor", text: "KALİBRASYON ZAYIF", note: POOR_NOTE, usable: false };
+  }
+  if (status && POOR_STATUSES.has(status)) {
+    return { kind: "poor", text: "KALİBRASYON ZAYIF", note: POOR_NOTE, usable: false };
+  }
+  if (cal.calibrated === true && err !== null) {
+    return { kind: "trusted", text: "KALİBRE", note: TRUSTED_NOTE, usable: true };
+  }
+  return unmeasured;
+}
+
+/**
+ * The confidence cell for one candidate.
+ *
+ * Three gates, in order: the model's calibration has to be trustworthy, the
+ * candidate has to claim its confidence is known, and the figure has to
+ * actually be there. A failure at any of them prints the failure, never a
+ * number — a confidence percentage on an uncalibrated model is the single
+ * most authoritative-looking lie this screen could tell.
+ */
+export function confidenceReading(
+  value: Numeric,
+  known: boolean | null | undefined,
+  cal: CalibrationLike | null | undefined,
+): ConfidenceReading {
+  const base = calibrationReading(cal);
+  if (!base.usable) return base;
+  if (known === false) {
+    return {
+      kind: "unmeasured",
+      text: "BİLİNMİYOR",
+      note: "Model bu aday için güven bildirmedi. Bildirilmemiş güven, düşük güven değildir.",
+      usable: false,
+    };
+  }
+  const v = toNum(value);
+  if (v === null) {
+    return {
+      kind: "absent",
+      text: DASH,
+      note: "Bu aday için güven değeri gelmedi.",
+      usable: false,
+    };
+  }
+  return { kind: "trusted", text: formatRate(v, 0), note: TRUSTED_NOTE, usable: true };
+}
+
+export function calibrationStatusLabel(v: string | null | undefined): string {
+  if (!v) return DASH;
+  return CALIBRATION_STATUS_LABELS[String(v).toUpperCase()] ?? v;
+}
+
+/** Tone class for a calibration verdict. */
+export function confidenceTone(kind: ConfidenceKind): string {
+  switch (kind) {
+    case "trusted":
+      return "is-trusted";
+    case "poor":
+      return "is-poor";
+    case "uncalibrated":
+      return "is-uncal";
+    case "unmeasured":
+      return "is-unmeasured";
+    default:
+      return "is-absent";
+  }
+}
+
+// ------------------------------------------------------ predictive figures
+
+/**
+ * A probability in [0, 1]. Rendered without decimals: the spec's own example
+ * reads "%68", and a third decimal on a figure whose reliability error is
+ * measured in whole percentage points would be false precision.
+ */
+export function formatProbability(value: Numeric): string {
+  const n = toNum(value);
+  if (n === null) return DASH;
+  return formatRate(n, 0);
+}
+
+/** Brier score — lower is better, 0.25 is the coin flip. */
+export function formatScore(value: Numeric, digits = 4): string {
+  const n = toNum(value);
+  if (n === null) return DASH;
+  return n.toLocaleString("en-US", {
+    minimumFractionDigits: digits,
+    maximumFractionDigits: digits,
+  });
+}
+
+/** A `[start_ms, end_ms]` split leg, as a date range. */
+export function formatPeriod(period: [number, number] | null | undefined): string {
+  if (!period || period.length < 2) return DASH;
+  const a = toNum(period[0]);
+  const b = toNum(period[1]);
+  if (a === null || b === null || a <= 0 || b <= 0) return DASH;
+  const day = (ms: number) =>
+    new Date(ms).toLocaleDateString("tr-TR", {
+      day: "2-digit",
+      month: "2-digit",
+      year: "2-digit",
+    });
+  return `${day(a)} → ${day(b)}`;
+}
+
+/** The span of a split leg, in days. */
+export function periodDays(period: [number, number] | null | undefined): number | null {
+  if (!period || period.length < 2) return null;
+  const a = toNum(period[0]);
+  const b = toNum(period[1]);
+  if (a === null || b === null || b <= a) return null;
+  return (b - a) / 86_400_000;
+}
+
+export function formatDays(value: Numeric): string {
+  const n = toNum(value);
+  if (n === null) return DASH;
+  return `${n.toLocaleString("en-US", { maximumFractionDigits: n < 10 ? 1 : 0 })} gün`;
+}
+
+/** Liquidity arrives either as a label the worker chose or as a depth figure. */
+export const LIQUIDITY_LABELS: Record<string, string> = {
+  STRONG: "güçlü",
+  GOOD: "iyi",
+  ADEQUATE: "yeterli",
+  OK: "yeterli",
+  THIN: "ince",
+  WEAK: "zayıf",
+  NONE: "yok",
+  UNKNOWN: DASH,
+};
+
+export function liquidityLabel(value: string | number | null | undefined): string {
+  if (value === null || value === undefined || value === "") return DASH;
+  if (typeof value === "number") {
+    return Number.isFinite(value) ? formatMoney(value, 0) : DASH;
+  }
+  return LIQUIDITY_LABELS[value.toUpperCase()] ?? value;
+}
+
+/** `spread_ok` is a boolean gate, and an unreported gate is not a passed one. */
+export function spreadLabel(ok: boolean | null | undefined): string {
+  if (ok === true) return "uygun";
+  if (ok === false) return "geniş";
+  return DASH;
+}
+
+Object.assign(DECISION_LABELS, {
+  ENTER: "AÇTI",
+  OPEN: "AÇTI",
+  ACCEPT: "AÇTI",
+  REJECT: "REDDETTİ",
+  REJECTED: "REDDETTİ",
+  SKIP: "İŞLEM YOK",
+});
