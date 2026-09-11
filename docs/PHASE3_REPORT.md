@@ -215,6 +215,71 @@ ones that matter most for a family whose thesis is reacting quickly to a volume
 spike. And the economics are modest even if real: **+$5.51 on $500 over 120
 days**, about 1.1%, at $0.07 a trade.
 
+### The three curves the sweep was run for (brief items 9, 10, 11)
+
+**Exit profile — bigger targets are uniformly better, and the cost wall is
+visible.**
+
+| Exit profile | Arms | Trades | PF | Win % | Expectancy | Avg hold |
+|---|---|---|---|---|---|---|
+| net_fixed:3 / :5 / :8 | 133 | **0** | — | — | — | — |
+| net_fixed:12 | 35 | 10,331 | 0.28 | 32.6% | −$0.158 | 17.3m |
+| net_fixed:17 *(baseline)* | 403 | 146,555 | 0.32 | 33.1% | −$0.161 | 18.9m |
+| net_fixed:25 | 32 | 8,178 | 0.41 | 36.1% | −$0.153 | 22.8m |
+| net_fixed:50 | 47 | 11,572 | 0.41 | 27.6% | −$0.142 | 20.8m |
+| net_fixed:75 | 46 | 12,063 | 0.50 | 30.7% | −$0.137 | 29.1m |
+| **net_fixed:110** | 45 | 6,857 | **0.54** | 31.4% | −$0.133 | 33.3m |
+| atr:0.75 / 1.5 / 3 | 136 | 28,314 | 0.42 / 0.47 / 0.50 | | | |
+| trail:0.25 / 0.5 | 77 | 17,952 | 0.44 / 0.45 | | | |
+| structure | 33 | 7,364 | 0.43 | 38.4% | −$0.162 | 26.6m |
+| decay | 42 | 8,964 | 0.50 | 31.1% | −$0.145 | 27.5m |
+
+Two things read straight off this. **Targets of 3, 5 and 8 bps produced zero
+trades in 120 days** — they never clear their own round trip, so no entry ever
+qualifies. That is the cost wall made visible, and it is why the ladder was
+deliberately started one rung inside it. And **profit factor climbs
+monotonically with target size**, 0.28 at 12 bps to 0.54 at 110 bps. The
+baseline the main tournament used (17 bps) was close to the worst rung on the
+ladder.
+
+**Stop profile — the noise floor is measurable.**
+
+| Stop profile | Arms | Trades | PF | Win % | Avg hold |
+|---|---|---|---|---|---|
+| fixed:10 | 63 | 3,166 | 0.44 | 24.6% | 10.6m |
+| fixed:25 | 48 | **227** | 0.48 | 36.1% | 16.5m |
+| fixed:50 | 58 | **411** | 0.48 | 39.9% | 17.6m |
+| atr:1 / :2 / :3 | 624 | 209,718 | 0.35 / 0.39 / 0.36 | | |
+| vol:1.5 / :3 | 114 | 28,036 | 0.41 / 0.41 | | |
+| structure | 60 | 4,007 | 0.33 | 22.6% | 16.1m |
+| time | 49 | 7,932 | 0.36 | 39.3% | 24.4m |
+| reversal | 55 | 15,208 | **0.30** | 25.0% | 13.5m |
+
+The report flagged the failure mode the brief asked for by name:
+`fixed:10` — **"62% of exits are stops at a 25% win rate — this stop is inside
+the noise."** A 10 bps stop on an asset whose 1-minute ATR is 2.2 bps is stopped
+out by ordinary tick noise before the thesis has a chance. At the other end,
+`fixed:25` and `fixed:50` show the best profit factors (0.48) but on 227 and 411
+trades — too few to lean on. `reversal` is the worst stop tested.
+
+**Entry quality — stricter thresholds do not help.**
+
+| Min score | Arms | Trades | PF | Expectancy |
+|---|---|---|---|---|
+| 0.00 | 117 | 22,131 | 0.37 | −$0.158 |
+| 0.35 | 103 | 22,123 | 0.37 | −$0.149 |
+| 0.50 | 598 | 211,780 | 0.39 | −$0.154 |
+| 0.65 | 101 | 9,090 | 0.34 | −$0.160 |
+| 0.80 | 82 | 2,663 | 0.34 | −$0.156 |
+| 0.90 | 70 | 918 | 0.38 | −$0.145 |
+
+This is a clean refutation of a reasonable hypothesis. Raising the bar from 0.0
+to 0.9 cuts the trade count 24-fold — from 22,131 to 918 — and moves expectancy
+from −$0.158 to −$0.145. **"Ten excellent trades beat a hundred and fifty
+mediocre ones" is false here**, because the excellent ones are not better per
+trade. The conviction score is not ranking trades by outcome; it is ranking them
+by how loudly the feature fired.
+
 ### What would make it credible
 
 1. **Fix the gate plumbing** so gates 3, 4 and 6 run over the out-of-sample
@@ -232,24 +297,31 @@ a finding.
 
 ## 16. Stress tests
 
-Not yet meaningful, and the report says so rather than implying otherwise. The
-cost stresses that can be applied analytically (fees +25%, +50%, slippage ×2,
-worse spread) are exact, but they are only computed for arms the tournament
-retained trades for — and it retains them only for plausible finalists, of
-which there were none. The stresses that change *which* trades happen (latency
-×2, missed fills, execution delay) need a replay the search did not supply and
-are reported as **"not evaluated"**, never as passed.
+Four of the seven stresses are analytic — fees +25%, fees +50%, slippage ×2 and
+worse spread are re-priced exactly from the itemised costs on each closed trade.
+The other three change *which* trades happen rather than what they cost (latency
+×2, missed fills, random execution delay), so they need a replay the search did
+not supply and are reported as **"not evaluated"** — never as passed.
 
-Since no arm reached the stress gate on its own merits, stressing them further
-would be decorating a negative result.
+For the 1,400 main-run arms this was moot: none reached the stress gate on its
+own merits. For the one arm from the exit sweep that did, the four analytic
+stresses all reported "survived" — but **on the wrong trade set** (see 15b: the
+fee-stress base exceeds the unstressed out-of-sample net, which is
+arithmetically impossible), so that pass is not usable. And the three
+unevaluated stresses are the ones that matter most for a volume-impulse family.
 
 ## 17. Monte Carlo
 
-Not run: it is computed only for arms with trades retained, i.e. plausible
-finalists. With zero finalists there is nothing to resample. The machinery is
-built and tested (bootstrap of trade order, seeded, reporting median and p95
-drawdown, worst loss streak, and probability of ending below the starting
-$500), and the gate that consumes it requires `prob_below_start <= 35%`.
+Run once, for the exit sweep's single apparent finalist: 2,000 bootstrap
+resamples of trade order reported a median drawdown of $2.16, a 95th-percentile
+drawdown of $4.28 (0.9% of the account), a worst loss streak of 11, and a 0.2%
+probability of ending below the starting $500 — against the gate's 35% limit.
+
+Those numbers are reassuring in isolation and should be read with the same
+caveat as the stresses: they were computed over the retained trade list rather
+than the 79 out-of-sample trades. The method's own limitation also applies and
+is documented in the module — bootstrapping trade order destroys serial
+correlation, which flatters any strategy whose losses cluster.
 
 ## 17b. Machine learning — not run, and why
 
