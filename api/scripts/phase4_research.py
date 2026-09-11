@@ -196,10 +196,11 @@ def main() -> int:
             sym_report["specs"][key] = spec_report
             if oos and oos.get("trades", 0) >= 30:
                 say(f"  {key}: OOS {oos['trades']} trades  "
+                    f"win {oos['win_rate']:.1%} vs needs {oos['required_win_rate']:.1%}  "
                     f"PF {oos['profit_factor']:.2f}  "
-                    f"EV/trade ${oos['expectancy']:+.4f}  "
-                    f"brier {oos.get('brier', float('nan')):.4f}")
-                if best_overall is None or oos["expectancy"] > best_overall[1]["expectancy"]:
+                    f"EV {oos['expectancy_bps']:+.2f} bps  "
+                    f"cal-err {oos['max_abs_calibration_error']:.3f}")
+                if best_overall is None or oos["expectancy_bps"] > best_overall[1]["expectancy_bps"]:
                     best_overall = (f"{symbol}|{key}", oos)
 
         report["per_symbol"][symbol] = sym_report
@@ -218,9 +219,11 @@ def main() -> int:
     else:
         key, o = best_overall
         say(f"BEST OUT-OF-SAMPLE: {key}")
-        say(f"  trades {o['trades']}  win {o['win_rate']:.1%}  "
-            f"PF {o['profit_factor']:.2f}  EV ${o['expectancy']:+.4f}/trade  "
-            f"net ${o['net_pnl']:+.2f}")
+        say(f"  trades {o['trades']}  win {o['win_rate']:.1%} "
+            f"(needs {o['required_win_rate']:.1%})  PF {o['profit_factor']:.2f}  "
+            f"EV {o['expectancy_bps']:+.2f} bps/trade  "
+            f"(${o['expectancy_usd_at_100']:+.4f} on $100)  "
+            f"brier {o['brier']:.4f}  cal-err {o['max_abs_calibration_error']:.3f}")
         say("  A result here is a candidate, not a champion: the promotion "
             "gates in robustness.py still apply.")
     say(f"[out] {out}/phase4.json")
@@ -284,6 +287,11 @@ def run_fold(matrix, labels, split, spec, *, mdl, cal, evmod, sp,
     net = outcomes * win_bps - (1.0 - outcomes) * win_bps - round_trip_bps
     wins = float(net[net > 0].sum())
     losses = float(-net[net < 0].sum())
+    # With a symmetric payoff the geometry alone fixes the hit rate needed to
+    # break even: p > 0.5 + cost / (2 x target). Printing it beside the actual
+    # win rate is the fastest way to see whether a model has skill but is being
+    # eaten by costs, which is a completely different problem from having none.
+    required = 0.5 + round_trip_bps / (2.0 * win_bps)
     return {
         "split": split.name,
         "threshold": float(threshold),
@@ -294,6 +302,9 @@ def run_fold(matrix, labels, split, spec, *, mdl, cal, evmod, sp,
         "net_bps": float(net.sum()),
         "expectancy_bps": float(net.mean()),
         "profit_factor": (wins / losses) if losses > 0 else float("inf"),
+        "gross_win_bps": wins,
+        "gross_loss_bps": losses,
+        "required_win_rate": float(required),
         "brier": float(calibration.brier),
         "max_abs_calibration_error": float(calibration.max_abs_error),
         "rows": {"train": len(tr), "validate": len(va), "test": len(te)},
@@ -303,25 +314,34 @@ def run_fold(matrix, labels, split, spec, *, mdl, cal, evmod, sp,
 
 
 def pool_folds(folds: list[dict]) -> dict | None:
-    """Aggregate the test windows. Only out-of-sample numbers live here."""
+    """Aggregate the test windows. Only out-of-sample numbers live here.
+
+    Profit factor is computed from the pooled **trade** wins and losses, not
+    from the per-fold nets: two losing folds would otherwise pool to a profit
+    factor of 0.00 and hide the fact that each was around 0.5.
+    """
     real = [f for f in folds if f.get("trades")]
     if not real:
         return None
     trades = sum(f["trades"] for f in real)
+    wins = sum(f.get("gross_win_bps", 0.0) for f in real)
+    losses = sum(f.get("gross_loss_bps", 0.0) for f in real)
     net_bps = sum(f["net_bps"] for f in real)
-    wins = sum(f["trades"] * f["win_rate"] for f in real)
-    pos = sum(f["net_bps"] for f in real if f["net_bps"] > 0)
-    neg = -sum(f["net_bps"] for f in real if f["net_bps"] < 0)
+    n_wins = sum(f["trades"] * f["win_rate"] for f in real)
     return {
         "trades": trades,
-        "win_rate": wins / trades if trades else 0.0,
-        "net_pnl": net_bps / 100.0,        # bps of one unit -> percent
-        "expectancy": net_bps / trades if trades else 0.0,
-        "profit_factor": (pos / neg) if neg > 0 else float("inf"),
+        "win_rate": n_wins / trades if trades else 0.0,
+        "net_bps": net_bps,
+        "expectancy_bps": net_bps / trades if trades else 0.0,
+        # What the same edge is worth in dollars at a representative position.
+        "net_usd_at_100": net_bps / 10_000.0 * 100.0,
+        "expectancy_usd_at_100": (net_bps / trades if trades else 0.0) / 10_000.0 * 100.0,
+        "profit_factor": (wins / losses) if losses > 0 else float("inf"),
         "windows": len(real),
         "windows_positive": sum(1 for f in real if f["net_bps"] > 0),
         "brier": sum(f["brier"] for f in real) / len(real),
         "max_abs_calibration_error": max(f["max_abs_calibration_error"] for f in real),
+        "required_win_rate": real[0].get("required_win_rate"),
     }
 
 
