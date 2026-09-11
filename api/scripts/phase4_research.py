@@ -229,63 +229,66 @@ def main() -> int:
 
 def run_fold(matrix, labels, split, spec, *, mdl, cal, evmod, sp,
              equity, seed, round_trip_bps, thresholds, embargo_minutes):
-    """Train, calibrate and choose thresholds on train/validate; score test once."""
+    """Train, calibrate and choose thresholds on train/validate; score test once.
+
+    The ordering here is the whole point: ``benchmark`` evaluates on
+    ``validate``, the calibrator is fitted on ``validate``, the threshold is
+    chosen on ``validate``, and only then is ``test`` touched — once.
+    """
     try:
-        tr, va, te = sp.apply_purge(
-            labels, split,
-            max_horizon_minutes=spec.horizon_minutes,
-            embargo_minutes=embargo_minutes,
-        )
-    except Exception:
-        return None
+        tr, va, te = mdl.split_matrix(matrix, split, embargo_minutes=embargo_minutes)
+    except Exception as exc:
+        return {"split": split.name, "skipped": f"split_matrix: {exc}"}
     if min(len(tr), len(va), len(te)) < 50:
-        return None
+        return {"split": split.name,
+                "skipped": f"too few rows: {len(tr)}/{len(va)}/{len(te)}"}
+    if len(np.unique(tr.y)) < 2 or len(np.unique(va.y)) < 2:
+        return {"split": split.name, "skipped": "a slice has only one class"}
 
     try:
-        parts = mdl.split_matrix(matrix, split, max_horizon_minutes=spec.horizon_minutes,
-                                 embargo_minutes=embargo_minutes)
-        Xtr, ytr = parts["train"]
-        Xva, yva = parts["validate"]
-        Xte, yte = parts["test"]
-    except Exception:
-        return None
-    if len(np.unique(ytr)) < 2 or len(np.unique(yva)) < 2 or len(yte) < 30:
-        return None
+        reports = mdl.benchmark(matrix, split, seed=seed,
+                                embargo_minutes=embargo_minutes)
+        champion, why = mdl.select_champion(reports)
+    except Exception as exc:
+        return {"split": split.name, "skipped": f"benchmark: {exc}"}
+    if champion is None or champion.model is None:
+        return {"split": split.name, "skipped": why}
 
-    reports = mdl.benchmark_arrays(Xtr, ytr, Xva, yva, seed=seed)
-    champion = mdl.select_champion(reports)
-    if champion is None:
-        return None
-
-    p_va = champion.model.predict_p_win(Xva)
-    calibrator = cal.fit_calibrator(p_va, yva, method="isotonic")
-    p_te = calibrator.transform(champion.model.predict_p_win(Xte))
-    calibration = cal.evaluate_calibration(p_te, yte)
-
-    sweep = evmod.threshold_search(
-        calibrator.transform(p_va), yva,
-        net_returns=np.full(len(yva), spec.net_target_pct * 100.0),
-        thresholds=thresholds, cost_bps=round_trip_bps,
-    )
-    chosen = evmod.select_threshold(sweep)
-    if chosen is None:
-        return None
-
-    taken = p_te >= chosen.threshold
-    n = int(taken.sum())
-    if n == 0:
-        return {"split": split.name, "trades": 0, "threshold": chosen.threshold}
+    p_va = champion.model.predict_p_win(va.X)
+    # `keys=` makes the leak guard exact rather than fingerprint-based: a tree
+    # ensemble gives hundreds of rows the same leaf probability, which the
+    # value-based fallback cannot tell apart from genuine overlap.
+    calibrator = cal.fit_calibrator(p_va, va.y, method="isotonic", keys=va.ts_ms)
+    p_te = calibrator.transform(champion.model.predict_p_win(te.X))
+    calibration = cal.evaluate_calibration(p_te, te.y)
 
     win_bps = spec.net_target_pct * 100.0
-    loss_bps = win_bps  # symmetric on the ATR stop this grid uses
-    outcomes = yte[taken].astype(float)
-    net = outcomes * win_bps - (1.0 - outcomes) * loss_bps
+    sweep = evmod.threshold_search(
+        calibrator.transform(p_va), va.y,
+        net_returns=np.full(len(va.y), win_bps),
+        thresholds=thresholds, cost_bps=round_trip_bps,
+    )
+    selection = evmod.select_threshold(sweep)
+    threshold = getattr(selection, "threshold", None)
+    if threshold is None:
+        return {"split": split.name,
+                "skipped": getattr(selection, "reason", "no threshold selected")}
+
+    taken = p_te >= threshold
+    n = int(taken.sum())
+    if n == 0:
+        return {"split": split.name, "trades": 0, "threshold": float(threshold),
+                "skipped": "threshold admitted nothing in the test window"}
+
+    outcomes = te.y[taken].astype(float)
+    net = outcomes * win_bps - (1.0 - outcomes) * win_bps - round_trip_bps
     wins = float(net[net > 0].sum())
     losses = float(-net[net < 0].sum())
     return {
         "split": split.name,
-        "threshold": float(chosen.threshold),
+        "threshold": float(threshold),
         "model": champion.name,
+        "model_choice": why,
         "trades": n,
         "win_rate": float(outcomes.mean()),
         "net_bps": float(net.sum()),
@@ -293,6 +296,7 @@ def run_fold(matrix, labels, split, spec, *, mdl, cal, evmod, sp,
         "profit_factor": (wins / losses) if losses > 0 else float("inf"),
         "brier": float(calibration.brier),
         "max_abs_calibration_error": float(calibration.max_abs_error),
+        "rows": {"train": len(tr), "validate": len(va), "test": len(te)},
         "purged": split.purged,
         "embargoed": split.embargoed,
     }
