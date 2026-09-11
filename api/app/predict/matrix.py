@@ -77,7 +77,7 @@ import time
 from collections import deque
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Any, Deque, Iterable, Mapping, Sequence
+from typing import Any, Deque, Mapping, Sequence
 
 import numpy as np
 
@@ -1342,13 +1342,10 @@ class _SymbolBuilder:
         values["cost_spread_bps"] = spread
         guarded["cost_spread_bps"] = spread_guarded
 
-        fine = self._fine
-        active = _finite(
-            values.get(feature_name("active_frac", fine)),
-            0.0,
-        )
-        if feature_name("active_frac", fine) not in values:
-            active = self._extras[fine].out["active_frac"][0]
+        # Read the tape's liveness straight from the extras rather than from
+        # ``values``: the cost group must cost correctly even when the caller
+        # asked for ``cost`` without ``volume``.
+        active = self._extras[self._fine].out["active_frac"][0]
         rv = _finite(mtf.get(feature_name("rv", self._regime_interval), 0.0))
         atr = _finite(mtf.get(feature_name("atr", self._regime_interval), 0.0))
 

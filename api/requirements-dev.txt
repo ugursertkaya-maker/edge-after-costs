@@ -2,3 +2,11 @@
 pytest==8.3.4
 pytest-asyncio==0.25.0
 freezegun==1.5.1
+
+# Research only — the worker container never imports these. A champion ships as
+# a numpy-only artifact (app/predict/artifact.py), which is why requirements.txt
+# stays untouched. Without them 127 predictive tests silently skip, including
+# the one that proves the exported predictor matches sklearn to 1e-9.
+scikit-learn==1.6.0
+scipy==1.15.0
+joblib==1.4.2

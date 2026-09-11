@@ -564,10 +564,14 @@ def fit_calibrator(
         f = _logit(p)
 
         def objective(aa: float, bb: float) -> float:
+            """Negative log-likelihood of the smoothed targets under sigmoid(z).
+
+            ``logaddexp(0, -z)`` is ``log(1 + exp(-z))`` without overflowing at
+            either extreme, which matters because a near-separable validation
+            set drives ``z`` to several hundred.
+            """
             z = aa * f + bb
-            # log(1+exp(-z)) evaluated without overflowing on either branch.
-            pos = np.where(z >= 0, np.log1p(np.exp(-np.abs(z))), z + np.log1p(np.exp(-np.abs(z))))
-            return float(np.sum((t - 1.0) * z - pos))
+            return float(np.sum((1.0 - t) * z + np.logaddexp(0.0, -z)))
 
         a, b = 1.0, 0.0
         obj = objective(a, b)

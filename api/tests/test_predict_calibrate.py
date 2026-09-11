@@ -62,7 +62,7 @@ def test_a_model_trained_on_pure_noise_calibrates_to_the_base_rate():
     ever reports a well-separated, well-calibrated model on random labels, the
     split leaks and nothing else in Phase 4 can be believed.
     """
-    sk = pytest.importorskip("sklearn", reason="research dependency")
+    pytest.importorskip("sklearn", reason="research dependency")
     from test_predict_models import make_split, synthetic_matrix
 
     from app.predict.models import split_matrix, train_model
@@ -81,8 +81,10 @@ def test_a_model_trained_on_pure_noise_calibrates_to_the_base_rate():
     )
 
     for method in ("isotonic", "platt"):
-        cal = fit_calibrator(p_val, validate.y, method=method)
-        report = calibrate_and_evaluate(cal, p_test, test.y, bins=5, min_bin_count=30)
+        cal = fit_calibrator(p_val, validate.y, method=method, keys=validate.ts_ms)
+        report = calibrate_and_evaluate(
+            cal, p_test, test.y, bins=5, min_bin_count=30, keys=test.ts_ms
+        )
 
         assert 0.42 < report.auc < 0.58, (
             f"{method}: AUC {report.auc:.3f} on labels independent of every "
@@ -121,8 +123,37 @@ def test_a_partial_overlap_is_caught_not_just_an_identical_set():
     p, y = _binary(800, seed=3)
     cal = fit_calibrator(p[:400], y[:400], method="isotonic")
     calibrate_and_evaluate(cal, p[400:], y[400:])  # disjoint: fine
-    with pytest.raises(CalibrationLeak, match=r"\d+ row"):
+    with pytest.raises(CalibrationLeak, match="fitted on"):
         calibrate_and_evaluate(cal, p[350:700], y[350:700])  # 50 shared rows
+
+
+def test_row_keys_make_the_leak_check_exact():
+    """With ``keys`` a single shared row is enough, and coincidence is not."""
+    p, y = _binary(600, seed=30)
+    ts = np.arange(600) * 60_000
+    cal = fit_calibrator(p[:300], y[:300], method="isotonic", keys=ts[:300])
+    calibrate_and_evaluate(cal, p[300:], y[300:], keys=ts[300:])
+    with pytest.raises(CalibrationLeak, match="matched by row id"):
+        calibrate_and_evaluate(cal, p[299:400], y[299:400], keys=ts[299:400])
+
+
+def test_row_keys_must_be_unique_per_row():
+    p, y = _binary(10, seed=31)
+    with pytest.raises(ValueError, match="unique per row"):
+        fit_calibrator(p, y, method="platt", keys=np.zeros(10, dtype=int))
+
+
+def test_repeated_probabilities_alone_do_not_trigger_a_false_leak():
+    """A tree ensemble hands hundreds of rows the same leaf probability."""
+    rng = np.random.default_rng(32)
+    grid = np.array([0.1, 0.3, 0.5, 0.7, 0.9])
+    p_fit = rng.choice(grid, 500)
+    y_fit = (rng.random(500) < p_fit).astype(int)
+    p_eval = rng.choice(grid, 500)
+    y_eval = (rng.random(500) < p_eval).astype(int)
+    cal = fit_calibrator(p_fit, y_fit, method="isotonic", keys=np.arange(500))
+    # Exact keys: disjoint rows, no complaint, even though every value repeats.
+    calibrate_and_evaluate(cal, p_eval, y_eval, keys=np.arange(500, 1000))
 
 
 def test_check_not_fit_rows_is_silent_on_genuinely_held_out_rows():
