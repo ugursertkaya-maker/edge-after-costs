@@ -33,7 +33,10 @@ export type ExitReasonCode =
   | "STOP_LOSS"
   | "TIME_STOP"
   | "SIGNAL_REVERSAL"
-  | "RISK_EXIT";
+  | "RISK_EXIT"
+  // V2 — the 25-minute checkpoint may retire a position that is still alive.
+  | "EXIT_WEAK"
+  | "ROTATE_CAPITAL";
 
 export type RejectReasonCode =
   | "STALE_BOOK"
@@ -53,7 +56,26 @@ export type RejectReasonCode =
   | "BELOW_MIN_NOTIONAL"
   | "BAD_REWARD_RISK"
   | "SLIPPAGE_TOO_HIGH"
-  | "NOT_SUPPORTED_SHORT";
+  | "NOT_SUPPORTED_SHORT"
+  // V2 — refusals that come from the net gate and the portfolio layer.
+  | "NET_TARGET_UNREACHABLE"
+  | "CASH_RESERVE"
+  | "PORTFOLIO_RISK_BUDGET"
+  | "CORRELATED_EXPOSURE"
+  | "DIRECTIONAL_EXPOSURE";
+
+/**
+ * How the entry was (or is expected to be) filled. Binance.US charges 0% maker,
+ * so this is not a label — it is the single biggest term in the cost stack.
+ */
+export type MakerTaker = "MAKER" | "TAKER";
+
+/**
+ * Where a position stands against its 25-minute checkpoint.
+ *   PENDING — not yet reached; KEEP / TRAIL — reassessed and kept;
+ *   DUE     — past 25 minutes and the checkpoint has not run.
+ */
+export type CheckpointStatus = "PENDING" | "KEEP" | "TRAIL" | "DUE";
 
 export interface DashboardHeader {
   starting_equity: Num;
@@ -77,6 +99,17 @@ export interface DashboardMetrics {
   /** Traded notional / starting equity. */
   capital_turnover: Num;
   avg_holding_seconds: Num;
+
+  // ---- V2 ------------------------------------------------------------------
+  // The three values that must never be collapsed into one. `real_net_profit`
+  // is the only one of them that is profit; the other two exist so the
+  // operator can see what the price move earned and what capturing it cost.
+  /** Sum of gross P&L — what the price moves earned, before any cost. */
+  profit_before_costs?: Num;
+  /** Fees + spread + slippage, reported as a positive magnitude. */
+  total_costs?: Num;
+  /** What actually landed in the account. */
+  real_net_profit?: Num;
 }
 
 export interface ScannerRow {
@@ -98,7 +131,44 @@ export interface ScannerRow {
   reject_reason: RejectReasonCode | string | null;
 }
 
-export interface PositionRow {
+/**
+ * The V2 per-trade cost stack.
+ *
+ * Every member is optional: the worker that fills these is being extended
+ * separately, so the API serves V1-shaped rows until that lands and the UI
+ * must render an em dash rather than inventing a zero. The identity the
+ * dashboard asserts is
+ *
+ *     gross_pnl_usd − total_cost_usd = net_pnl_usd
+ *
+ * and the three terms are always shown separately, never netted for the
+ * operator.
+ */
+export interface CostBreakdown {
+  /** What the price move earned, before any cost. Never a profit figure. */
+  gross_pnl_usd?: Num;
+  entry_fee_usd?: Num;
+  /** Open positions: the fee the exit is modelled to cost. */
+  expected_exit_fee_usd?: Num;
+  /** Closed trades: the fee the exit actually cost. */
+  exit_fee_usd?: Num;
+  spread_cost_usd?: Num;
+  slippage_usd?: Num;
+  /** Fees + spread + slippage, positive magnitude. */
+  total_cost_usd?: Num;
+  /** Gross minus every cost above — the only figure that is profit. */
+  net_pnl_usd?: Num;
+  /** How the entry filled: 0% maker vs a taker fee is most of the stack. */
+  maker_or_taker?: MakerTaker | string | null;
+  /** The price at which the round trip has paid for itself. */
+  break_even_price?: Num;
+  /** The price whose NET result meets the active profile's target. */
+  net_tp_price?: Num;
+  /** That target as a percentage of the position (1.0 === 1%). */
+  net_tp_pct?: Num;
+}
+
+export interface PositionCore {
   id: string;
   symbol: string;
   side: Side | string;
@@ -112,9 +182,26 @@ export interface PositionRow {
   fees_usd: Num;
   holding_seconds: Num;
   strategy: string | null;
+
+  // ---- V2 ------------------------------------------------------------------
+  /** Modelled loss if the stop fills — NOT the position size. */
+  account_risk_usd?: Num;
+  /** Seconds since entry. Falls back to `holding_seconds` when absent. */
+  age_seconds?: Num;
+  /** When the position opened. Derived from age when the worker omits it. */
+  entry_ms?: Num;
+  /** The horizon the entry was taken for: a label ("25–60 dk") or seconds. */
+  expected_hold_window?: string | number | null;
+  checkpoint_status?: CheckpointStatus | string | null;
+  /** Epoch ms at which the 60-minute time stop closes this position. */
+  time_stop_ms?: Num;
+  /** Ranker score behind the entry: a 0–1 fraction or a 0–100 reading. */
+  signal_strength?: Num;
 }
 
-export interface TradeRow {
+export interface PositionRow extends PositionCore, CostBreakdown {}
+
+export interface TradeCore {
   id: string;
   symbol: string;
   strategy: string | null;
@@ -122,11 +209,62 @@ export interface TradeRow {
   exit_ms: Num;
   entry_price: Num;
   exit_price: Num;
+  exit_reason: ExitReasonCode | string | null;
+
+  // ---- V2 ------------------------------------------------------------------
+  // The cost stack arrives via CostBreakdown below. These two are not in the
+  // frozen additions list but section G asks for position size and account
+  // risk per completed trade, so they are read when the worker supplies them.
+  notional_usd?: Num;
+  risk_usd?: Num;
+  /** The stop the trade actually carried. */
+  stop_loss?: Num;
+}
+
+/**
+ * A closed round trip. `gross_pnl_usd`, `slippage_usd` and `net_pnl_usd` are
+ * V1 columns and are always present; `fees_usd` is the V1 total fee and stays
+ * the fallback whenever the entry/exit split has not been reported.
+ */
+export interface TradeRow extends TradeCore, CostBreakdown {
   gross_pnl_usd: Num;
   fees_usd: Num;
   slippage_usd: Num;
   net_pnl_usd: Num;
-  exit_reason: ExitReasonCode | string | null;
+}
+
+/**
+ * The portfolio layer's own state. V2 removed the 1–3 concurrent-position cap,
+ * so "how much of the account is at work, and is it really one bet" became a
+ * reading in its own right rather than a consequence of the position count.
+ */
+export interface PortfolioState {
+  open_positions: Num;
+  /** Notional currently at work. */
+  capital_deployed: Num;
+  available_cash: Num;
+  /** Cash held back on purpose — never deployed just because signals exist. */
+  cash_reserve: Num;
+  /** Sum of modelled loss across open stops. */
+  open_risk_usd: Num;
+  /** The same as a percentage of equity (1.0 === 1%). */
+  open_risk_pct: Num;
+  /** How much of the open exposure is one correlated bet (1.0 === 1%). */
+  correlated_exposure_pct: Num;
+  avg_position_usd: Num;
+  median_position_usd: Num;
+  avg_holding_seconds: Num;
+  positions_under_25m: Num;
+  positions_25_60m: Num;
+  positions_over_60m: Num;
+  /** Traded notional per day / equity. */
+  capital_turnover_per_day: Num;
+  /** NET profit earned per dollar of capital put to work. */
+  net_profit_per_dollar_deployed: Num;
+  /** FEW_LARGE / MANY_SMALL / DYNAMIC, as the worker names it. */
+  allocation_mode: string | null;
+  /** MICRO / BASE / FAST / EXTENDED. */
+  net_tp_profile: string | null;
 }
 
 export interface StrategyRow {
@@ -188,6 +326,8 @@ export interface DashboardPayload {
   scanner: ScannerRow[];
   positions: PositionRow[];
   trades: TradeRow[];
+  /** V2 portfolio layer. Absent on a V1-shaped payload. */
+  portfolio?: PortfolioState | null;
   strategies: StrategyRow[];
   equity_curve: EquityCurve;
   health: HealthState;

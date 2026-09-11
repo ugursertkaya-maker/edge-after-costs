@@ -312,3 +312,120 @@ export function strategyLabel(value: string | null | undefined): string {
 export function baseAsset(symbol: string): string {
   return symbol.replace(/(USDT|USDC|USD)$/i, "") || symbol;
 }
+
+// --------------------------------------------------------------------------
+// V2 vocabulary — fee-aware net targets, maker-first execution, the 25/60
+// minute horizon and the portfolio layer.
+// --------------------------------------------------------------------------
+
+export const EXIT_REASON_LABELS_V2: Record<string, string> = {
+  EXIT_WEAK: "ZAYIF ÇIKIŞ",
+  ROTATE_CAPITAL: "SERMAYE ROTASYONU",
+};
+
+Object.assign(EXIT_REASON_LABELS, EXIT_REASON_LABELS_V2);
+
+Object.assign(REJECT_REASON_LABELS, {
+  NET_TARGET_UNREACHABLE: "NET hedefe ulaşılamaz",
+  CASH_RESERVE: "Nakit rezervi korunuyor",
+  PORTFOLIO_RISK_BUDGET: "Portföy risk bütçesi dolu",
+  CORRELATED_EXPOSURE: "Korelasyonlu maruziyet sınırı",
+  DIRECTIONAL_EXPOSURE: "Yönlü maruziyet sınırı",
+});
+
+/** MAKER is 0% on Binance.US — the badge is a cost statement, not a label. */
+export const MAKER_TAKER_LABELS: Record<string, string> = {
+  MAKER: "MAKER",
+  TAKER: "TAKER",
+};
+
+export const CHECKPOINT_LABELS: Record<string, string> = {
+  PENDING: "BEKLEMEDE",
+  KEEP: "TUT",
+  TRAIL: "TAKİPLİ",
+  DUE: "KONTROL ZAMANI",
+};
+
+export const ALLOCATION_MODE_LABELS: Record<string, string> = {
+  FEW_LARGE: "AZ SAYIDA BÜYÜK",
+  MANY_SMALL: "ÇOK SAYIDA KÜÇÜK",
+  DYNAMIC: "DİNAMİK",
+};
+
+export const NET_TP_PROFILE_LABELS: Record<string, string> = {
+  MICRO: "MICRO · %0,25",
+  BASE: "BASE · %0,50",
+  FAST: "FAST · %0,75",
+  EXTENDED: "EXTENDED · %1,00",
+};
+
+export function makerTakerLabel(v: string | null | undefined): string {
+  if (!v) return DASH;
+  return MAKER_TAKER_LABELS[v] ?? v;
+}
+
+export function checkpointLabel(v: string | null | undefined): string {
+  if (!v) return DASH;
+  return CHECKPOINT_LABELS[v] ?? v;
+}
+
+export function allocationModeLabel(v: string | null | undefined): string {
+  if (!v) return DASH;
+  return ALLOCATION_MODE_LABELS[v] ?? v;
+}
+
+export function netTpProfileLabel(v: string | null | undefined): string {
+  if (!v) return DASH;
+  return NET_TP_PROFILE_LABELS[v] ?? v;
+}
+
+/**
+ * The expected hold window may arrive as a label the worker chose ("25–60 dk")
+ * or as a plain number of seconds. Both are rendered as a window; neither is
+ * guessed at when absent.
+ */
+export function formatHoldWindow(value: string | number | null | undefined): string {
+  if (value === null || value === undefined || value === "") return DASH;
+  if (typeof value === "number") {
+    return Number.isFinite(value) ? formatDuration(value) : DASH;
+  }
+  const asNumber = Number(value);
+  if (value.trim() !== "" && Number.isFinite(asNumber)) return formatDuration(asNumber);
+  return value;
+}
+
+/**
+ * Time remaining until an epoch-ms deadline. `now` is injected so the whole
+ * screen counts down off one clock. Past the deadline this says so rather than
+ * printing a negative duration.
+ */
+export function formatCountdownMs(value: Numeric, now: number): string {
+  const n = toNum(value);
+  if (n === null || n <= 0) return DASH;
+  const left = Math.round((n - now) / 1000);
+  if (left <= 0) return "süre doldu";
+  return `${formatDuration(left)} kaldı`;
+}
+
+/**
+ * A cost figure. Costs are always drawn as the negative they are — printing
+ * "$0.04" next to a gross gain invites reading the cost as income.
+ */
+export function formatCost(value: Numeric): string {
+  const n = toNum(value);
+  if (n === null) return DASH;
+  if (n === 0) return formatMicroMoney(0);
+  return formatMicroMoney(-Math.abs(n));
+}
+
+/**
+ * Signal strength arrives either as a 0–1 fraction or as a 0–100 reading. The
+ * bar needs a percentage either way; anything outside those ranges is clamped
+ * rather than drawn off the end of its track.
+ */
+export function strengthPct(value: Numeric): number | null {
+  const n = toNum(value);
+  if (n === null) return null;
+  const pct = Math.abs(n) <= 1 ? n * 100 : n;
+  return Math.max(0, Math.min(100, pct));
+}

@@ -23,6 +23,21 @@ The account-level blocks (kill switch, loss limits, cooldown, data health) are
 also exposed on their own via :meth:`blocked_reason` so the worker can stop
 opening positions for a whole cycle without evaluating opportunities it is
 going to reject anyway.
+
+**V2 — the position count is no longer a limit.**  When ``RiskState.portfolio``
+carries a :class:`~app.types.PortfolioState`, the old
+``max_concurrent_positions`` cap is replaced wholesale by
+:meth:`app.portfolio.PortfolioEngine.can_open`, and the concurrent-risk and
+cash clamps are re-pointed at the portfolio budget and the cash reserve.  Two
+consequences are deliberate:
+
+* ``RiskConfig.max_concurrent_risk_pct`` is *superseded*, not intersected, by
+  ``PortfolioConfig.total_open_risk_pct``.  Keeping the tighter V1 value would
+  reinstate the three-position book under a different name — 1.5% of equity at
+  0.5% risk per trade is exactly three trades — which is the behaviour V2
+  exists to remove.
+* With no ``portfolio`` attached, every path below behaves exactly as it did in
+  V1.  That is the compatibility contract the existing tests pin.
 """
 
 from __future__ import annotations
@@ -31,10 +46,12 @@ from dataclasses import dataclass
 from typing import TYPE_CHECKING
 
 from app.exits import ExitEngine
+from app.portfolio import PortfolioEngine
 from app.sim.simulator import PaperSimulator
 from app.types import (
     Opportunity,
     OrderBook,
+    PortfolioState,
     Position,
     Regime,
     RejectReason,
@@ -66,12 +83,21 @@ class RiskState:
     kill_switch: bool
     data_healthy: bool
     ts_ms: int
+    # V2.  Optional and defaulted so every V1 caller and test is untouched:
+    # absent means "decide by count, as before", present means "decide by risk
+    # and capital".
+    portfolio: PortfolioState | None = None
 
 
 class RiskEngine:
     """The only place that decides size, and the last place that can say no."""
 
-    def __init__(self, *, settings: "Settings | None" = None) -> None:
+    def __init__(
+        self,
+        *,
+        settings: "Settings | None" = None,
+        portfolio: PortfolioEngine | None = None,
+    ) -> None:
         if settings is None:
             from app.config import get_settings
 
@@ -79,6 +105,9 @@ class RiskEngine:
         self.settings = settings
         self.cfg = settings.risk
         self.exits = ExitEngine(settings=settings)
+        # Share one engine with the allocator when you can: it is what holds
+        # the current correlation view, and a stale view is a wrong veto.
+        self.portfolio = portfolio or PortfolioEngine(settings=settings)
         # Used only for its pure, non-mutating book walk, so that the size we
         # approve is pre-checked with exactly the model that will fill it.
         self._sim = PaperSimulator(settings=settings)
@@ -136,14 +165,25 @@ class RiskEngine:
         if blocked is not None:
             return _reject(blocked, notes)
 
-        if len(state.open_positions) >= cfg.max_concurrent_positions:
-            return _reject(RejectReason.MAX_POSITIONS, notes)
+        if state.portfolio is None:
+            # V1: a hard count cap, which is what V2 exists to delete.
+            if len(state.open_positions) >= cfg.max_concurrent_positions:
+                return _reject(RejectReason.MAX_POSITIONS, notes)
 
-        same_symbol = [p for p in state.open_positions if p.symbol == opp.symbol]
-        if len(same_symbol) >= cfg.max_positions_per_symbol:
-            # This is also the anti-averaging-down rule: we never add to a
-            # symbol we are already in.
-            return _reject(RejectReason.DUPLICATE_SYMBOL, notes)
+            same_symbol = [p for p in state.open_positions if p.symbol == opp.symbol]
+            if len(same_symbol) >= cfg.max_positions_per_symbol:
+                # This is also the anti-averaging-down rule: we never add to a
+                # symbol we are already in.
+                return _reject(RejectReason.DUPLICATE_SYMBOL, notes)
+        else:
+            # V2: capital and risk decide.  Zeroes here because the size is not
+            # known yet — this pass catches a budget that is *already* spent;
+            # the same gate runs again below with the real numbers.
+            gate = self.portfolio.can_open(
+                opp, state.portfolio, risk_usd=0.0, notional_usd=0.0
+            )
+            if gate is not None:
+                return _reject(gate, notes)
 
         # ---- market quality ------------------------------------------------
         if not book.is_valid() or book.age_ms(state.ts_ms) > cfg.max_book_age_ms:
@@ -213,6 +253,11 @@ class RiskEngine:
 
         notional = qty * entry
         min_notional = max(info.min_notional, cfg.min_notional_usd)
+        if state.portfolio is not None:
+            floor = self.settings.portfolio.min_position_usd
+            if floor > min_notional:
+                min_notional = floor
+                notes.append(f"clamp:min_position_usd({floor:.2f})")
         if notional < min_notional - 1e-9:
             notes.append(f"clamp:min_notional({min_notional:.2f})")
             return _reject(RejectReason.BELOW_MIN_NOTIONAL, notes)
@@ -229,6 +274,17 @@ class RiskEngine:
             return _reject(RejectReason.SLIPPAGE_TOO_HIGH, notes)
 
         risk_usd = qty * per_unit_risk
+
+        if state.portfolio is not None:
+            # Correlation and directional exposure cannot be judged until the
+            # size exists, so the portfolio gate gets the last word.
+            gate = self.portfolio.can_open(
+                opp, state.portfolio, risk_usd=risk_usd, notional_usd=notional
+            )
+            if gate is not None:
+                notes.append(f"portfolio_gate={gate.value}")
+                return _reject(gate, notes)
+
         notes.append(f"notional_usd={notional:.4f}")
         return RiskVerdict(
             approved=True,
@@ -259,15 +315,26 @@ class RiskEngine:
         Order matters only for the note, not the result: the smallest bound
         always wins.  A budget that is already exhausted (zero or negative
         headroom) is a rejection, not a zero-size fill.
+
+        With a ``PortfolioState`` attached, three of these budgets change hands:
+        the absolute position cap gains ``max_position_usd``, the concurrent-risk
+        budget becomes the portfolio's ``total_open_risk_pct``, and "available
+        cash" becomes cash *after* the reserve.  Without one, every line is the
+        V1 line.
         """
         cfg = self.cfg
+        pcfg = self.settings.portfolio
+        pf = state.portfolio
         equity = max(state.equity, 0.0)
         open_notional = sum(p.notional_usd for p in state.open_positions)
-        open_risk = sum(p.risk_usd for p in state.open_positions)
 
         # 1. single-position cap
         cap = equity * cfg.max_position_pct_equity / 100.0
         qty = _clamp(qty, cap / entry, "clamp:max_position_pct_equity", notes)
+        if pf is not None:
+            qty = _clamp(
+                qty, pcfg.max_position_usd / entry, "clamp:max_position_usd", notes
+            )
 
         # 2. total exposure, counting what is already on
         room = equity * cfg.max_total_exposure_pct / 100.0 - open_notional
@@ -276,21 +343,42 @@ class RiskEngine:
             return 0.0, RejectReason.RISK_BUDGET
         qty = _clamp(qty, room / entry, "clamp:max_total_exposure_pct", notes)
 
-        # 3. concurrent risk, counting the risk already at stake
-        risk_room = equity * cfg.max_concurrent_risk_pct / 100.0 - open_risk
-        if risk_room <= 0:
-            notes.append("clamp:max_concurrent_risk_pct(exhausted)")
-            return 0.0, RejectReason.RISK_BUDGET
-        qty = _clamp(qty, risk_room / per_unit_risk, "clamp:max_concurrent_risk_pct", notes)
+        # 3. the concurrent-risk budget, counting the risk already at stake
+        if pf is None:
+            risk_room = (
+                equity * cfg.max_concurrent_risk_pct / 100.0
+                - sum(p.risk_usd for p in state.open_positions)
+            )
+            if risk_room <= 0:
+                notes.append("clamp:max_concurrent_risk_pct(exhausted)")
+                return 0.0, RejectReason.RISK_BUDGET
+            qty = _clamp(
+                qty, risk_room / per_unit_risk, "clamp:max_concurrent_risk_pct", notes
+            )
+        else:
+            risk_room = equity * pcfg.total_open_risk_pct / 100.0 - pf.open_risk_usd
+            if risk_room <= 0:
+                notes.append("clamp:portfolio_risk_budget(exhausted)")
+                return 0.0, RejectReason.PORTFOLIO_RISK_BUDGET
+            qty = _clamp(
+                qty, risk_room / per_unit_risk, "clamp:portfolio_risk_budget", notes
+            )
 
-        # 4. cash actually available.  Equity minus what is tied up in open
-        # positions, with headroom left for the entry fee.
-        cash = equity - open_notional
-        if cash <= 0:
-            notes.append("clamp:available_cash(exhausted)")
-            return 0.0, RejectReason.RISK_BUDGET
+        # 4. cash actually available, with headroom left for the entry fee.
         fee_factor = 1.0 + self.settings.fees.taker_bps(info.symbol) / _BPS
-        qty = _clamp(qty, cash / (entry * fee_factor), "clamp:available_cash", notes)
+        if pf is None:
+            cash = equity - open_notional
+            if cash <= 0:
+                notes.append("clamp:available_cash(exhausted)")
+                return 0.0, RejectReason.RISK_BUDGET
+            qty = _clamp(qty, cash / (entry * fee_factor), "clamp:available_cash", notes)
+        else:
+            # The reserve is not spendable.  Ever.
+            cash = pf.available_usd
+            if cash <= 0:
+                notes.append("clamp:cash_reserve(exhausted)")
+                return 0.0, RejectReason.CASH_RESERVE
+            qty = _clamp(qty, cash / (entry * fee_factor), "clamp:cash_reserve", notes)
 
         if qty <= 0:
             return 0.0, RejectReason.RISK_BUDGET

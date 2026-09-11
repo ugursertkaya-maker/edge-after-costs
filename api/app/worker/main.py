@@ -28,8 +28,10 @@ from app.config import Settings, get_settings
 from app.exchange.book import BookManager
 from app.exchange.rest import BinanceUSRest
 from app.exchange.ws import MarketDataFeed
-from app.exits import ExitEngine
+from app.exits import CheckpointVerdict, ExitEngine
 from app.features import FeatureEngine
+from app.portfolio import PortfolioEngine
+from app.profit import NetTargetEngine
 from app.ranker import OpportunityRanker
 from app.regime import RegimeClassifier
 from app.risk import RiskEngine, RiskState
@@ -39,6 +41,8 @@ from app.sim.ledger import Ledger
 from app.sim.simulator import PaperSimulator
 from app.strategies import get_strategies
 from app.types import (
+    Allocation,
+    CostBreakdown,
     Decision,
     ExitReason,
     Features,
@@ -46,7 +50,9 @@ from app.types import (
     Opportunity,
     OrderRequest,
     OrderType,
+    NetTargets,
     Position,
+    PortfolioState,
     Regime,
     RegimeState,
     Side,
@@ -108,6 +114,9 @@ class WorkerStats:
     opportunities: int = 0
     entries: int = 0
     exits: int = 0
+    maker_fills: int = 0
+    maker_misses: int = 0
+    checkpoints: int = 0
     rejects: dict[str, int] = field(default_factory=dict)
     last_evaluation_ms: int = 0
     started_ms: int = field(default_factory=now_ms)
@@ -128,7 +137,9 @@ class TradingWorker:
         self.regime = RegimeClassifier(settings=self.s)
         self.strategies = get_strategies()
         self.ranker = OpportunityRanker(settings=self.s, expectancy=self._expectancy)
-        self.risk = RiskEngine(settings=self.s)
+        self.portfolio = PortfolioEngine(settings=self.s)
+        self.profit = NetTargetEngine(settings=self.s)
+        self.risk = RiskEngine(settings=self.s, portfolio=self.portfolio)
         self.exits = ExitEngine(settings=self.s)
         self.sim = PaperSimulator(settings=self.s)
         self.store = store or RuntimeStore(settings=self.s)
@@ -148,6 +159,8 @@ class TradingWorker:
         self._expectancy_refreshed_ms = 0
         self._cooldown_until_ms = 0
         self._universe_refreshed_ms = 0
+        self._features_cache: dict[str, Features] = {}
+        self._ranked: list[Opportunity] = []
         self._stop = asyncio.Event()
         self._db_ok = False
 
@@ -299,7 +312,22 @@ class TradingWorker:
             kill_switch=self.store.kill_switch(),
             data_healthy=health.connected and not health.stale_symbols,
             ts_ms=ts_ms,
+            portfolio=self.portfolio.state(
+                ledger, ts_ms=ts_ms, bars_by_symbol=self._bars_map()
+            ),
         )
+
+    def _bars_map(self) -> dict[str, list]:
+        """Closed bars per universe symbol — what correlation is measured on."""
+        return {e.symbol: self._closed_bars(e.symbol) for e in self.universe}
+
+    def _books_map(self) -> dict[str, Any]:
+        out = {}
+        for entry in self.universe:
+            book = self.books.get(entry.symbol)
+            if book is not None:
+                out[entry.symbol] = book
+        return out
 
     def evaluate_once(self, ts_ms: int | None = None) -> list[Opportunity]:
         """Scan every universe symbol and return the ranked, qualifying set.
@@ -325,6 +353,7 @@ class TradingWorker:
                 continue
 
             feats = self.features.compute(snap)
+            self._features_cache[entry.symbol] = feats
             regime = self.regime.classify(feats)
             best, long_score, short_score, symbol_opps = self._evaluate_symbol(
                 feats, regime, snap, ts_ms
@@ -369,7 +398,8 @@ class TradingWorker:
         self.stats.opportunities += len(opportunities)
         if stats_rows:
             self._persist(lambda s, r: r.record_market_stats(s, stats_rows))
-        return self.ranker.rank(opportunities)
+        self._ranked = self.ranker.rank(opportunities)
+        return self._ranked
 
     def _evaluate_symbol(
         self, feats: Features, regime: RegimeState, snap: MarketSnapshot, ts_ms: int
@@ -432,40 +462,66 @@ class TradingWorker:
     # ------------------------------------------------------------------ #
 
     def try_enter(self, ranked: list[Opportunity], ts_ms: int) -> int:
-        """Open at most one new position per ledger per pass.
+        """Allocate capital across **every** qualifying opportunity.
 
-        Deliberate: one decision at a time keeps sizing honest against the
-        equity that actually exists, and stops a single noisy tick from filling
-        the whole book.
+        V1 opened at most one position per pass. V2 hands the whole ranked list
+        to the portfolio engine, which walks it in order, sizes each candidate
+        through the real risk engine, and checks it against a portfolio state
+        that is updated as allocations accumulate — so the tenth candidate faces
+        the book the first nine created, and the binding constraint is the risk
+        and cash budget rather than an arbitrary position count.
+
+        "Many allowed" is not "many taken": a list of twenty poor setups
+        allocates nothing.
         """
         opened = 0
         decisions: list[dict[str, Any]] = []
+        books = self._books_map()
+
         for ledger in self.ledgers.values():
             state = self._risk_state(ledger, ts_ms)
-            if self.risk.blocked_reason(state) is not None:
+            blocked = self.risk.blocked_reason(state)
+            if blocked is not None or state.portfolio is None:
                 continue
-            for opp in ranked:
-                book = self.books.get(opp.symbol)
-                info = self.symbol_info.get(opp.symbol)
-                if book is None or info is None:
-                    continue
-                verdict = self.risk.evaluate(opp, state, info=info, book=book)
-                if not verdict.approved:
-                    self.stats.rejects[
-                        verdict.reject_reason.value if verdict.reject_reason else "UNKNOWN"
-                    ] = self.stats.rejects.get(
-                        verdict.reject_reason.value if verdict.reject_reason else "UNKNOWN", 0
-                    ) + 1
-                    if ledger.name == "base":
-                        decisions.append(self._decision_row(opp, ts_ms, False, verdict.reject_reason))
-                    continue
 
-                pos = self._open_position(ledger, opp, verdict, book, info, ts_ms)
+            allocations = self.portfolio.allocate(
+                ranked,
+                state.portfolio,
+                risk_engine=self.risk,
+                infos=self.symbol_info,
+                books=books,
+            )
+            chosen = {a.opportunity.symbol for a in allocations}
+
+            for alloc in allocations:
+                pos = self._open_position(ledger, alloc, ts_ms)
                 if pos is not None:
                     opened += 1
                     if ledger.name == "base":
-                        decisions.append(self._decision_row(opp, ts_ms, True, None))
-                break  # one entry per ledger per pass
+                        decisions.append(
+                            self._decision_row(alloc.opportunity, ts_ms, True, None)
+                        )
+
+            if ledger.name == "base":
+                for opp in ranked:
+                    if opp.symbol in chosen:
+                        continue
+                    book = books.get(opp.symbol)
+                    info = self.symbol_info.get(opp.symbol)
+                    if book is None or info is None:
+                        continue
+                    verdict = self.risk.evaluate(opp, state, info=info, book=book)
+                    if verdict.approved:
+                        continue
+                    name = (
+                        verdict.reject_reason.value
+                        if verdict.reject_reason
+                        else "UNKNOWN"
+                    )
+                    self.stats.rejects[name] = self.stats.rejects.get(name, 0) + 1
+                    decisions.append(
+                        self._decision_row(opp, ts_ms, False, verdict.reject_reason)
+                    )
 
         if decisions:
             self._persist(lambda s, r: r.record_decisions(s, decisions))
@@ -484,17 +540,30 @@ class TradingWorker:
         }
 
     def _open_position(
-        self, ledger: Ledger, opp: Opportunity, verdict, book, info: SymbolInfo, ts_ms: int
+        self, ledger: Ledger, alloc: Allocation, ts_ms: int
     ) -> Position | None:
-        req = OrderRequest(
-            symbol=opp.symbol, side=opp.signal.side, order_type=OrderType.MARKET,
-            qty=verdict.qty, client_id=str(uuid.uuid4()), ts_ms=ts_ms,
-        )
-        result = self.sim.execute(
-            req, book, info, trades=self.feed.recent_trades(opp.symbol, limit=50), ts_ms=ts_ms
-        )
-        if not result.accepted or result.filled_qty <= 0:
+        """Fill an allocation, maker-first where the execution style allows it.
+
+        A post-only entry costs 0% maker on Binance.US and pays no spread, which
+        is the single biggest cost line V1 measured. It also may not fill — and
+        a missed maker order is never silently converted into a market order: it
+        has to re-qualify on taker economics first.
+        """
+        opp = alloc.opportunity
+        book = self.books.get(opp.symbol)
+        info = self.symbol_info.get(opp.symbol)
+        if book is None or info is None or not book.is_valid():
             return None
+
+        result, is_maker = self._execute_entry(opp, alloc, book, info, ts_ms)
+        if result is None or not result.accepted or result.filled_qty <= 0:
+            return None
+
+        filled_frac = result.filled_qty / max(alloc.qty, 1e-12)
+        targets = self._build_targets(
+            opp, alloc, result.avg_price, result.filled_qty, book, info,
+            entry_is_maker=is_maker, entry_slippage_bps=result.slippage_bps,
+        )
 
         pos = Position(
             id=f"{ledger.name}-{uuid.uuid4().hex[:12]}",
@@ -505,9 +574,9 @@ class TradingWorker:
             entry_price=result.avg_price,
             entry_ms=ts_ms,
             notional_usd=result.notional,
-            risk_usd=verdict.risk_usd * (result.filled_qty / max(verdict.qty, 1e-12)),
-            take_profit=verdict.take_profit,
-            stop_loss=verdict.stop_loss,
+            risk_usd=alloc.risk_usd * filled_frac,
+            take_profit=targets.net_tp_price if targets else alloc.targets.net_tp_price,
+            stop_loss=targets.stop_price if targets else alloc.targets.stop_price,
             entry_fees_usd=result.fees_usd,
             entry_slippage_bps=result.slippage_bps,
             ledger=ledger.name,
@@ -517,14 +586,21 @@ class TradingWorker:
             expected_net_edge_bps=opp.net_edge_bps,
             best_price=result.avg_price,
             last_price=result.avg_price,
-            time_stop_ms=ts_ms + self.s.exits.time_stop_seconds * 1000,
+            targets=targets,
+            break_even_price=targets.break_even_price if targets else 0.0,
+            entry_is_maker=is_maker,
+            checkpoint_ms=ts_ms + self.s.horizon.checkpoint_seconds * 1000,
+            time_stop_ms=ts_ms + self.s.horizon.time_stop_seconds * 1000,
         )
         ledger.open(pos, result)
         self.stats.entries += 1
         log.info(
-            "ENTRY %s %s %s qty=%.6f @ %.6f notional=$%.2f risk=$%.2f edge=%.1fbps",
-            ledger.name, opp.symbol, opp.signal.strategy, pos.qty, pos.entry_price,
-            pos.notional_usd, pos.risk_usd, opp.net_edge_bps,
+            "ENTRY %s %s %s %s qty=%.6f @ %.6f notional=$%.2f risk=$%.2f "
+            "net_tp=%.6f be=%.6f edge=%.1fbps",
+            ledger.name, opp.symbol, opp.signal.strategy,
+            "MAKER" if is_maker else "TAKER", pos.qty, pos.entry_price,
+            pos.notional_usd, pos.risk_usd, pos.take_profit,
+            pos.break_even_price, opp.net_edge_bps,
         )
         self._persist(
             lambda s, r: (
@@ -535,11 +611,115 @@ class TradingWorker:
         )
         return pos
 
+    def _execute_entry(self, opp, alloc, book, info, ts_ms):
+        """Try post-only first, fall back to taker only if it still qualifies."""
+        trades = self.feed.recent_trades(opp.symbol, limit=50)
+        style = self.s.execution_style
+
+        if style.maker_first:
+            limit_price = self._maker_price(opp.signal.side, book, info)
+            if limit_price > 0:
+                req = OrderRequest(
+                    symbol=opp.symbol, side=opp.signal.side,
+                    order_type=OrderType.LIMIT, qty=alloc.qty,
+                    limit_price=limit_price, client_id=str(uuid.uuid4()), ts_ms=ts_ms,
+                )
+                res = self._sim_execute(req, book, info, trades, ts_ms, post_only=True)
+                if res is not None and res.accepted and res.filled_qty > 0:
+                    self.stats.maker_fills += 1
+                    return res, True
+                self.stats.maker_misses += 1
+                if not style.allow_taker_fallback:
+                    return None, False
+                if not self._taker_still_qualifies(opp, alloc, book, info):
+                    self.stats.rejects["TAKER_NOT_QUALIFIED"] = (
+                        self.stats.rejects.get("TAKER_NOT_QUALIFIED", 0) + 1
+                    )
+                    return None, False
+
+        req = OrderRequest(
+            symbol=opp.symbol, side=opp.signal.side, order_type=OrderType.MARKET,
+            qty=alloc.qty, client_id=str(uuid.uuid4()), ts_ms=ts_ms,
+        )
+        return self._sim_execute(req, book, info, trades, ts_ms), False
+
+    def _sim_execute(self, req, book, info, trades, ts_ms, *, post_only: bool = False):
+        try:
+            if post_only:
+                return self.sim.execute(
+                    req, book, info, trades=trades, ts_ms=ts_ms, post_only=True
+                )
+            return self.sim.execute(req, book, info, trades=trades, ts_ms=ts_ms)
+        except TypeError:
+            # A simulator without post-only support: taker only.
+            if post_only:
+                return None
+            return self.sim.execute(req, book, info, trades=trades, ts_ms=ts_ms)
+        except Exception:
+            log.exception("simulated execution failed for %s", req.symbol)
+            return None
+
+    def _maker_price(self, side: Side, book, info: SymbolInfo) -> float:
+        """Rest inside our own side of the book, never crossing it."""
+        ticks = max(0, self.s.execution_style.maker_offset_ticks)
+        if side is Side.LONG:
+            price = book.best_bid - ticks * info.tick_size
+        else:
+            price = book.best_ask + ticks * info.tick_size
+        return info.round_price(price) if price > 0 else 0.0
+
+    def _taker_still_qualifies(self, opp, alloc, book, info) -> bool:
+        """A missed maker order may only cross if taker economics still work."""
+        slip = self.sim.estimate_slippage_bps(
+            opp.signal.side, alloc.notional_usd, book
+        )
+        entry = book.best_ask if opp.signal.side is Side.LONG else book.best_bid
+        if entry <= 0:
+            return False
+        targets = self._build_targets(
+            opp, alloc, entry, alloc.qty, book, info,
+            entry_is_maker=False, entry_slippage_bps=slip,
+        )
+        if targets is None:
+            return True
+        return self.profit.qualifies(targets, notional_usd=alloc.notional_usd)
+
+    def _build_targets(
+        self, opp, alloc, entry_price, qty, book, info,
+        *, entry_is_maker: bool, entry_slippage_bps: float,
+    ) -> NetTargets | None:
+        try:
+            return self.profit.build(
+                symbol=opp.symbol,
+                side=opp.signal.side,
+                entry_price=entry_price,
+                notional_usd=entry_price * qty,
+                qty=qty,
+                book=book,
+                info=info,
+                features=opp.features,
+                signal=opp.signal,
+                entry_is_maker=entry_is_maker,
+                exit_is_maker=False,
+                slippage_bps_entry=entry_slippage_bps,
+                slippage_bps_exit=entry_slippage_bps,
+                stop_price=alloc.targets.stop_price if alloc.targets else None,
+            )
+        except Exception:
+            log.exception("net target build failed for %s", opp.symbol)
+            return alloc.targets
+
     # ------------------------------------------------------------------ #
     # Position monitoring / exits
     # ------------------------------------------------------------------ #
 
     def monitor_once(self, ts_ms: int | None = None) -> int:
+        """Mark, trail, checkpoint and exit every open position.
+
+        Exit priority is unchanged and deliberate: a stop hit at minute two is
+        honoured at minute two, and profit that arrives before the 25-minute
+        checkpoint is taken rather than held for the checkpoint's sake.
+        """
         ts_ms = ts_ms or now_ms()
         closed = 0
         for ledger in self.ledgers.values():
@@ -548,12 +728,17 @@ class TradingWorker:
                 book = self.books.get(pos.symbol)
                 if book is None or not book.is_valid():
                     continue
-                exit_price = book.best_bid if pos.side is Side.LONG else book.best_ask
+                exit_price = self.exits.exit_price(pos, book)
                 prices[pos.symbol] = exit_price
                 pos.last_price = exit_price
                 self.exits.update_trailing(pos, exit_price)
 
-                reason = self.exits.check(pos, book, None, ts_ms)
+                feats = self._features_cache.get(pos.symbol)
+                reason = self.exits.check(pos, book, feats, ts_ms)
+
+                if reason is None and self._checkpoint_due(pos, ts_ms):
+                    reason = self._run_checkpoint(pos, book, feats, ts_ms)
+
                 if reason is None:
                     continue
                 if self._close_position(ledger, pos, book, reason, ts_ms):
@@ -561,6 +746,62 @@ class TradingWorker:
             if prices:
                 ledger.mark(prices, ts_ms)
         return closed
+
+    def _checkpoint_due(self, pos: Position, ts_ms: int) -> bool:
+        return (
+            not pos.checkpoint_done
+            and pos.checkpoint_ms > 0
+            and ts_ms >= pos.checkpoint_ms
+        )
+
+    def _run_checkpoint(self, pos: Position, book, feats, ts_ms) -> ExitReason | None:
+        """Translate the 25-minute verdict into an action.
+
+        KEEP and TRAIL_PROFIT leave the position open — the checkpoint is a
+        reassessment, not a deadline.
+        """
+        try:
+            verdict = self.exits.checkpoint(
+                pos, book, feats, ts_ms,
+                best_alternative_edge_bps=self._best_alternative_edge(pos.symbol),
+            )
+        except Exception:
+            log.exception("checkpoint failed for %s", pos.symbol)
+            return None
+
+        pos.checkpoint_done = True
+        self.stats.checkpoints += 1
+        log.info(
+            "CHECKPOINT %s %s -> %s (net %.4f after %.0fs)",
+            pos.ledger, pos.symbol, verdict.value,
+            self._position_net_usd(pos), pos.holding_seconds(ts_ms),
+        )
+        return {
+            CheckpointVerdict.TAKE_PROFIT: ExitReason.TAKE_PROFIT,
+            CheckpointVerdict.EXIT_WEAK: ExitReason.EXIT_WEAK,
+            CheckpointVerdict.ROTATE_CAPITAL: ExitReason.ROTATE_CAPITAL,
+        }.get(verdict)
+
+    def _best_alternative_edge(self, held_symbol: str) -> float:
+        """Edge of the best idea we are *not* already in — what rotation costs."""
+        return max(
+            (
+                o.net_edge_bps
+                for o in self._ranked
+                if o.symbol != held_symbol
+            ),
+            default=0.0,
+        )
+
+    @staticmethod
+    def _position_net_usd(pos: Position) -> float:
+        """Unrealized P&L with both fee legs already charged."""
+        price = pos.last_price or pos.entry_price
+        gross = pos.unrealized_usd(price)
+        exit_fee = (
+            pos.targets.costs.exit_fee_usd if pos.targets else pos.entry_fees_usd
+        )
+        return gross - pos.entry_fees_usd - exit_fee
 
     def _close_position(self, ledger: Ledger, pos: Position, book, reason: ExitReason, ts_ms: int) -> bool:
         info = self.symbol_info.get(pos.symbol)
@@ -627,36 +868,9 @@ class TradingWorker:
         stats = ledger.stats()
         health = self.feed.health()
 
-        positions = []
-        for pos in ledger.open_positions.values():
-            price = pos.last_price or pos.entry_price
-            positions.append(
-                {
-                    "id": pos.id, "symbol": pos.symbol, "side": pos.side.value,
-                    "entry_price": pos.entry_price, "current_price": price,
-                    "notional_usd": round(pos.notional_usd, 2),
-                    "risk_usd": round(pos.risk_usd, 2),
-                    "take_profit": pos.take_profit, "stop_loss": pos.stop_loss,
-                    "unrealized_usd": round(pos.unrealized_usd(price), 4),
-                    "fees_usd": round(pos.entry_fees_usd, 4),
-                    "holding_seconds": round(pos.holding_seconds(ts), 0),
-                    "strategy": pos.strategy,
-                }
-            )
+        positions = [self._position_row(pos, ts) for pos in ledger.open_positions.values()]
 
-        trades = [
-            {
-                "id": t.id, "symbol": t.symbol, "strategy": t.strategy,
-                "entry_ms": t.entry_ms, "exit_ms": t.exit_ms,
-                "entry_price": t.entry_price, "exit_price": t.exit_price,
-                "gross_pnl_usd": round(t.gross_pnl_usd, 4),
-                "fees_usd": round(t.fees_usd, 4),
-                "slippage_usd": round(t.slippage_usd, 4),
-                "net_pnl_usd": round(t.net_pnl_usd, 4),
-                "exit_reason": t.exit_reason.value,
-            }
-            for t in ledger.closed_trades[-200:][::-1]
-        ]
+        trades = [self._trade_row(tr) for tr in ledger.closed_trades[-200:][::-1]]
 
         strategies = []
         for name in sorted({t.strategy for t in ledger.closed_trades}):
@@ -697,6 +911,11 @@ class TradingWorker:
                 "max_drawdown": round(stats.max_drawdown, 4),
                 "capital_turnover": round(stats.capital_turnover, 3),
                 "avg_holding_seconds": round(stats.avg_holding_seconds, 0),
+                # The three numbers that must never be conflated: what the price
+                # move earned, what capturing it cost, and what actually landed.
+                "profit_before_costs": round(stats.gross_pnl, 4),
+                "total_costs": round(stats.fees + stats.slippage, 4),
+                "real_net_profit": round(stats.net_pnl, 4),
             },
             "scanner": [r.as_dict() for r in self.scanner],
             "positions": positions,
@@ -727,8 +946,12 @@ class TradingWorker:
                 "evaluations": self.stats.evaluations,
                 "entries": self.stats.entries,
                 "exits": self.stats.exits,
+                "maker_fills": self.stats.maker_fills,
+                "maker_misses": self.stats.maker_misses,
+                "checkpoints": self.stats.checkpoints,
                 "rejects": self.stats.rejects,
             },
+            "portfolio": self._portfolio_block(ledger, ts),
             "ledgers": [
                 {
                     "name": n, "label": LEDGER_LABELS.get(n, n),
@@ -736,6 +959,111 @@ class TradingWorker:
                 }
                 for n, lg in self.ledgers.items()
             ],
+        }
+
+    def _position_row(self, pos: Position, ts: int) -> dict[str, Any]:
+        price = pos.last_price or pos.entry_price
+        gross = pos.unrealized_usd(price)
+        costs = pos.targets.costs if pos.targets else CostBreakdown(
+            entry_fee_usd=pos.entry_fees_usd
+        )
+        exit_fee = costs.exit_fee_usd or pos.entry_fees_usd
+        total_cost = pos.entry_fees_usd + exit_fee + costs.spread_cost_usd + costs.slippage_usd
+        age = pos.holding_seconds(ts)
+        return {
+            "id": pos.id, "symbol": pos.symbol, "side": pos.side.value,
+            "strategy": pos.strategy,
+            "entry_price": pos.entry_price, "current_price": price,
+            "notional_usd": round(pos.notional_usd, 2),
+            "risk_usd": round(pos.risk_usd, 4),
+            "account_risk_usd": round(pos.risk_usd, 4),
+            "take_profit": pos.take_profit, "stop_loss": pos.stop_loss,
+            "net_tp_price": pos.targets.net_tp_price if pos.targets else pos.take_profit,
+            "net_tp_pct": pos.targets.net_tp_pct if pos.targets else None,
+            "break_even_price": pos.break_even_price or None,
+            "gross_pnl_usd": round(gross, 4),
+            "entry_fee_usd": round(pos.entry_fees_usd, 4),
+            "expected_exit_fee_usd": round(exit_fee, 4),
+            "spread_cost_usd": round(costs.spread_cost_usd, 4),
+            "slippage_usd": round(costs.slippage_usd, 4),
+            "total_cost_usd": round(total_cost, 4),
+            "net_pnl_usd": round(gross - total_cost, 4),
+            "unrealized_usd": round(gross, 4),
+            "fees_usd": round(pos.entry_fees_usd, 4),
+            "maker_or_taker": "MAKER" if pos.entry_is_maker else "TAKER",
+            "holding_seconds": round(age, 0),
+            "age_seconds": round(age, 0),
+            "expected_hold_window": [
+                self.s.horizon.checkpoint_seconds, self.s.horizon.time_stop_seconds
+            ],
+            "checkpoint_status": self._checkpoint_status(pos, ts),
+            "time_stop_ms": pos.time_stop_ms,
+            "signal_strength": round(pos.expected_net_edge_bps, 2),
+            "extended": pos.extended,
+        }
+
+    def _checkpoint_status(self, pos: Position, ts: int) -> str:
+        if pos.checkpoint_done:
+            return "TRAIL" if pos.trailing_armed else "KEEP"
+        if pos.checkpoint_ms and ts >= pos.checkpoint_ms:
+            return "DUE"
+        return "PENDING"
+
+    def _trade_row(self, t) -> dict[str, Any]:
+        total_cost = t.fees_usd + abs(t.slippage_usd)
+        return {
+            "id": t.id, "symbol": t.symbol, "strategy": t.strategy,
+            "entry_ms": t.entry_ms, "exit_ms": t.exit_ms,
+            "entry_price": t.entry_price, "exit_price": t.exit_price,
+            "notional_usd": round(t.notional_usd, 2),
+            "gross_pnl_usd": round(t.gross_pnl_usd, 4),
+            "entry_fee_usd": round(t.entry_fee_usd, 4),
+            "exit_fee_usd": round(t.exit_fee_usd, 4),
+            "fees_usd": round(t.fees_usd, 4),
+            "slippage_usd": round(t.slippage_usd, 4),
+            "total_cost_usd": round(total_cost, 4),
+            "net_pnl_usd": round(t.net_pnl_usd, 4),
+            "account_risk_usd": round(t.risk_usd, 4),
+            "holding_seconds": round(t.holding_seconds, 0),
+            "exit_reason": t.exit_reason.value,
+            "maker_or_taker": t.__dict__.get("maker_or_taker", "TAKER"),
+        }
+
+    def _portfolio_block(self, ledger: Ledger, ts: int) -> dict[str, Any]:
+        try:
+            st = self.portfolio.state(ledger, ts_ms=ts, bars_by_symbol=self._bars_map())
+        except Exception:
+            log.exception("portfolio state failed")
+            return {}
+        sizes = sorted(p.notional_usd for p in st.positions)
+        ages = [p.holding_seconds(ts) for p in st.positions]
+        cp = self.s.horizon.checkpoint_seconds
+        stop = self.s.horizon.time_stop_seconds
+        stats = ledger.stats()
+        deployed = st.deployed_usd or 1.0
+        return {
+            "open_positions": len(st.positions),
+            "capital_deployed": round(st.deployed_usd, 2),
+            "available_cash": round(st.available_usd, 2),
+            "cash_reserve": round(st.reserve_required_usd, 2),
+            "open_risk_usd": round(st.open_risk_usd, 4),
+            "open_risk_pct": round(st.open_risk_pct, 3),
+            "correlated_exposure_pct": round(
+                st.correlated_risk_usd / st.equity * 100.0 if st.equity else 0.0, 3
+            ),
+            "directional_exposure_pct": round(st.directional_exposure_pct, 2),
+            "avg_position_usd": round(sum(sizes) / len(sizes), 2) if sizes else 0.0,
+            "median_position_usd": round(sizes[len(sizes) // 2], 2) if sizes else 0.0,
+            "avg_holding_seconds": round(sum(ages) / len(ages), 0) if ages else 0.0,
+            "positions_under_25m": sum(1 for a in ages if a < cp),
+            "positions_25_60m": sum(1 for a in ages if cp <= a < stop),
+            "positions_over_60m": sum(1 for a in ages if a >= stop),
+            "capital_turnover_per_day": round(stats.capital_turnover, 3),
+            "net_profit_per_dollar_deployed": round(stats.net_pnl / deployed, 6),
+            "allocation_mode": self.s.portfolio.allocation_mode,
+            "net_tp_profile": self.s.profit.profile,
+            "max_open_positions": self.s.portfolio.max_open_positions,
+            "total_open_risk_budget_pct": self.s.portfolio.total_open_risk_pct,
         }
 
     def publish(self) -> None:

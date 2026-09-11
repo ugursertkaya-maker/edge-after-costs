@@ -26,6 +26,28 @@ profitable strategy that loses money the moment it meets a real book.  So:
 ``OrderResult.accepted`` means "this order produced a fill".  A limit order
 that rested and never filled comes back ``accepted=False`` with a reject reason
 that says why — nothing was traded, so there is nothing for the ledger to do.
+
+V2 adds **post-only** maker orders, because Binance.US charges 0% maker and
+resting is strictly cheaper than crossing whenever it fills:
+
+* A post-only order that would cross the spread is **rejected**
+  (``"would_cross"``), never quietly converted into a taker.  The exchange
+  behaves this way and so must we: a "maker" order that silently paid the taker
+  fee and the full spread is the difference between a profitable backtest and a
+  losing account.  Re-costing a missed maker as a taker is the *caller's*
+  decision and has to re-clear the NET gate first.
+* Fill probability comes from **queue position**, not from a constant.  Being at
+  the price is not being early enough in the queue at that price, so
+  :meth:`PaperSimulator.fill_probability` compares the size already resting
+  ahead of us at that level against the notional that actually traded through
+  it.  Nothing traded means zero; a level we are alone on means one; and the
+  probability falls as the queue ahead grows.
+* :meth:`PaperSimulator.cancel_stale` answers whether a resting order has
+  outlived ``settings.execution_style.maker_wait_seconds`` — a resting entry
+  must never survive the signal that justified it.
+
+A maker fill is charged the maker rate and a taker fill the taker rate, always,
+and the simulator never substitutes one for the other on its own.
 """
 
 from __future__ import annotations
@@ -98,9 +120,20 @@ class PaperSimulator:
         trades: list[Trade] | None = None,
         ts_ms: int | None = None,
         latency_ms: int | None = None,
+        post_only: bool = False,
     ) -> OrderResult:
+        """Simulate one order.
+
+        ``post_only`` marks a maker-only limit order: if it would cross the
+        spread it is rejected outright rather than crossing, and if it rests its
+        fill is decided by queue position rather than by the blanket
+        ``limit_miss_ratio``.
+        """
         latency = int(self.cfg.latency_ms if latency_ms is None else latency_ms)
         decision_ms = int(req.ts_ms if ts_ms is None else ts_ms)
+
+        if post_only and req.order_type is not OrderType.LIMIT:
+            return self._reject(req, latency, "post_only_requires_limit")
 
         reject = self._preflight(req, book, info, latency)
         if reject is not None:
@@ -108,7 +141,80 @@ class PaperSimulator:
 
         if req.order_type is OrderType.MARKET:
             return self._execute_market(req, book, info, latency)
-        return self._execute_limit(req, book, info, trades or [], decision_ms, latency)
+        return self._execute_limit(
+            req, book, info, trades or [], decision_ms, latency, post_only=post_only
+        )
+
+    # ------------------------------------------------------------------ #
+    # Maker mechanics
+    # ------------------------------------------------------------------ #
+
+    @staticmethod
+    def would_cross(side: Side, limit_price: float, book: OrderBook) -> bool:
+        """True when a limit at *limit_price* would take liquidity right now."""
+        if limit_price <= 0 or not book.is_valid():
+            return False
+        if side is Side.LONG:
+            return limit_price >= book.best_ask
+        return limit_price <= book.best_bid
+
+    def fill_probability(
+        self,
+        book: OrderBook,
+        limit_price: float,
+        side: Side,
+        trades: list[Trade] | None,
+    ) -> float:
+        """Probability a resting order at *limit_price* actually fills.
+
+        Price-time priority is the whole model.  Everything resting at a price
+        at least as good as ours is ahead of us in the queue and has to be
+        consumed before a single unit of ours trades, so the question is simply
+        whether enough notional traded through the level to reach us:
+
+            ``P = traded_through_notional / notional_resting_ahead``
+
+        clamped to [0, 1].  Nothing traded through is a certain miss; an empty
+        queue ahead of us is a certain fill; and the probability decays as the
+        queue ahead grows, which is exactly the effect a constant miss ratio
+        cannot express.
+        """
+        if limit_price <= 0:
+            return 0.0
+        long = side is Side.LONG
+        prints = trades or []
+
+        # A resting buy is filled by sellers printing at or below our price.
+        traded = 0.0
+        for t in prints:
+            through = t.price <= limit_price if long else t.price >= limit_price
+            if through:
+                traded += t.notional
+        if traded <= 0:
+            return 0.0
+
+        # Everything quoted at least as good as us is in front of us.
+        levels = book.bids if long else book.asks
+        ahead = 0.0
+        for lv in levels:
+            in_front = lv.price >= limit_price if long else lv.price <= limit_price
+            if in_front:
+                ahead += lv.price * lv.qty
+        if ahead <= 0:
+            return 1.0
+        return min(1.0, traded / ahead)
+
+    def cancel_stale(self, order: OrderRequest, ts_ms: int) -> bool:
+        """Has this resting order waited longer than we are willing to wait?
+
+        A maker quote that outlives ``maker_wait_seconds`` is quoting a signal
+        that may no longer exist; leaving it there is how a scalper accidentally
+        acquires a position it never decided to take.
+        """
+        wait_s = float(self.settings.execution_style.maker_wait_seconds)
+        if wait_s <= 0 or order.ts_ms <= 0:
+            return False
+        return (int(ts_ms) - int(order.ts_ms)) >= wait_s * 1000.0
 
     def estimate_slippage_bps(
         self, side: Side, notional_usd: float, book: OrderBook
@@ -226,16 +332,24 @@ class PaperSimulator:
         trades: list[Trade],
         decision_ms: int,
         latency: int,
+        *,
+        post_only: bool = False,
     ) -> OrderResult:
         limit = req.limit_price
         if limit is None or limit <= 0:
             return self._reject(req, latency, "limit_price_required")
 
         mid = book.mid
-        marketable = (
-            limit >= book.best_ask if req.side is Side.LONG else limit <= book.best_bid
-        )
+        marketable = self.would_cross(req.side, limit, book)
         if marketable:
+            if post_only:
+                # The exchange would reject this outright.  Converting it into a
+                # taker here would be the simulator deciding to pay the spread
+                # and the taker fee on the caller's behalf — the one decision it
+                # is never allowed to make.
+                return self._reject(
+                    req, latency, "would_cross", order_type=OrderType.LIMIT
+                )
             # Crossing the spread makes us the aggressor: same walk, taker fee,
             # but no fill worse than the limit we set.
             return self._execute_marketable_limit(req, book, info, latency, limit)
@@ -252,8 +366,14 @@ class PaperSimulator:
             return self._reject(req, latency, "no_trade_through_limit", order_type=OrderType.LIMIT)
 
         # Price came to us — but so did everyone else who was already in the
-        # queue at this level.
-        if self.rng.random() < self.cfg.limit_miss_ratio:
+        # queue at this level.  A post-only order is modelled properly, from the
+        # size resting in front of it; a plain limit keeps the V1 blanket ratio.
+        if post_only:
+            if self.rng.random() >= self.fill_probability(book, limit, req.side, through):
+                return self._reject(
+                    req, latency, "queue_position_not_reached", order_type=OrderType.LIMIT
+                )
+        elif self.rng.random() < self.cfg.limit_miss_ratio:
             return self._reject(req, latency, "queue_position_not_reached", order_type=OrderType.LIMIT)
 
         traded_qty = sum(t.qty for t in through)

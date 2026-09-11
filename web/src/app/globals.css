@@ -1053,3 +1053,729 @@ td.net.neg {
   white-space: nowrap;
   border: 0;
 }
+
+/* ==========================================================================
+   V2 — cost transparency, the portfolio layer and the 25/60 minute horizon
+   --------------------------------------------------------------------------
+   One rule governs everything below: a gross gain is never drawn as profit.
+   Gross, cost and net are three separate readings with three separate tones,
+   and a cost is always drawn as the negative it is.
+   ========================================================================== */
+
+/* ------------------------------------------------- the three-value equation */
+/* The loudest block on the screen, because it is the screen's whole argument.
+   Three cells joined by a real minus and a real equals sign: this is an
+   identity being asserted, not three statistics sitting next to each other. */
+.split {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto minmax(0, 1fr) auto minmax(0, 1fr);
+  align-items: stretch;
+  gap: 0;
+  border: 1px solid var(--line);
+  background: var(--bg-1);
+}
+
+.split-cell {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  padding: 13px 16px 14px;
+  min-width: 0;
+}
+
+.split-cell.is-final {
+  background: linear-gradient(180deg, var(--bg-2), var(--bg-1));
+  border-left: 1px solid var(--line);
+}
+
+.split-k {
+  font-family: var(--font-mono);
+  font-size: 9.5px;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+  color: var(--fg-4);
+}
+
+.split-cell.is-final .split-k {
+  color: var(--fg-2);
+}
+
+.split-v {
+  font-family: var(--font-mono);
+  font-variant-numeric: tabular-nums slashed-zero;
+  font-size: 26px;
+  font-weight: 600;
+  letter-spacing: -0.015em;
+  line-height: 1.1;
+  color: var(--fg-0);
+}
+
+.split-cell.is-final .split-v {
+  font-size: 30px;
+}
+
+.split-v.pos {
+  color: var(--pos);
+}
+.split-v.neg {
+  color: var(--neg);
+}
+.split-v.flat,
+.split-v.is-empty {
+  color: var(--fg-3);
+}
+
+.split-n {
+  font-size: 10.5px;
+  color: var(--fg-4);
+  min-height: 14px;
+}
+
+.split-op {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 30px;
+  font-family: var(--font-mono);
+  font-size: 17px;
+  color: var(--fg-4);
+  background: var(--bg-0);
+  border-left: 1px solid var(--line-soft);
+  border-right: 1px solid var(--line-soft);
+}
+
+/* Nothing measured yet: the structure stays, the figures do not pretend. */
+.split.is-empty .split-v {
+  color: var(--fg-4);
+}
+
+@media (max-width: 900px) {
+  .split {
+    grid-template-columns: minmax(0, 1fr);
+  }
+  .split-op {
+    width: auto;
+    height: 22px;
+    border: 0;
+    border-top: 1px solid var(--line-soft);
+    border-bottom: 1px solid var(--line-soft);
+  }
+  .split-cell.is-final {
+    border-left: 0;
+  }
+}
+
+/* ------------------------------------------------------- expandable tables */
+.tbl-x .xrow {
+  cursor: pointer;
+}
+
+.tbl-x .xrow:focus-visible {
+  outline: 1px solid var(--info);
+  outline-offset: -1px;
+}
+
+.tbl-x .xrow.is-open td {
+  background: var(--bg-2);
+  border-bottom-color: transparent;
+}
+
+table.tbl th.x,
+table.tbl td.x {
+  width: 22px;
+  padding-left: 8px;
+  padding-right: 0;
+}
+
+.chev {
+  display: inline-block;
+  color: var(--fg-4);
+  transition: transform 0.12s ease, color 0.12s ease;
+}
+
+.xrow:hover .chev {
+  color: var(--fg-2);
+}
+
+.chev.is-open {
+  transform: rotate(90deg);
+  color: var(--info);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .chev {
+    transition: none;
+  }
+}
+
+.xdetail > td {
+  padding: 0;
+  background: var(--bg-2);
+  border-bottom: 1px solid var(--line);
+}
+
+/* The drawer stays pinned to the left edge while the table above it scrolls
+   sideways, so opening a row on a wide table never puts the breakdown
+   off-screen. It also drops the table's nowrap so prose can wrap. */
+.xbody {
+  position: sticky;
+  left: 0;
+  width: 100%;
+  max-width: calc(100vw - 26px);
+  white-space: normal;
+  padding: 12px 14px 14px;
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  border-left: 2px solid var(--info);
+}
+
+/* ------------------------------------------------------- the row equation */
+.eq {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  flex-wrap: wrap;
+  padding: 9px 12px;
+  background: var(--bg-1);
+  border: 1px solid var(--line);
+}
+
+.eq-cell {
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+}
+
+.eq-k {
+  font-family: var(--font-mono);
+  font-size: 9px;
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+  color: var(--fg-4);
+}
+
+.eq-v {
+  font-family: var(--font-mono);
+  font-variant-numeric: tabular-nums slashed-zero;
+  font-size: 15px;
+  font-weight: 600;
+  color: var(--fg-0);
+}
+
+.eq-v.pos {
+  color: var(--pos);
+}
+.eq-v.neg {
+  color: var(--neg);
+}
+.eq-v.flat,
+.eq-v.muted {
+  color: var(--fg-3);
+}
+
+.eq-op {
+  font-family: var(--font-mono);
+  font-size: 14px;
+  color: var(--fg-4);
+}
+
+.eq-cell.is-final .eq-k {
+  color: var(--fg-2);
+}
+
+.eq-cell.is-final .eq-v {
+  font-size: 17px;
+}
+
+/* --------------------------------------------------------- breakdown grid */
+.xcols {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(232px, 1fr));
+  gap: 1px;
+  background: var(--line-soft);
+  border: 1px solid var(--line-soft);
+}
+
+.cgroup {
+  background: var(--bg-1);
+  padding: 9px 11px 10px;
+  min-width: 0;
+}
+
+.cgroup-t {
+  font-family: var(--font-mono);
+  font-size: 9px;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+  color: var(--fg-4);
+  padding-bottom: 6px;
+  margin-bottom: 6px;
+  border-bottom: 1px solid var(--line-soft);
+}
+
+.cgrid {
+  margin: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+}
+
+.citem {
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+}
+
+.citem dt {
+  font-size: 11px;
+  color: var(--fg-3);
+  white-space: nowrap;
+}
+
+/* The dotted leader is what makes a key/value pair read as a statement of
+   account rather than as two words that happen to share a line. */
+.citem::after {
+  content: "";
+  flex: 1 1 auto;
+  order: 1;
+  height: 0;
+  margin-bottom: 3px;
+  border-bottom: 1px dotted var(--line);
+  min-width: 8px;
+}
+
+.citem dd {
+  order: 2;
+  margin: 0;
+  font-family: var(--font-mono);
+  font-variant-numeric: tabular-nums slashed-zero;
+  font-size: 11.5px;
+  color: var(--fg-1);
+  white-space: nowrap;
+}
+
+.citem dd.pos {
+  color: var(--pos);
+}
+.citem dd.neg {
+  color: var(--neg);
+}
+.citem dd.warn {
+  color: var(--warn);
+}
+.citem dd.dim {
+  color: var(--fg-3);
+}
+.citem dd.muted {
+  color: var(--fg-4);
+}
+.citem dd.sym {
+  color: var(--fg-0);
+  font-weight: 600;
+}
+.citem dd.is-total {
+  font-weight: 600;
+  padding: 0 5px;
+  background: var(--neg-wash);
+}
+
+.xnote {
+  font-size: 11px;
+  color: var(--fg-3);
+  line-height: 1.5;
+}
+
+/* ---------------------------------------------------------- fill & status */
+/* Maker is 0% on this venue, so the badge is a cost statement: only a maker
+   fill earns the positive tone. */
+.mt {
+  display: inline-block;
+  min-width: 52px;
+  padding: 0 6px;
+  font-size: 9.5px;
+  font-weight: 600;
+  letter-spacing: 0.09em;
+  text-align: center;
+  border: 1px solid transparent;
+}
+
+.mt.is-maker {
+  color: var(--pos);
+  border-color: rgba(53, 210, 154, 0.32);
+  background: var(--pos-wash);
+}
+
+.mt.is-taker {
+  color: var(--fg-2);
+  border-color: var(--line);
+  background: var(--bg-3);
+}
+
+/* The 25-minute checkpoint is a checkpoint, not a lock — so only an overdue
+   one is coloured as something the operator must act on. */
+.chk {
+  display: inline-block;
+  min-width: 84px;
+  padding: 0 6px;
+  font-size: 9.5px;
+  font-weight: 600;
+  letter-spacing: 0.07em;
+  text-align: center;
+  border: 1px solid var(--line);
+  color: var(--fg-3);
+  background: var(--bg-2);
+}
+
+.chk.is-keep {
+  color: var(--pos);
+  border-color: rgba(53, 210, 154, 0.3);
+}
+
+.chk.is-trail {
+  color: var(--info);
+  border-color: rgba(90, 169, 230, 0.3);
+}
+
+.chk.is-due {
+  color: var(--warn);
+  border-color: rgba(240, 180, 41, 0.4);
+  background: var(--warn-wash);
+}
+
+/* ------------------------------------------------------------- horizon bar */
+/* The whole 60-minute window with the 25-minute checkpoint marked on it. A
+   raw "17 dk" says nothing without both boundaries in view; as a position on
+   this track it says immediately whether the trade still has room. */
+.horizon {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.horizon-track {
+  position: relative;
+  display: inline-block;
+  width: 78px;
+  height: 8px;
+  background: var(--bg-3);
+  border: 1px solid var(--line-soft);
+  flex: none;
+}
+
+.horizon-fill {
+  position: absolute;
+  left: 0;
+  top: 0;
+  bottom: 0;
+  background: var(--info);
+  opacity: 0.85;
+}
+
+.horizon-track.is-mid .horizon-fill {
+  background: var(--warn);
+}
+
+.horizon-track.is-over .horizon-fill {
+  background: var(--neg);
+}
+
+.horizon-tick {
+  position: absolute;
+  top: -2px;
+  bottom: -2px;
+  width: 1px;
+  background: var(--line-strong);
+}
+
+.horizon-val {
+  min-width: 62px;
+  text-align: left;
+  color: var(--fg-2);
+}
+
+.horizon-val.is-mid {
+  color: var(--warn);
+}
+
+.horizon-val.is-over {
+  color: var(--neg);
+}
+
+/* ------------------------------------------------------------ signal bar */
+.strength {
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+}
+
+.strength-track {
+  display: inline-block;
+  width: 46px;
+  height: 6px;
+  background: var(--bg-3);
+  flex: none;
+}
+
+.strength-fill {
+  display: block;
+  height: 100%;
+  background: var(--fg-2);
+}
+
+.strength-val {
+  color: var(--fg-3);
+  min-width: 20px;
+  text-align: right;
+}
+
+/* -------------------------------------------------------------- portfolio */
+.pfolio {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+.pfolio-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(148px, 1fr));
+  gap: 1px;
+  background: var(--line);
+  border: 1px solid var(--line);
+}
+
+.pstat {
+  background: var(--bg-1);
+  padding: 8px 10px 9px;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  min-width: 0;
+}
+
+.pstat-k {
+  font-family: var(--font-mono);
+  font-size: 9px;
+  letter-spacing: 0.09em;
+  text-transform: uppercase;
+  color: var(--fg-4);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.pstat-v {
+  font-family: var(--font-mono);
+  font-variant-numeric: tabular-nums slashed-zero;
+  font-size: 15px;
+  font-weight: 600;
+  color: var(--fg-0);
+  line-height: 1.2;
+}
+
+.pstat-v.pos {
+  color: var(--pos);
+}
+.pstat-v.neg {
+  color: var(--neg);
+}
+.pstat-v.warn {
+  color: var(--warn);
+}
+.pstat-v.flat {
+  color: var(--fg-3);
+}
+
+.pstat-n {
+  font-size: 9.5px;
+  color: var(--fg-4);
+  min-height: 12px;
+}
+
+/* ------------------------------------------------- correlated exposure */
+/* The metric that catches "many small positions" quietly being one big
+   correlated bet, so it is the one reading in this panel that is allowed to
+   shout. The two marks on the track are the 40% and 70% bands. */
+.corr {
+  border: 1px solid var(--line);
+  background: linear-gradient(180deg, var(--bg-2), var(--bg-1));
+  padding: 11px 13px 12px;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.corr-head {
+  display: flex;
+  align-items: baseline;
+  gap: 12px;
+}
+
+.corr-k {
+  font-family: var(--font-mono);
+  font-size: 10px;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+  color: var(--fg-3);
+}
+
+.corr-v {
+  margin-left: auto;
+  font-family: var(--font-mono);
+  font-variant-numeric: tabular-nums slashed-zero;
+  font-size: 24px;
+  font-weight: 600;
+  line-height: 1;
+  color: var(--fg-0);
+}
+
+.corr-track {
+  position: relative;
+  height: 10px;
+  background: var(--bg-3);
+  border: 1px solid var(--line-soft);
+}
+
+.corr-fill {
+  position: absolute;
+  left: 0;
+  top: 0;
+  bottom: 0;
+  background: var(--fg-3);
+}
+
+.corr-mark {
+  position: absolute;
+  top: -3px;
+  bottom: -3px;
+  width: 1px;
+  background: var(--line-strong);
+}
+
+.corr-mark.is-hard {
+  background: rgba(255, 95, 109, 0.55);
+}
+
+.corr-note {
+  font-size: 11px;
+  color: var(--fg-3);
+  line-height: 1.5;
+}
+
+.corr.is-ok .corr-fill {
+  background: var(--pos);
+}
+.corr.is-ok .corr-v {
+  color: var(--pos);
+}
+
+.corr.is-warn {
+  border-color: rgba(240, 180, 41, 0.34);
+}
+.corr.is-warn .corr-fill {
+  background: var(--warn);
+}
+.corr.is-warn .corr-v {
+  color: var(--warn);
+}
+
+.corr.is-crit {
+  border-color: rgba(255, 95, 109, 0.45);
+  background: linear-gradient(180deg, var(--neg-wash), var(--bg-1));
+}
+.corr.is-crit .corr-fill {
+  background: var(--neg);
+}
+.corr.is-crit .corr-v {
+  color: var(--neg);
+}
+.corr.is-crit .corr-note {
+  color: var(--neg);
+}
+
+.corr.is-empty .corr-v {
+  color: var(--fg-3);
+}
+
+/* ------------------------------------------------------- age distribution */
+.dist {
+  border: 1px solid var(--line);
+  background: var(--bg-1);
+  padding: 9px 12px 10px;
+  display: flex;
+  flex-direction: column;
+  gap: 7px;
+}
+
+.dist-head {
+  display: flex;
+  align-items: baseline;
+  gap: 10px;
+}
+
+.dist-t {
+  font-family: var(--font-mono);
+  font-size: 9px;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+  color: var(--fg-4);
+}
+
+.dist-n {
+  margin-left: auto;
+  font-family: var(--font-mono);
+  font-size: 10px;
+  color: var(--fg-4);
+}
+
+.dist-bar {
+  display: flex;
+  height: 8px;
+  background: var(--bg-3);
+  overflow: hidden;
+}
+
+.dist-seg {
+  display: block;
+  height: 100%;
+}
+
+.dist-seg.is-early {
+  background: var(--info);
+}
+.dist-seg.is-mid {
+  background: var(--warn);
+}
+.dist-seg.is-over {
+  background: var(--neg);
+}
+
+.dist-legend {
+  display: flex;
+  gap: 16px;
+  flex-wrap: wrap;
+}
+
+.dist-key {
+  font-family: var(--font-mono);
+  font-size: 10px;
+  color: var(--fg-4);
+  display: inline-flex;
+  align-items: baseline;
+  gap: 5px;
+}
+
+.dist-key b {
+  font-variant-numeric: tabular-nums slashed-zero;
+  color: var(--fg-1);
+}
+
+.dist-key.is-early b {
+  color: var(--info);
+}
+.dist-key.is-mid b {
+  color: var(--warn);
+}
+.dist-key.is-over b {
+  color: var(--neg);
+}

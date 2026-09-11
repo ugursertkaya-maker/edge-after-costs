@@ -4,6 +4,8 @@ import { useEffect, useState } from "react";
 import { Rail } from "@/components/dashboard/Rail";
 import { MetricStrip } from "@/components/dashboard/MetricStrip";
 import { Scanner } from "@/components/dashboard/Scanner";
+import { CostSplit } from "@/components/dashboard/CostSplit";
+import { Portfolio } from "@/components/dashboard/Portfolio";
 import { Positions } from "@/components/dashboard/Positions";
 import { Trades } from "@/components/dashboard/Trades";
 import { Strategies } from "@/components/dashboard/Strategies";
@@ -83,13 +85,22 @@ export default function DashboardPage() {
 
         <MetricStrip metrics={data?.metrics ?? null} startingEquity={startingEquity} />
 
+        <CostSplit metrics={data?.metrics ?? null} />
+
         <Scanner
           rows={data?.scanner ?? null}
           loading={loading}
           connected={data?.header.data_connected ?? false}
         />
 
-        <Positions rows={data?.positions ?? null} loading={loading} />
+        <Portfolio portfolio={data?.portfolio ?? null} loading={loading} />
+
+        <Positions
+          rows={data?.positions ?? null}
+          loading={loading}
+          now={now}
+          generatedMs={data?.generated_ms ?? null}
+        />
 
         <div className="col-2">
           <EquityCurve
