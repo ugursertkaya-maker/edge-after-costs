@@ -1,0 +1,127 @@
+# Crypto Micro-Profit Trader — PAPER ONLY. Fully isolated stack.
+#
+# Isolation guarantees (the host runs ~20 other production containers):
+#   * own network `cryptobot-internal`; db/redis are NOT published anywhere
+#   * only `web` and `api` also join the pre-existing external `shared-network`
+#     so the shared nginx can reach them by container name for /cryptobot
+#   * only host port: 127.0.0.1:8130 -> web, for internal checks
+#   * own database, own redis, own volumes — nothing is shared with
+#     another project or the archived another project stack
+#   * hard memory/CPU limits sized for 2 vCPU shared with everything else
+name: cryptobot
+
+x-restart: &restart
+  restart: unless-stopped
+x-logging: &logging
+  logging: { driver: json-file, options: { max-size: "10m", max-file: "3" } }
+
+services:
+  db:
+    <<: [*restart, *logging]
+    image: postgres:16-alpine
+    container_name: cryptobot-db
+    environment:
+      POSTGRES_DB: ${POSTGRES_DB:-cryptobot}
+      POSTGRES_USER: ${POSTGRES_USER:-cryptobot}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?POSTGRES_PASSWORD is required}
+      POSTGRES_INITDB_ARGS: "--data-checksums"
+    volumes: [cryptobot-pgdata:/var/lib/postgresql/data]
+    networks: [cryptobot-internal]
+    mem_limit: 448m
+    cpus: 0.4
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-cryptobot} -d ${POSTGRES_DB:-cryptobot}"]
+      interval: 15s
+      timeout: 5s
+      retries: 6
+      start_period: 20s
+
+  redis:
+    <<: [*restart, *logging]
+    image: redis:7-alpine
+    container_name: cryptobot-redis
+    command: ["redis-server", "--appendonly", "no", "--save", "", "--maxmemory", "64mb", "--maxmemory-policy", "allkeys-lru"]
+    networks: [cryptobot-internal]
+    mem_limit: 96m
+    cpus: 0.15
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 15s
+      timeout: 3s
+      retries: 6
+
+  api:
+    <<: [*restart, *logging]
+    build: { context: ./api }
+    image: cryptobot-api:latest
+    container_name: cryptobot-api
+    env_file: [.env]
+    environment:
+      POSTGRES_HOST: cryptobot-db
+      REDIS_HOST: cryptobot-redis
+    depends_on:
+      db: { condition: service_healthy }
+      redis: { condition: service_healthy }
+    networks: [cryptobot-internal, shared-network]
+    mem_limit: 384m
+    cpus: 0.5
+    healthcheck:
+      test: ["CMD-SHELL", "curl -fsS http://127.0.0.1:8000/cryptobot/api/health >/dev/null || exit 1"]
+      interval: 20s
+      timeout: 6s
+      retries: 5
+      start_period: 40s
+
+  worker:
+    <<: [*restart, *logging]
+    image: cryptobot-api:latest
+    container_name: cryptobot-worker
+    entrypoint: []
+    command: ["python", "-m", "app.worker.main"]
+    env_file: [.env]
+    environment:
+      POSTGRES_HOST: cryptobot-db
+      REDIS_HOST: cryptobot-redis
+    depends_on:
+      db: { condition: service_healthy }
+      redis: { condition: service_healthy }
+      api: { condition: service_healthy }
+    volumes: [cryptobot-cache:/data/backtest-cache]
+    networks: [cryptobot-internal]   # outbound only, nothing inbound
+    mem_limit: 640m
+    cpus: 0.8
+    healthcheck:
+      test: ["CMD-SHELL", "python -c \"import redis,os,sys,time;r=redis.Redis(host='cryptobot-redis',decode_responses=True);b=r.get('cryptobot:worker:heartbeat');sys.exit(0 if b and (time.time()*1000-int(b))<60000 else 1)\""]
+      interval: 30s
+      timeout: 8s
+      retries: 4
+      start_period: 90s
+
+  web:
+    <<: [*restart, *logging]
+    build: { context: ./web }
+    image: cryptobot-web:latest
+    container_name: cryptobot-web
+    environment:
+      API_ORIGIN: http://cryptobot-api:8000
+      NODE_ENV: production
+    depends_on:
+      api: { condition: service_started }
+    ports: ["127.0.0.1:8130:3000"]
+    networks: [cryptobot-internal, shared-network]
+    mem_limit: 256m
+    cpus: 0.35
+    healthcheck:
+      test: ["CMD-SHELL", "node -e \"fetch('http://127.0.0.1:3000/cryptobot/login').then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))\""]
+      interval: 20s
+      timeout: 6s
+      retries: 5
+      start_period: 25s
+
+networks:
+  cryptobot-internal: { name: cryptobot-internal, driver: bridge }
+  shared-network: { external: true }
+
+volumes:
+  cryptobot-pgdata: { name: cryptobot-pgdata }
+  cryptobot-cache: { name: cryptobot-cache }

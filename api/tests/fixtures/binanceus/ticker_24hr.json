@@ -1,0 +1,12 @@
+[
+  {"symbol": "BTCUSD", "lastPrice": "61500.00", "weightedAvgPrice": "61000.00", "highPrice": "62000.00", "lowPrice": "60000.00", "quoteVolume": "120000000.00", "volume": "1967.21", "count": 400000},
+  {"symbol": "BTCUSDT", "lastPrice": "61510.00", "weightedAvgPrice": "61000.00", "highPrice": "62000.00", "lowPrice": "60000.00", "quoteVolume": "40000000.00", "volume": "655.73", "count": 150000},
+  {"symbol": "ETHUSDT", "lastPrice": "2530.00", "weightedAvgPrice": "2525.00", "highPrice": "2550.00", "lowPrice": "2500.00", "quoteVolume": "30000000.00", "volume": "11881.18", "count": 90000},
+  {"symbol": "SOLUSD", "lastPrice": "151.00", "weightedAvgPrice": "150.00", "highPrice": "152.00", "lowPrice": "148.00", "quoteVolume": "8000000.00", "volume": "53333.33", "count": 40000},
+  {"symbol": "HALTUSD", "lastPrice": "1.00", "weightedAvgPrice": "1.00", "highPrice": "1.02", "lowPrice": "0.99", "quoteVolume": "5000000.00", "volume": "5000000.00", "count": 20000},
+  {"symbol": "USDTUSD", "lastPrice": "1.0001", "weightedAvgPrice": "1.0000", "highPrice": "1.0005", "lowPrice": "0.9995", "quoteVolume": "90000000.00", "volume": "90000000.00", "count": 60000},
+  {"symbol": "ETHBULLUSD", "lastPrice": "102.00", "weightedAvgPrice": "101.50", "highPrice": "103.00", "lowPrice": "100.00", "quoteVolume": "9000000.00", "volume": "88669.95", "count": 30000},
+  {"symbol": "SLEEPYUSD", "lastPrice": "0.5000", "weightedAvgPrice": "0.5000", "highPrice": "0.5001", "lowPrice": "0.4999", "quoteVolume": "6000000.00", "volume": "12000000.00", "count": 25000},
+  {"symbol": "WILDUSD", "lastPrice": "0.0200", "weightedAvgPrice": "0.0200", "highPrice": "0.0260", "lowPrice": "0.0140", "quoteVolume": "7000000.00", "volume": "350000000.00", "count": 33000},
+  {"symbol": "GHOSTUSD", "lastPrice": "3.00", "weightedAvgPrice": "3.00", "highPrice": "3.10", "lowPrice": "2.95", "quoteVolume": "20000000.00", "volume": "6666666.00", "count": 70000}
+]

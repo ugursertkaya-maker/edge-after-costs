@@ -1,0 +1,80 @@
+{
+  "timezone": "UTC",
+  "serverTime": 1757500000000,
+  "symbols": [
+    {
+      "symbol": "BTCUSD", "status": "TRADING", "baseAsset": "BTC", "quoteAsset": "USD",
+      "filters": [
+        {"filterType": "PRICE_FILTER", "minPrice": "0.01000000", "tickSize": "0.01000000"},
+        {"filterType": "LOT_SIZE", "minQty": "0.00001000", "maxQty": "9000.00000000", "stepSize": "0.00000100"},
+        {"filterType": "NOTIONAL", "minNotional": "1.00000000", "applyMinToMarket": true}
+      ]
+    },
+    {
+      "symbol": "BTCUSDT", "status": "TRADING", "baseAsset": "BTC", "quoteAsset": "USDT",
+      "filters": [
+        {"filterType": "PRICE_FILTER", "tickSize": "0.01000000"},
+        {"filterType": "LOT_SIZE", "minQty": "0.00001000", "stepSize": "0.00000100"},
+        {"filterType": "NOTIONAL", "minNotional": "1.00000000"}
+      ]
+    },
+    {
+      "symbol": "ETHUSDT", "status": "TRADING", "baseAsset": "ETH", "quoteAsset": "USDT",
+      "filters": [
+        {"filterType": "PRICE_FILTER", "tickSize": "0.10000000"},
+        {"filterType": "LOT_SIZE", "minQty": "0.00100000", "stepSize": "0.00010000"},
+        {"filterType": "MIN_NOTIONAL", "minNotional": "10.00000000", "applyToMarket": true}
+      ]
+    },
+    {
+      "symbol": "SOLUSD", "status": "TRADING", "baseAsset": "SOL", "quoteAsset": "USD",
+      "filters": [
+        {"filterType": "PRICE_FILTER", "tickSize": "0.01000000"},
+        {"filterType": "LOT_SIZE", "minQty": "0.01000000", "stepSize": "0.00100000"},
+        {"filterType": "NOTIONAL", "notional": "5.00000000"}
+      ]
+    },
+    {
+      "symbol": "HALTUSD", "status": "BREAK", "baseAsset": "HALT", "quoteAsset": "USD",
+      "filters": [
+        {"filterType": "PRICE_FILTER", "tickSize": "0.00010000"},
+        {"filterType": "LOT_SIZE", "minQty": "1.00000000", "stepSize": "1.00000000"}
+      ]
+    },
+    {
+      "symbol": "USDTUSD", "status": "TRADING", "baseAsset": "USDT", "quoteAsset": "USD",
+      "filters": [
+        {"filterType": "PRICE_FILTER", "tickSize": "0.00010000"},
+        {"filterType": "LOT_SIZE", "minQty": "1.00000000", "stepSize": "0.10000000"},
+        {"filterType": "NOTIONAL", "minNotional": "1.00000000"}
+      ]
+    },
+    {
+      "symbol": "ETHBULLUSD", "status": "TRADING", "baseAsset": "ETHBULL", "quoteAsset": "USD",
+      "filters": [
+        {"filterType": "PRICE_FILTER", "tickSize": "0.00100000"},
+        {"filterType": "LOT_SIZE", "minQty": "0.10000000", "stepSize": "0.10000000"},
+        {"filterType": "NOTIONAL", "minNotional": "1.00000000"}
+      ]
+    },
+    {
+      "symbol": "SLEEPYUSD", "status": "TRADING", "baseAsset": "SLEEPY", "quoteAsset": "USD",
+      "filters": [
+        {"filterType": "PRICE_FILTER", "tickSize": "0.00010000"},
+        {"filterType": "LOT_SIZE", "minQty": "1.00000000", "stepSize": "1.00000000"},
+        {"filterType": "NOTIONAL", "minNotional": "1.00000000"}
+      ]
+    },
+    {
+      "symbol": "WILDUSD", "status": "TRADING", "baseAsset": "WILD", "quoteAsset": "USD",
+      "filters": [
+        {"filterType": "PRICE_FILTER", "tickSize": "0.00010000"},
+        {"filterType": "LOT_SIZE", "minQty": "1.00000000", "stepSize": "1.00000000"},
+        {"filterType": "NOTIONAL", "minNotional": "1.00000000"}
+      ]
+    },
+    {
+      "status": "TRADING", "baseAsset": "NOPE", "quoteAsset": "USD", "filters": []
+    }
+  ]
+}

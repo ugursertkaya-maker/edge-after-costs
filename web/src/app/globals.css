@@ -1,0 +1,1055 @@
+/* ==========================================================================
+   KRİPTO MICRO-PROFIT TRADER — terminal design system
+   --------------------------------------------------------------------------
+   A dark quantitative desk. The ground is a cold near-black with a faint
+   blue cast; panels are one step lighter and separated by hairlines, not by
+   shadows or rounded cards. Every measured value is set in the mono face with
+   tabular figures so columns align on the decimal without any per-cell work.
+
+   Colour is spent, never decorated:
+     green  — realised or unrealised gain, a live link, an approved decision
+     red    — loss, a dead link, a stop
+     amber  — a warning that has not yet cost anything (watch, degraded feed)
+     slate  — everything that is merely information
+   Nothing else is coloured. A screen where everything is coloured says
+   nothing when one thing goes wrong.
+   ========================================================================== */
+
+:root {
+  /* ground — cold, slightly blue, never pure black (pure black flares on OLED
+     and kills the hairlines this layout is built on) */
+  --bg-0: #080a0e;
+  --bg-1: #0c0f14;
+  --bg-2: #11151c;
+  --bg-3: #161b23;
+  --bg-4: #1d232c;
+
+  /* ink */
+  --fg-0: #e7ecf3;
+  --fg-1: #b9c2ce;
+  --fg-2: #8a95a4;
+  --fg-3: #616c7c;
+  --fg-4: #434d5b;
+
+  /* structure */
+  --line: rgba(148, 163, 184, 0.13);
+  --line-soft: rgba(148, 163, 184, 0.07);
+  --line-strong: rgba(148, 163, 184, 0.24);
+
+  /* signal */
+  --pos: #35d29a;
+  --pos-dim: #1c7f5e;
+  --pos-wash: rgba(53, 210, 154, 0.1);
+  --neg: #ff5f6d;
+  --neg-dim: #9c2b36;
+  --neg-wash: rgba(255, 95, 109, 0.1);
+  --warn: #f0b429;
+  --warn-wash: rgba(240, 180, 41, 0.1);
+  --info: #5aa9e6;
+  --info-wash: rgba(90, 169, 230, 0.1);
+
+  --font-mono: ui-monospace, "SF Mono", "JetBrains Mono", "IBM Plex Mono",
+    Menlo, Consolas, "Liberation Mono", monospace;
+  --font-sans: ui-sans-serif, system-ui, -apple-system, "Segoe UI", Roboto,
+    "Helvetica Neue", Arial, sans-serif;
+
+  --gap: 12px;
+  --rail-h: 46px;
+}
+
+*,
+*::before,
+*::after {
+  box-sizing: border-box;
+}
+
+html,
+body {
+  margin: 0;
+  padding: 0;
+}
+
+html {
+  -webkit-text-size-adjust: 100%;
+  color-scheme: dark;
+}
+
+body {
+  min-height: 100vh;
+  background-color: var(--bg-0);
+  background-image:
+    radial-gradient(900px 420px at 12% -10%, rgba(90, 169, 230, 0.05), transparent 65%),
+    radial-gradient(760px 380px at 88% -6%, rgba(53, 210, 154, 0.035), transparent 62%);
+  background-attachment: fixed;
+  color: var(--fg-1);
+  font-family: var(--font-sans);
+  font-size: 12.5px;
+  line-height: 1.42;
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+}
+
+h1,
+h2,
+h3,
+p,
+figure {
+  margin: 0;
+}
+
+button,
+input,
+select {
+  font: inherit;
+  color: inherit;
+}
+
+a {
+  color: inherit;
+  text-decoration: none;
+}
+
+:focus-visible {
+  outline: 1px solid var(--info);
+  outline-offset: 1px;
+}
+
+::selection {
+  background: rgba(90, 169, 230, 0.28);
+}
+
+/* Every number on this screen. Tabular figures + slashed zero: a column of
+   prices has to align on the decimal without per-cell alignment hacks, and a
+   0 must never be mistaken for an O in a symbol column. */
+.num,
+td.num,
+th.num,
+.mono {
+  font-family: var(--font-mono);
+  font-variant-numeric: tabular-nums slashed-zero;
+  font-feature-settings: "tnum" 1, "zero" 1;
+}
+
+/* ------------------------------------------------------------------ shell */
+.shell {
+  min-height: 100vh;
+  display: flex;
+  flex-direction: column;
+}
+
+.content {
+  flex: 1;
+  padding: var(--gap);
+  display: flex;
+  flex-direction: column;
+  gap: var(--gap);
+  max-width: 2100px;
+  width: 100%;
+  margin: 0 auto;
+}
+
+/* ------------------------------------------------------------------- rail */
+.rail {
+  position: sticky;
+  top: 0;
+  z-index: 40;
+  display: flex;
+  align-items: center;
+  gap: 14px;
+  flex-wrap: wrap;
+  min-height: var(--rail-h);
+  padding: 0 14px;
+  background: linear-gradient(180deg, rgba(12, 15, 20, 0.97), rgba(8, 10, 14, 0.94));
+  backdrop-filter: blur(8px);
+  border-bottom: 1px solid var(--line);
+}
+
+.wordmark {
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+  white-space: nowrap;
+}
+
+.wordmark-name {
+  font-family: var(--font-mono);
+  font-size: 13px;
+  font-weight: 600;
+  letter-spacing: 0.1em;
+  color: var(--fg-0);
+}
+
+.wordmark-ver {
+  font-family: var(--font-mono);
+  font-size: 10px;
+  letter-spacing: 0.06em;
+  color: var(--fg-4);
+}
+
+.rail-sep {
+  width: 1px;
+  align-self: stretch;
+  margin: 9px 0;
+  background: var(--line);
+}
+
+.rail-spacer {
+  flex: 1 1 auto;
+}
+
+/* ------------------------------------------------------------------- pill */
+.pill {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  height: 21px;
+  padding: 0 8px;
+  font-family: var(--font-mono);
+  font-size: 10px;
+  font-weight: 600;
+  letter-spacing: 0.09em;
+  text-transform: uppercase;
+  white-space: nowrap;
+  border: 1px solid var(--line);
+  background: var(--bg-2);
+  color: var(--fg-2);
+}
+
+.pill.is-pos {
+  color: var(--pos);
+  border-color: rgba(53, 210, 154, 0.34);
+  background: var(--pos-wash);
+}
+
+.pill.is-neg {
+  color: var(--neg);
+  border-color: rgba(255, 95, 109, 0.34);
+  background: var(--neg-wash);
+}
+
+.pill.is-warn {
+  color: var(--warn);
+  border-color: rgba(240, 180, 41, 0.34);
+  background: var(--warn-wash);
+}
+
+.pill.is-off {
+  color: var(--fg-3);
+}
+
+/* The paper-mode heartbeat. Slow and shallow on purpose: this screen is
+   watched for hours and a hard blink becomes unbearable. */
+.dot {
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: currentColor;
+  flex: none;
+}
+
+.dot.is-pulse {
+  animation: pulse 2.4s ease-in-out infinite;
+}
+
+@keyframes pulse {
+  0%,
+  100% {
+    opacity: 1;
+    box-shadow: 0 0 0 0 rgba(53, 210, 154, 0.5);
+  }
+  50% {
+    opacity: 0.55;
+    box-shadow: 0 0 0 4px rgba(53, 210, 154, 0);
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .dot.is-pulse {
+    animation: none;
+  }
+}
+
+/* --------------------------------------------------------------- rail stat */
+.rstat {
+  display: flex;
+  align-items: baseline;
+  gap: 7px;
+  white-space: nowrap;
+}
+
+.rstat-k {
+  font-family: var(--font-mono);
+  font-size: 9.5px;
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+  color: var(--fg-4);
+}
+
+.rstat-v {
+  font-family: var(--font-mono);
+  font-variant-numeric: tabular-nums slashed-zero;
+  font-size: 11.5px;
+  font-weight: 600;
+  color: var(--fg-0);
+}
+
+.rstat-v.is-pos {
+  color: var(--pos);
+}
+.rstat-v.is-neg {
+  color: var(--neg);
+}
+.rstat-v.is-warn {
+  color: var(--warn);
+}
+.rstat-v.is-off {
+  color: var(--fg-3);
+}
+
+/* --------------------------------------------------------------- switcher */
+.switch {
+  display: inline-flex;
+  border: 1px solid var(--line);
+  background: var(--bg-1);
+}
+
+.switch-btn {
+  appearance: none;
+  border: 0;
+  background: transparent;
+  padding: 3px 10px;
+  height: 23px;
+  font-family: var(--font-mono);
+  font-size: 10.5px;
+  font-variant-numeric: tabular-nums;
+  letter-spacing: 0.04em;
+  color: var(--fg-3);
+  cursor: pointer;
+  border-right: 1px solid var(--line-soft);
+  transition: color 0.12s ease, background 0.12s ease;
+}
+
+.switch-btn:last-child {
+  border-right: 0;
+}
+
+.switch-btn:hover:not(:disabled) {
+  color: var(--fg-1);
+  background: var(--bg-3);
+}
+
+.switch-btn.is-on {
+  color: var(--bg-0);
+  background: var(--fg-1);
+  font-weight: 600;
+}
+
+.switch-btn:disabled {
+  cursor: default;
+  opacity: 0.5;
+}
+
+/* ------------------------------------------------------------------ panel */
+.panel {
+  background: var(--bg-1);
+  border: 1px solid var(--line);
+}
+
+.panel-head {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  flex-wrap: wrap;
+  padding: 8px 12px;
+  border-bottom: 1px solid var(--line);
+  background: linear-gradient(180deg, var(--bg-2), var(--bg-1));
+}
+
+.panel-idx {
+  font-family: var(--font-mono);
+  font-size: 9.5px;
+  letter-spacing: 0.08em;
+  color: var(--fg-4);
+}
+
+.panel-title {
+  font-family: var(--font-mono);
+  font-size: 11.5px;
+  font-weight: 600;
+  letter-spacing: 0.14em;
+  text-transform: uppercase;
+  color: var(--fg-0);
+}
+
+.panel-note {
+  font-size: 11px;
+  color: var(--fg-3);
+}
+
+.panel-meta {
+  margin-left: auto;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
+.panel-body {
+  padding: 12px;
+}
+
+.panel-body.flush {
+  padding: 0;
+}
+
+.panel-foot {
+  padding: 7px 12px;
+  border-top: 1px solid var(--line-soft);
+  font-size: 10.5px;
+  color: var(--fg-4);
+  background: var(--bg-1);
+}
+
+/* ------------------------------------------------------------- metrics */
+.metrics {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(132px, 1fr));
+  gap: 1px;
+  background: var(--line);
+  border: 1px solid var(--line);
+}
+
+.metric {
+  background: var(--bg-1);
+  padding: 9px 11px 10px;
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+  min-width: 0;
+}
+
+.metric-k {
+  font-family: var(--font-mono);
+  font-size: 9.5px;
+  letter-spacing: 0.09em;
+  text-transform: uppercase;
+  color: var(--fg-4);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.metric-v {
+  font-family: var(--font-mono);
+  font-variant-numeric: tabular-nums slashed-zero;
+  font-size: 18px;
+  font-weight: 600;
+  letter-spacing: -0.01em;
+  color: var(--fg-0);
+  line-height: 1.15;
+}
+
+.metric-v.pos {
+  color: var(--pos);
+}
+.metric-v.neg {
+  color: var(--neg);
+}
+.metric-v.flat,
+.metric-v.is-empty {
+  color: var(--fg-3);
+}
+
+.metric-note {
+  font-size: 10px;
+  color: var(--fg-4);
+  min-height: 13px;
+}
+
+/* ------------------------------------------------------------------ table */
+.tbl-wrap {
+  overflow-x: auto;
+}
+
+table.tbl {
+  width: 100%;
+  border-collapse: collapse;
+  font-family: var(--font-mono);
+  font-variant-numeric: tabular-nums slashed-zero;
+  font-size: 11.5px;
+  white-space: nowrap;
+}
+
+table.tbl th {
+  position: sticky;
+  top: 0;
+  z-index: 2;
+  background: var(--bg-2);
+  color: var(--fg-4);
+  font-size: 9.5px;
+  font-weight: 600;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  text-align: right;
+  padding: 7px 10px;
+  border-bottom: 1px solid var(--line);
+  user-select: none;
+}
+
+table.tbl th.l,
+table.tbl td.l {
+  text-align: left;
+}
+
+table.tbl th.c,
+table.tbl td.c {
+  text-align: center;
+}
+
+table.tbl th.sortable {
+  cursor: pointer;
+}
+
+table.tbl th.sortable:hover {
+  color: var(--fg-1);
+}
+
+table.tbl th .caret {
+  color: var(--info);
+  margin-left: 3px;
+}
+
+table.tbl td {
+  text-align: right;
+  padding: 5px 10px;
+  border-bottom: 1px solid var(--line-soft);
+  color: var(--fg-1);
+}
+
+table.tbl tbody tr:hover td {
+  background: var(--bg-2);
+}
+
+table.tbl tbody tr:last-child td {
+  border-bottom: 0;
+}
+
+td.sym,
+.sym {
+  color: var(--fg-0);
+  font-weight: 600;
+  letter-spacing: 0.03em;
+}
+
+td.dim {
+  color: var(--fg-3);
+}
+
+td.pos,
+.pos {
+  color: var(--pos);
+}
+
+td.neg,
+.neg {
+  color: var(--neg);
+}
+
+td.warn,
+.warn {
+  color: var(--warn);
+}
+
+td.muted {
+  color: var(--fg-4);
+}
+
+/* NET P&L is the only figure in the history table that decides anything, so
+   it is the only one given a background. */
+td.net {
+  font-weight: 600;
+}
+
+td.net.pos {
+  background: var(--pos-wash);
+}
+
+td.net.neg {
+  background: var(--neg-wash);
+}
+
+/* ----------------------------------------------------------- decision cell */
+.decision {
+  display: inline-block;
+  min-width: 74px;
+  padding: 1px 7px;
+  font-size: 10px;
+  font-weight: 600;
+  letter-spacing: 0.08em;
+  text-align: center;
+  border: 1px solid transparent;
+}
+
+.decision.buy {
+  color: var(--pos);
+  border-color: rgba(53, 210, 154, 0.4);
+  background: var(--pos-wash);
+}
+
+.decision.sell {
+  color: var(--neg);
+  border-color: rgba(255, 95, 109, 0.4);
+  background: var(--neg-wash);
+}
+
+.decision.watch {
+  color: var(--warn);
+  border-color: rgba(240, 180, 41, 0.36);
+  background: var(--warn-wash);
+}
+
+.decision.none {
+  color: var(--fg-3);
+  border-color: var(--line);
+  background: var(--bg-2);
+  cursor: help;
+}
+
+/* ------------------------------------------------------------- side badge */
+.side {
+  display: inline-block;
+  min-width: 46px;
+  padding: 0 6px;
+  font-size: 10px;
+  font-weight: 600;
+  letter-spacing: 0.08em;
+  text-align: center;
+  border: 1px solid transparent;
+}
+
+.side.long {
+  color: var(--pos);
+  border-color: rgba(53, 210, 154, 0.32);
+}
+
+.side.short {
+  color: var(--neg);
+  border-color: rgba(255, 95, 109, 0.32);
+}
+
+/* -------------------------------------------------------------- imbalance */
+/* A two-sided bar anchored at the centre: bid pressure runs right, ask
+   pressure runs left, so a glance at the column reads as a histogram. */
+.imb {
+  position: relative;
+  display: inline-block;
+  width: 74px;
+  height: 9px;
+  background: var(--bg-3);
+  vertical-align: middle;
+}
+
+.imb::before {
+  content: "";
+  position: absolute;
+  left: 50%;
+  top: -1px;
+  bottom: -1px;
+  width: 1px;
+  background: var(--line-strong);
+}
+
+.imb-fill {
+  position: absolute;
+  top: 0;
+  bottom: 0;
+}
+
+.imb-fill.bid {
+  left: 50%;
+  background: var(--pos);
+  opacity: 0.8;
+}
+
+.imb-fill.ask {
+  right: 50%;
+  background: var(--neg);
+  opacity: 0.8;
+}
+
+.imb-val {
+  display: inline-block;
+  min-width: 44px;
+  margin-left: 7px;
+  text-align: right;
+}
+
+/* -------------------------------------------------------------- regime tag */
+.tag {
+  font-size: 10px;
+  letter-spacing: 0.06em;
+  color: var(--fg-2);
+}
+
+.tag.is-abnormal {
+  color: var(--warn);
+}
+
+/* ------------------------------------------------------------ equity curve */
+.curve {
+  display: block;
+  width: 100%;
+  height: 230px;
+}
+
+.curve-legend {
+  display: flex;
+  gap: 16px;
+  flex-wrap: wrap;
+  align-items: center;
+  margin-bottom: 8px;
+}
+
+.legend-item {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 10.5px;
+  color: var(--fg-3);
+}
+
+.legend-swatch {
+  width: 14px;
+  height: 0;
+  border-top-width: 2px;
+  border-top-style: solid;
+}
+
+/* --------------------------------------------------------------- health */
+.health-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(160px, 1fr));
+  gap: 1px;
+  background: var(--line);
+}
+
+.hcell {
+  background: var(--bg-1);
+  padding: 8px 11px;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.hcell-k {
+  font-family: var(--font-mono);
+  font-size: 9.5px;
+  letter-spacing: 0.09em;
+  text-transform: uppercase;
+  color: var(--fg-4);
+}
+
+.hcell-v {
+  font-family: var(--font-mono);
+  font-variant-numeric: tabular-nums slashed-zero;
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--fg-0);
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.hcell-v.is-pos {
+  color: var(--pos);
+}
+.hcell-v.is-neg {
+  color: var(--neg);
+}
+.hcell-v.is-warn {
+  color: var(--warn);
+}
+.hcell-v.is-empty {
+  color: var(--fg-3);
+}
+
+/* ---------------------------------------------------------------- states */
+/* Data states are screens, not fallbacks. A scalper that has found nothing
+   worth trading for an hour is working correctly, so "no trades yet" has to
+   read as a measurement rather than as a broken panel. */
+.state {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  padding: 34px 18px;
+  text-align: center;
+}
+
+.state-mark {
+  width: 7px;
+  height: 7px;
+  background: var(--fg-4);
+}
+
+.state-mark.is-scanning {
+  background: var(--info);
+  animation: pulse 2.4s ease-in-out infinite;
+}
+
+.state-title {
+  font-family: var(--font-mono);
+  font-size: 11.5px;
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+  color: var(--fg-2);
+}
+
+.state-text {
+  font-size: 11.5px;
+  color: var(--fg-4);
+  max-width: 52ch;
+}
+
+/* skeleton rows keep the rhythm of the table they stand in for */
+.skel-rows {
+  display: flex;
+  flex-direction: column;
+  gap: 7px;
+  padding: 12px;
+}
+
+.skel {
+  height: 11px;
+  background: linear-gradient(
+    90deg,
+    var(--bg-2) 0%,
+    var(--bg-3) 45%,
+    var(--bg-2) 100%
+  );
+  background-size: 200% 100%;
+  animation: shimmer 1.6s linear infinite;
+}
+
+@keyframes shimmer {
+  from {
+    background-position: 200% 0;
+  }
+  to {
+    background-position: -200% 0;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .skel {
+    animation: none;
+  }
+}
+
+/* ---------------------------------------------------------------- banner */
+.banner {
+  display: flex;
+  align-items: baseline;
+  gap: 10px;
+  padding: 7px 12px;
+  border: 1px solid;
+  font-size: 11.5px;
+}
+
+.banner-warn {
+  color: var(--warn);
+  border-color: rgba(240, 180, 41, 0.3);
+  background: var(--warn-wash);
+}
+
+.banner-err {
+  color: var(--neg);
+  border-color: rgba(255, 95, 109, 0.3);
+  background: var(--neg-wash);
+}
+
+.banner-tag {
+  font-family: var(--font-mono);
+  font-size: 9.5px;
+  font-weight: 600;
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+}
+
+.banner-detail {
+  margin-left: auto;
+  font-family: var(--font-mono);
+  font-size: 10.5px;
+  color: var(--fg-3);
+}
+
+/* ------------------------------------------------------------- pagination */
+.pager {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 7px 12px;
+  border-top: 1px solid var(--line-soft);
+}
+
+.pager-info {
+  font-family: var(--font-mono);
+  font-size: 10.5px;
+  color: var(--fg-4);
+}
+
+.btn {
+  appearance: none;
+  border: 1px solid var(--line);
+  background: var(--bg-2);
+  color: var(--fg-1);
+  font-family: var(--font-mono);
+  font-size: 10.5px;
+  letter-spacing: 0.06em;
+  padding: 3px 11px;
+  cursor: pointer;
+  transition: border-color 0.12s ease, color 0.12s ease;
+}
+
+.btn:hover:not(:disabled) {
+  border-color: var(--line-strong);
+  color: var(--fg-0);
+}
+
+.btn:disabled {
+  opacity: 0.38;
+  cursor: default;
+}
+
+.btn-primary {
+  background: var(--fg-0);
+  color: var(--bg-0);
+  border-color: var(--fg-0);
+  font-weight: 600;
+}
+
+.btn-primary:hover:not(:disabled) {
+  background: #fff;
+  color: var(--bg-0);
+}
+
+.btn-block {
+  width: 100%;
+  padding: 7px 11px;
+  text-align: center;
+}
+
+/* ------------------------------------------------------------------ login */
+.login {
+  min-height: 100vh;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 24px;
+}
+
+.login-card {
+  width: 100%;
+  max-width: 350px;
+  padding: 22px;
+}
+
+.login-title {
+  font-family: var(--font-mono);
+  font-size: 12.5px;
+  font-weight: 600;
+  letter-spacing: 0.12em;
+  color: var(--fg-0);
+}
+
+.login-sub {
+  font-size: 11px;
+  color: var(--fg-4);
+  margin-top: 3px;
+}
+
+.login-form {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  margin-top: 18px;
+}
+
+.field {
+  display: flex;
+  flex-direction: column;
+  gap: 5px;
+}
+
+.field label {
+  font-family: var(--font-mono);
+  font-size: 9.5px;
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+  color: var(--fg-4);
+}
+
+.field input {
+  background: var(--bg-0);
+  border: 1px solid var(--line);
+  color: var(--fg-0);
+  font-family: var(--font-mono);
+  font-size: 12px;
+  padding: 7px 9px;
+  width: 100%;
+}
+
+.field input:focus {
+  border-color: var(--info);
+  outline: none;
+}
+
+.login-foot {
+  margin-top: 20px;
+  padding-top: 14px;
+  border-top: 1px solid var(--line-soft);
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.login-foot .rstat {
+  justify-content: space-between;
+}
+
+/* ----------------------------------------------------------------- misc */
+.row-gap {
+  display: flex;
+  gap: var(--gap);
+  flex-wrap: wrap;
+}
+
+.col-2 {
+  display: grid;
+  grid-template-columns: minmax(0, 1.55fr) minmax(0, 1fr);
+  gap: var(--gap);
+}
+
+@media (max-width: 1180px) {
+  .col-2 {
+    grid-template-columns: minmax(0, 1fr);
+  }
+}
+
+.footnote {
+  font-size: 10.5px;
+  color: var(--fg-4);
+  line-height: 1.5;
+}
+
+.sr-only {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  padding: 0;
+  margin: -1px;
+  overflow: hidden;
+  clip: rect(0, 0, 0, 0);
+  white-space: nowrap;
+  border: 0;
+}
