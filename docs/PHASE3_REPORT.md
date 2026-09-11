@@ -178,6 +178,30 @@ built and tested (bootstrap of trade order, seeded, reporting median and p95
 drawdown, worst loss streak, and probability of ending below the starting
 $500), and the gate that consumes it requires `prob_below_start <= 35%`.
 
+## 17b. Machine learning — not run, and why
+
+The brief allows an ML filter *after* the deterministic strategies are
+benchmarked. They now are, so this is answerable rather than deferred.
+
+**It was not run, deliberately.** An ML filter selects a subset of existing
+signals — it predicts which of them reach the target before the stop. That only
+helps if the underlying signal population contains a profitable subset to find.
+Across 590,306 out-of-sample trades the pooled profit factor is **0.22**, every
+one of ten families sits between 0.25 and 0.36, every regime is negative, and
+every coin is negative. There is no corner of that distribution with positive
+expectancy for a classifier to isolate.
+
+Training one anyway would produce a model that fits the noise in the 2026
+sample, and its out-of-sample result would be the same −$0.15 a trade with more
+machinery in front of it. Worse, a model that *did* look good on this data would
+be the most dangerous possible outcome, because it would be indistinguishable
+from overfitting at this signal-to-noise ratio.
+
+The point at which ML becomes worth running is when a deterministic arm clears
+the gates on its own and the question becomes "can a filter make a working edge
+larger". We are not at that point, and the honest answer to "did you try ML" is
+"it would have been a way of hiding this result, not testing it".
+
 ## 18. Maker vs taker vs hybrid — **still open, and deliberately so**
 
 This is the one question Phase 3 could not answer, and the honest reason is
