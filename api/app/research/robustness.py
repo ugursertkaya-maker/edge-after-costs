@@ -660,13 +660,17 @@ def _oos_trades(arm: Any) -> tuple[list[ClosedTrade], str]:
     single-best-trade test run over in-sample trades is answering a slightly
     different question and the reader is entitled to know.
     """
+    fallback = getattr(arm, "trades", None)
     for name in ("out_of_sample_trades", "oos_trades"):
         candidate = getattr(arm, name, None)
-        if isinstance(candidate, (list, tuple)) and candidate:
-            return list(candidate), name
-    candidate = getattr(arm, "trades", None)
-    if isinstance(candidate, (list, tuple)):
-        return list(candidate), "trades"
+        if isinstance(candidate, (list, tuple)):
+            if candidate or not isinstance(fallback, (list, tuple)) or not fallback:
+                # An empty list here is informative, not missing: the tournament
+                # keeps trades only for arms that could plausibly be finalists.
+                return list(candidate), name
+            break
+    if isinstance(fallback, (list, tuple)):
+        return list(fallback), "trades"
     return [], "trades"
 
 
@@ -718,6 +722,18 @@ def evaluate_gates(
     reasons: list[str] = []
     caveats: list[str] = []
     gates: dict[int, bool] = {}
+
+    # Defaulted extras the tournament publishes alongside the frozen fields.
+    # They are what makes a verdict possible for an arm whose trades were
+    # dropped to keep a large search inside RAM.
+    best_usd = getattr(arm, "best_trade_usd", 0.0)
+    window_count = int(getattr(arm, "windows_evaluated", 0) or 0)
+    windows_positive = int(getattr(arm, "windows_positive", 0) or 0)
+    abandoned = getattr(arm, "abandoned", None)
+    if abandoned:
+        caveats.append(
+            f"the tournament abandoned this arm before full evaluation: {abandoned}"
+        )
 
     mc = monte_carlo(trades, equity=equity, samples=samples, seed=seed)
     stress_results = (
@@ -798,9 +814,25 @@ def evaluate_gates(
         )
         if not g4 and oos.expectancy > 0:
             detail += " — the result is one trade wearing a strategy's name"
+    elif oos.trades >= 2 and isinstance(best_usd, (int, float)) and best_usd:
+        # Trades are retained only for arms that could plausibly be finalists,
+        # so for everything else gate 4 is answered from the reported best
+        # trade instead — the same arithmetic, one decimal less legible.
+        ex_best_expectancy = (oos.net_pnl - best_usd) / (oos.trades - 1)
+        g4 = ex_best_expectancy > 0
+        detail = (
+            f"trades were not retained for this arm; from its reported best "
+            f"trade (${best_usd:+.2f}) removing it leaves expectancy "
+            f"${ex_best_expectancy:+.4f} over the remaining {oos.trades - 1}"
+        )
+        if not g4 and oos.expectancy > 0:
+            detail += " — the result is one trade wearing a strategy's name"
     else:
         g4 = False
-        detail = f"needs at least 2 trades to test; have {len(trades)}"
+        detail = (
+            f"needs at least 2 out-of-sample trades to test; have {len(trades)} "
+            f"retained and {oos.trades} reported"
+        )
     if source == "trades" and trades:
         caveats.append(
             "gate 4 ran on the arm's full trade list: the tournament did not "
@@ -820,6 +852,14 @@ def evaluate_gates(
         )
         if not g5:
             detail += " — positive in aggregate but not repeatable across time"
+    elif window_count:
+        g5 = windows_positive * 2 > window_count
+        detail = (
+            f"{windows_positive}/{window_count} walk-forward windows net positive "
+            "(from the arm's window counters; per-window stats were not retained)"
+        )
+        if not g5:
+            detail += " — positive in aggregate but not repeatable across time"
     else:
         g5 = False
         detail = "no walk-forward windows with trades were reported"
@@ -835,6 +875,11 @@ def evaluate_gates(
         detail = (
             f"{len(evaluated) - len(failed)}/{len(evaluated)} evaluated stresses "
             "survived"
+        )
+    elif not trades:
+        detail = (
+            "no stress could be evaluated: this arm retained no trades to "
+            "re-price (the tournament keeps them only for plausible finalists)"
         )
     else:
         detail = "no stress could be evaluated"

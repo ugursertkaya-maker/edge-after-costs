@@ -109,6 +109,10 @@ class FakeArm:
     windows: list[PerfStats] = field(default_factory=list)
     in_sample: PerfStats = field(default_factory=PerfStats)
     out_of_sample: PerfStats = field(default_factory=PerfStats)
+    # The gates that matter most — "not dominated by one trade" and the cost
+    # stress — must be measured on the out-of-sample trades specifically, not on
+    # the combined set.
+    out_of_sample_trades: list[ClosedTrade] = field(default_factory=list)
 
 
 def make_arm(
@@ -134,6 +138,7 @@ def make_arm(
         windows=windows,
         in_sample=stats,
         out_of_sample=oos if oos is not None else stats,
+        out_of_sample_trades=list(trades),
     )
 
 
@@ -158,16 +163,40 @@ def gates_of(report: GateReport) -> dict[int, bool]:
 # --------------------------------------------------------------------------- #
 
 
-def test_local_arm_double_matches_the_real_contract_when_it_lands():
-    """The double must not drift from ``tournament.ArmResult``."""
+# Everything this module reads off an arm. The double must cover these; the real
+# ArmResult is free to carry more (it does — per-regime breakdowns, exit-reason
+# counts, abandonment notes), and requiring the double to mirror every optional
+# extra would break this test on each unrelated addition without catching a
+# single real drift.
+ARM_FIELDS_USED = (
+    "candidate",
+    "trades",
+    "out_of_sample_trades",
+    "stats",
+    "fees_usd",
+    "slippage_usd",
+    "windows",
+    "in_sample",
+    "out_of_sample",
+)
+
+
+def test_the_fields_this_module_reads_exist_on_the_real_arm():
+    """Guards the direction that actually matters: a field we consume being
+    renamed or removed upstream."""
     try:
         from app.research.tournament import ArmResult  # noqa: PLC0415
     except Exception:  # pragma: no cover - tournament.py is written in parallel
         pytest.skip("app.research.tournament is not available yet")
     real = {f.name for f in fields(ArmResult)}
+    missing = [name for name in ARM_FIELDS_USED if name not in real]
+    assert not missing, f"robustness reads fields ArmResult does not have: {missing}"
+
+
+def test_the_double_covers_every_field_this_module_reads():
     double = {f.name for f in fields(FakeArm)}
-    missing = real - double
-    assert not missing, f"ArmResult gained fields the double lacks: {sorted(missing)}"
+    missing = [name for name in ARM_FIELDS_USED if name not in double]
+    assert not missing, f"the test double is missing: {missing}"
 
 
 # --------------------------------------------------------------------------- #
@@ -526,7 +555,7 @@ def test_gates_run_on_an_arm_with_no_trades_without_crashing():
     assert len(report.reasons) == 7
     assert report.monte_carlo is None
     assert report.gate_results[4] is False
-    assert "needs at least 2 trades" in report.reasons[3]
+    assert "needs at least 2 out-of-sample trades" in report.reasons[3]
     assert format_gate_report(report)
 
 

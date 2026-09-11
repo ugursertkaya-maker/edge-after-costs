@@ -169,6 +169,10 @@ function Card({ f, index }: { f: FinalistRow; index: number }) {
     toNum(f.horizon_seconds) !== null ? formatHorizon(f.horizon_seconds) : null,
   ].filter(Boolean);
 
+  // With neither a stress suite nor a Monte Carlo block there is nothing to
+  // put in the second column, so the card does not keep an empty one.
+  const solo = !(f.stress && f.stress.length > 0) && !f.monte_carlo;
+
   return (
     <article className={`fin ${overall}`}>
       <header className="fin-head">
@@ -179,7 +183,7 @@ function Card({ f, index }: { f: FinalistRow; index: number }) {
         <span className={`fin-verdict ${overall}`}>{overallText}</span>
       </header>
 
-      <div className="fin-body">
+      <div className={`fin-body${solo ? " is-solo" : ""}`}>
         <div className="fgroup">
           <p className="fgroup-t">
             Kapı raporu{" "}
@@ -239,13 +243,19 @@ export function Finalists({
   loading: boolean;
 }) {
   const rows = finalists ?? null;
-  const passedCount = rows?.filter((f) => f.passed !== false).length ?? 0;
+  // Only an explicit `passed: true` is counted. A gate report that does not
+  // state its verdict is a report, not a pass — counting it as one would be
+  // the panel promoting a strategy nobody promoted.
+  const passedCount = rows?.filter((f) => f.passed === true).length ?? 0;
 
   const meta =
     rows && rows.length > 0 ? (
-      <span className={`pill ${passedCount > 0 ? "is-pos" : "is-off"}`}>
-        {formatInt(passedCount)} finalist
-      </span>
+      <>
+        <span className="pill is-off">{formatInt(rows.length)} kapı raporu</span>
+        {passedCount > 0 && (
+          <span className="pill is-pos">{formatInt(passedCount)} finalist</span>
+        )}
+      </>
     ) : rows ? (
       <span className="pill is-off">finalist yok</span>
     ) : null;
@@ -256,7 +266,13 @@ export function Finalists({
       title="Finalistler"
       note="sağlamlık kapılarının tamamını geçen adaylar"
       meta={meta}
-      footer="Finalist listesinin boş olması bir arıza değil, bir ölçüm sonucudur: denenen adayların hiçbiri maliyet sonrası ve örneklem dışı olarak kapıların tamamını geçemedi. Hiçbir şeyin çalışmadığı bir arama da bir sonuçtur ve bu panel onu böyle bildirir."
+      footer={
+        rows === null
+          ? "Kapı raporunun hiç üretilmemesi ile hiçbir adayın kapıları geçememesi aynı şey değildir; bu panel ikisini ayrı ekranlar olarak gösterir."
+          : rows.length === 0
+            ? "Finalist listesinin boş olması bir arıza değil, bir ölçüm sonucudur: denenen adayların hiçbiri maliyet sonrası ve örneklem dışı olarak kapıların tamamını geçemedi. Hiçbir şeyin çalışmadığı bir arama da bir sonuçtur ve bu panel onu böyle bildirir."
+            : "Her kapı kendi gerekçe satırıyla birlikte gösterilir; hükmünü kendi metninde yazmayan bir satır nötr çizilir. Kapıların tamamı geçilmeden bir strateji finalist sayılmaz ve terfi edilmez."
+      }
     >
       {loading && rows === null ? (
         <Skeleton rows={4} />

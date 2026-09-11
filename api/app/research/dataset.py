@@ -56,6 +56,7 @@ from ..config import Settings
 from ..types import Bar, OrderBook, Trade, now_ms
 
 __all__ = [
+    "CHUNK_DAYS",
     "DAY_MS",
     "DEFAULT_TAPE_DIR",
     "INTERVALS",
@@ -103,6 +104,11 @@ PAGE_LIMIT = 1000
 #: Guard against a pathological paging loop.  A 365-day BTC/USD pull is roughly
 #: 1,100 full pages, so this leaves generous headroom without being unbounded.
 MAX_PAGES = 20_000
+#: UTC days fetched before progress is flushed to disk.  Small enough that
+#: a killed 365-day pull loses minutes, large enough that chunk boundaries
+#: cost almost nothing.
+CHUNK_DAYS = 3
+
 #: Politeness pause between pages.  A research download is never latency
 #: critical and we would much rather never see a 429 than save five minutes.
 PAGE_SLEEP_SECONDS = 0.2
@@ -634,6 +640,41 @@ async def _fetch_range(
     return _dedupe(out)
 
 
+def _persist(
+    root: Path,
+    symbol: str,
+    rows: Sequence[AggTrade],
+    from_ms: int,
+    to_ms: int,
+) -> None:
+    """Write ``rows`` into their UTC-day files and record what is now covered.
+
+    Coverage is clamped to "now": a window whose end is in the future is not
+    missing data, it is data that has not happened yet, and claiming it would
+    make a later re-run skip the real tail.
+    """
+    horizon = min(int(to_ms), now_ms())
+    by_day: dict[int, list[AggTrade]] = {}
+    for r in rows:
+        by_day.setdefault((r.ts_ms // DAY_MS) * DAY_MS, []).append(r)
+
+    day = (int(from_ms) // DAY_MS) * DAY_MS
+    while day <= int(to_ms):
+        day_start, day_end = day_bounds(day)
+        covered_lo = max(day_start, int(from_ms))
+        covered_hi = min(day_end, horizon)
+        if covered_hi >= covered_lo:
+            path, meta_path = _day_paths(root, symbol, day_start)
+            merged = _dedupe(_read_day(path) + by_day.get(day_start, []))
+            _write_day(path, merged)
+            _write_meta(
+                meta_path,
+                _merge_coverage(_read_meta(meta_path), (covered_lo, covered_hi)),
+                len(merged),
+            )
+        day += DAY_MS
+
+
 async def download_agg_trades(
     rest: Any,
     symbol: str,
@@ -644,16 +685,20 @@ async def download_agg_trades(
     use_cache: bool = True,
     sleep_s: float | None = None,
     max_pages: int = MAX_PAGES,
+    chunk_days: int = CHUNK_DAYS,
     on_progress: Any = None,
 ) -> list[Trade]:
     """Fetch ``[start_ms, end_ms]`` of the public tape, caching per UTC day.
 
-    Resumable: coverage sidecars are walked forward from ``start_ms`` and only
-    the first hole onward is requested, so re-running after a 120-day pull that
-    died on day 97 costs 23 days of requests, not 120.
+    Resumable in both directions:
 
-    Coverage is never claimed past "now", because a window whose end is in the
-    future is not missing data, it is data that has not happened yet.
+    * Before fetching, day coverage sidecars are walked forward from
+      ``start_ms`` and only the first hole onward is requested — re-running a
+      120-day pull that died on day 97 costs 23 days of requests, not 120.
+    * While fetching, progress is flushed to disk every ``chunk_days``, so a
+      pull that dies part-way keeps everything it had already downloaded.  A
+      chunk boundary costs exactly one extra time-windowed request, which is a
+      rounding error against re-downloading a month.
     """
     sym = symbol.upper()
     start_ms = int(start_ms)
@@ -663,51 +708,36 @@ async def download_agg_trades(
 
     pause = PAGE_SLEEP_SECONDS if sleep_s is None else sleep_s
     root = tape_root(cache_dir)
+    span = max(1, int(chunk_days)) * DAY_MS
 
-    fetch_from = (
+    cursor = (
         cached_coverage(sym, start_ms, end_ms, cache_dir=cache_dir)
         if use_cache
         else start_ms
     )
 
     fetched: list[AggTrade] = []
-    if fetch_from <= end_ms:
-        fetched = await _fetch_range(
+    while cursor <= end_ms:
+        chunk_end = min(end_ms, ((cursor // DAY_MS) * DAY_MS) + span - 1)
+        rows = await _fetch_range(
             rest,
             sym,
-            fetch_from,
-            end_ms,
+            cursor,
+            chunk_end,
             sleep_s=pause,
             max_pages=max_pages,
             on_page=on_progress,
         )
-
-    if use_cache and fetch_from <= end_ms:
-        horizon = min(end_ms, now_ms())
-        by_day: dict[int, list[AggTrade]] = {}
-        for r in fetched:
-            by_day.setdefault((r.ts_ms // DAY_MS) * DAY_MS, []).append(r)
-
-        day = (fetch_from // DAY_MS) * DAY_MS
-        while day <= end_ms:
-            day_start, day_end = day_bounds(day)
-            covered_lo = max(day_start, fetch_from)
-            covered_hi = min(day_end, horizon)
-            if covered_hi >= covered_lo:
-                path, meta_path = _day_paths(root, sym, day_start)
-                merged = _dedupe(_read_day(path) + by_day.get(day_start, []))
-                _write_day(path, merged)
-                _write_meta(
-                    meta_path,
-                    _merge_coverage(_read_meta(meta_path), (covered_lo, covered_hi)),
-                    len(merged),
-                )
-            day += DAY_MS
+        if use_cache:
+            _persist(root, sym, rows, cursor, chunk_end)
+        else:
+            fetched.extend(rows)
+        cursor = chunk_end + 1
 
     if use_cache:
         return load_cached_trades(sym, start_ms, end_ms, cache_dir=cache_dir)
 
-    return [r.to_trade(sym) for r in fetched if start_ms <= r.ts_ms <= end_ms]
+    return [r.to_trade(sym) for r in _dedupe(fetched) if start_ms <= r.ts_ms <= end_ms]
 
 
 # --------------------------------------------------------------------------- #

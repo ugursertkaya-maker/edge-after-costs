@@ -7,12 +7,12 @@ cheaper than a market order that fills.  The catch is the word *fills*.
 
 A maker order cannot be evaluated on 1-minute OHLCV, because a bar contains no
 queue position.  ``high >= our_price`` says the price touched our level.  It
-says nothing about whether anyone traded *through* it, or whether the forty
-orders already resting there were consumed first.  **Touched is not filled**,
-and a backtest that treats them as the same thing is the single most reliable
-way to manufacture a maker strategy that evaporates in production.
+says nothing about whether anyone traded *through* it, or whether the size
+already resting there was consumed first.  **Touched is not filled**, and a
+backtest that treats them as the same thing is the single most reliable way to
+manufacture a maker strategy that evaporates in production.
 
-So this module replays the recorded tape (``app.recorder``, hourly gzip NDJSON
+So this module replays the recorded tape (``app.recorder``: hourly gzip NDJSON
 of the raw Binance.US stream) and answers four questions per quote:
 
 1. **Queue ahead** — how much size was already resting at our price when we
@@ -32,23 +32,26 @@ than buried:
 
     **A public feed cannot distinguish a cancellation from a fill ahead of
     us.**  ``depthUpdate`` publishes the new *absolute* size at a price; it does
-    not say why the size changed.  We attribute every shrink we can explain with
-    a matching print to trades, and treat the unexplained remainder as
+    not say why the size changed.  We attribute the shrinkage we can explain
+    with a matching print to trades, and treat the unexplained remainder as
     cancellations.  Cancellations then have to be split between "in front of us"
     (good for us — our queue position improves) and "behind us" (no effect), and
-    that split is genuinely unobservable.  ``cancel_ahead_ratio`` controls it,
-    defaulting to 0.5.
+    that split is genuinely unobservable.  ``cancel_ahead_ratio`` controls it
+    and defaults to 0.5.
 
-    **Which way it errs**: at ``cancel_ahead_ratio=1.0`` every cancellation is
-    assumed to be in front of us, which is *optimistic* — it reports more fills
-    than reality.  At ``0.0`` no cancellation helps us, which is *pessimistic*.
-    The 0.5 default is deliberately mid-range and the CLI reports the fill rate
-    at 0.0 as a floor, so no result rests on the assumption.  Separately, real
-    queues are not FIFO-pure (iceberg and self-trade-prevention reshuffles), and
-    our own order is invisible to the public feed — it never appears in the
-    level sizes we replay — so a large quote that would itself have moved the
-    book is modelled as if it did not.  That, too, errs optimistic, which is why
-    ``simulate_quote`` refuses to fill more than the size that actually printed.
+    **Which way it errs.**  At ``cancel_ahead_ratio=1.0`` every cancellation is
+    assumed to be in front of us, which is *optimistic*: it reports more fills
+    than reality.  At ``0.0`` no cancellation ever helps us, which is
+    *pessimistic*.  The 0.5 default is deliberately mid-range, and
+    ``run_execution_study.py`` reports the 0.0 fill rate alongside it as a
+    floor, so no conclusion rests on the assumption.
+
+    Two further biases, both optimistic, both deliberate and bounded:
+    real queues are not FIFO-pure (iceberg refreshes, self-trade prevention),
+    and **our own order is invisible to the public tape** — it never appears in
+    the level sizes we replay, so a quote large enough to have moved the book is
+    modelled as if it had not.  ``simulate_quote`` never fills more size than
+    actually printed, which is what keeps that bias bounded.
 
 Nothing here trades.  Nothing here touches the exchange.  It is a reader.
 """
@@ -59,18 +62,26 @@ import gzip
 import json
 import logging
 import math
-from dataclasses import dataclass, field
+from dataclasses import asdict, dataclass, field
 from pathlib import Path
-from typing import Any, Iterable, Iterator, Sequence
+from typing import Any, Callable, Iterable, Iterator, Sequence
 
-from app.types import BookLevel, ClosedTrade, OrderBook, PerfStats, Side, Trade
+from app.types import (
+    BookLevel,
+    ClosedTrade,
+    ExitReason,
+    OrderBook,
+    PerfStats,
+    Side,
+    Trade,
+)
 
 log = logging.getLogger("cryptobot.research.maker_replay")
 
 _BPS = 10_000.0
 
 #: Markout horizons, in the order the report prints them.  1s catches the
-#: immediate information leak, 30s is roughly where a scalper would be out.
+#: immediate information leak; 30s is roughly where a scalper would be out.
 MARKOUT_HORIZONS_MS: dict[str, int] = {"1s": 1_000, "5s": 5_000, "30s": 30_000}
 
 #: The horizon ``MakerOutcome.adverse_selection_bps`` is quoted at.
@@ -90,12 +101,7 @@ MIN_PRINTS_PER_SYMBOL = 500
 #: Matches the Phase-3 promotion gate: fewer than 30 samples is not a sample.
 MIN_QUOTES = 30
 
-_FALLBACK_TICK = {
-    "BTCUSD": 0.01,
-    "ETHUSD": 0.01,
-    "SOLUSD": 0.01,
-    "ADAUSD": 0.0001,
-}
+_FALLBACK_TICK = {"BTCUSD": 0.01, "ETHUSD": 0.01, "SOLUSD": 0.01, "ADAUSD": 0.0001}
 _DEFAULT_TICK = 0.01
 
 
@@ -166,7 +172,7 @@ class TapeSlice:
         return self.seconds / 3600.0
 
     @property
-    def trades(self) -> list[TapeEvent]:
+    def prints(self) -> list[TapeEvent]:
         return [e for e in self.events if e.kind == "trade"]
 
     def counts(self) -> dict[str, int]:
@@ -174,17 +180,6 @@ class TapeSlice:
         for e in self.events:
             out[e.kind] = out.get(e.kind, 0) + 1
         return out
-
-    def index_at(self, ts_ms: int) -> int:
-        """First event index with ``ts_ms >= ts``.  Bisect on a sorted list."""
-        lo, hi = 0, len(self.events)
-        while lo < hi:
-            mid = (lo + hi) // 2
-            if self.events[mid].ts_ms < ts_ms:
-                lo = mid + 1
-            else:
-                hi = mid
-        return lo
 
 
 @dataclass
@@ -205,7 +200,7 @@ class TapeCoverage:
 
     @property
     def sufficient(self) -> bool:
-        if self.hours < self.min_hours or not self.symbols:
+        if not self.symbols or self.hours < self.min_hours:
             return False
         return all(v.get("trades", 0) >= self.min_prints for v in self.symbols.values())
 
@@ -214,46 +209,51 @@ class TapeCoverage:
         return max(0.0, self.min_hours - self.hours)
 
     def reasons(self) -> list[str]:
-        """Exactly what is missing and exactly how much more is needed."""
+        """Exactly what is missing, and exactly how much more is needed."""
         out: list[str] = []
         if not self.symbols:
             out.append(
-                "no tape found at all — the recorder writes tape-*.ndjson.gz; "
-                f"{self.min_hours:.0f}h are needed before any maker conclusion holds"
+                "no tape found — the recorder writes tape-*.ndjson.gz into "
+                f"TAPE_DIR; {self.min_hours:.0f}h are needed before any maker "
+                "conclusion holds"
             )
             return out
         if self.hours < self.min_hours:
             out.append(
-                f"tape spans {self.hours:.2f}h, need {self.min_hours:.0f}h "
-                f"— {self.shortfall_hours:.2f}h more "
-                f"(~{self.shortfall_hours:.1f} hours of wall clock from now)"
+                f"tape spans {self.hours:.2f}h, need {self.min_hours:.0f}h — "
+                f"{self.shortfall_hours:.2f}h more, i.e. about "
+                f"{self.shortfall_hours:.1f} hours of further recording"
             )
         for sym, v in sorted(self.symbols.items()):
             n = int(v.get("trades", 0))
             if n < self.min_prints:
                 out.append(
-                    f"{sym}: {n} prints, need {self.min_prints} "
-                    f"— {self.min_prints - n} more"
+                    f"{sym}: {n} prints, need {self.min_prints} — {self.min_prints - n} more"
                 )
         if self.truncated_files:
             out.append(
-                "truncated (still being written): " + ", ".join(self.truncated_files)
+                "file(s) still being written, read up to the last complete "
+                "block: " + ", ".join(self.truncated_files)
             )
         return out
 
 
 def iter_tape_messages(
-    directory: str | Path, *, start_ms: int = 0, end_ms: int = 0
+    directory: str | Path,
+    *,
+    start_ms: int = 0,
+    end_ms: int = 0,
+    on_truncated: Callable[[str], None] | None = None,
 ) -> Iterator[tuple[int, Any, str]]:
     """Yield ``(receive_ms, raw_message, filename)`` from a tape directory.
 
-    Format-identical to :func:`app.recorder.replay` — ``test_reader_matches_recorder_replay``
-    pins that, because a reader that drifts from its writer produces a dataset
-    nobody can use.  The one behaviour added here is **truncation tolerance**:
-    the hour currently being recorded is an unterminated gzip member, and
-    reading it raises ``EOFError``, which would otherwise make "the data we are
-    collecting right now" the one slice of tape that cannot be replayed.  We
-    keep the lines we did read, note the file, and carry on with the next one.
+    Format-identical to :func:`app.recorder.replay` — a test pins that, because
+    a reader that drifts from its writer produces a dataset nobody can use.
+    The one behaviour added is **truncation tolerance**: the hour currently
+    being recorded is an unterminated gzip member, and reading it raises
+    ``EOFError``, which would otherwise make "the data we are collecting right
+    now" the one slice of tape that cannot be replayed.  We keep the lines we
+    did read, report the file through *on_truncated*, and move to the next one.
     """
     d = Path(directory)
     if not d.is_dir():
@@ -270,10 +270,12 @@ def iter_tape_messages(
                     if start_ms and r < start_ms:
                         continue
                     if end_ms and r > end_ms:
-                        break
+                        return
                     yield r, row.get("m"), path.name
-        except (EOFError, OSError) as exc:  # truncated / unreadable member
+        except (EOFError, OSError) as exc:  # truncated or unreadable member
             log.debug("tape %s ended early: %s", path.name, exc)
+            if on_truncated is not None:
+                on_truncated(path.name)
             continue
 
 
@@ -298,15 +300,30 @@ def _levels(raw: Any, precision: list[int]) -> tuple[tuple[float, float], ...]:
     return tuple(out)
 
 
-def parse_message(msg: Any, receive_ms: int, precision: dict[str, list[int]]) -> TapeEvent | None:
+def _int_or(value: Any, fallback: int) -> int:
+    try:
+        return int(value)
+    except (TypeError, ValueError):
+        return int(fallback)
+
+
+def parse_message(
+    msg: Any, receive_ms: int, precision: dict[str, list[int]] | None = None
+) -> TapeEvent | None:
     """Normalise one raw stream message into a :class:`TapeEvent`.
 
-    Mirrors ``app.exchange.ws.ingest_message``'s routing (including the fact
-    that ``bookTicker`` frames carry no ``"e"`` field, so the kind has to be
-    inferred from the stream name) without importing it — the feed's job is to
-    keep a live book, this module's job is to read history, and coupling them
-    would make every feed change a replay change.
+    Mirrors ``app.exchange.ws``'s routing — including the fact that
+    ``bookTicker`` frames carry no ``"e"`` field, so the kind has to be inferred
+    from the stream name — without importing it.  The feed's job is to keep a
+    live book; this module's job is to read history.  Coupling them would make
+    every feed change a replay change.
+
+    ``precision`` accumulates the observed price decimals per symbol, which is
+    how :func:`load_tape` infers a tick size without a REST ``exchangeInfo``
+    call that research runs are not allowed to make.
     """
+    if precision is None:
+        precision = {}
     if not isinstance(msg, dict) or not msg:
         return None
     stream = msg.get("stream")
@@ -354,24 +371,21 @@ def parse_message(msg: Any, receive_ms: int, precision: dict[str, list[int]]) ->
         )
     if kind == "bookTicker":
         try:
-            bid, bid_qty = str(data["b"]), float(data["B"])
-            ask, ask_qty = str(data["a"]), float(data["A"])
+            btxt, bid_qty = str(data["b"]), float(data["B"])
+            atxt, ask_qty = str(data["a"]), float(data["A"])
+            bid, ask = float(btxt), float(atxt)
         except (KeyError, TypeError, ValueError):
             return None
-        prec[0] = max(prec[0], _decimals(bid), _decimals(ask))
-        try:
-            bidf, askf = float(bid), float(ask)
-        except ValueError:
+        if bid <= 0 or ask <= 0 or ask <= bid:
             return None
-        if bidf <= 0 or askf <= 0 or askf <= bidf:
-            return None
+        prec[0] = max(prec[0], _decimals(btxt), _decimals(atxt))
         return TapeEvent(
             ts_ms=receive_ms,
             symbol=symbol,
             kind="ticker",
             exchange_ms=_int_or(data.get("E"), receive_ms),
-            bids=((bidf, bid_qty),),
-            asks=((askf, ask_qty),),
+            bids=((bid, bid_qty),),
+            asks=((ask, ask_qty),),
         )
     if kind == "aggTrade":
         try:
@@ -394,13 +408,6 @@ def parse_message(msg: Any, receive_ms: int, precision: dict[str, list[int]]) ->
     return None
 
 
-def _int_or(value: Any, fallback: int) -> int:
-    try:
-        return int(value)
-    except (TypeError, ValueError):
-        return int(fallback)
-
-
 def load_tape(
     directory: str | Path,
     *,
@@ -412,13 +419,13 @@ def load_tape(
     wanted = {s.upper() for s in symbols} if symbols else None
     precision: dict[str, list[int]] = {}
     slices: dict[str, TapeSlice] = {}
-    truncated: set[str] = set()
-    seen_files: set[str] = set()
+    truncated: list[str] = []
+    files: set[str] = set()
 
     for receive_ms, msg, fname in iter_tape_messages(
-        directory, start_ms=start_ms, end_ms=end_ms
+        directory, start_ms=start_ms, end_ms=end_ms, on_truncated=truncated.append
     ):
-        seen_files.add(fname)
+        files.add(fname)
         ev = parse_message(msg, receive_ms, precision)
         if ev is None:
             continue
@@ -429,20 +436,23 @@ def load_tape(
             sl = slices[ev.symbol] = TapeSlice(symbol=ev.symbol)
         sl.events.append(ev)
 
+    frozen = tuple(sorted(set(truncated)))
     for sym, sl in slices.items():
         sl.events.sort(key=lambda e: e.ts_ms)
         digits = precision.get(sym, [0])[0]
         sl.tick_size = (
-            round(10.0 ** (-digits), max(0, digits))
+            round(10.0 ** (-digits), digits + 2)
             if digits > 0
-            else _FALLBACK_TICK.get(sym, 1.0 if digits == 0 else _DEFAULT_TICK)
+            else _FALLBACK_TICK.get(sym, _DEFAULT_TICK)
         )
-        sl.truncated_files = tuple(sorted(truncated))
+        sl.truncated_files = frozen
     return slices
 
 
 def tape_coverage(
-    slices: dict[str, TapeSlice], *, min_hours: float = MIN_TAPE_HOURS,
+    slices: dict[str, TapeSlice],
+    *,
+    min_hours: float = MIN_TAPE_HOURS,
     min_prints: int = MIN_PRINTS_PER_SYMBOL,
 ) -> TapeCoverage:
     """Summarise what the tape actually contains, honestly."""
@@ -463,6 +473,7 @@ def tape_coverage(
             "hours": round(sl.hours, 4),
             "tick_size": sl.tick_size,
         }
+        cov.truncated_files = sl.truncated_files or cov.truncated_files
     return cov
 
 
@@ -477,13 +488,14 @@ class ReplayBook:
     Deliberately *not* ``app.exchange.book.BookManager``: that class implements
     the full Binance diff protocol and refuses to run without a REST snapshot,
     which is exactly right for live trading and exactly wrong here — the tape
-    has no snapshot in it, only the diffs and quotes that followed.  So this is
-    a level map seeded from the stream itself.
+    contains no snapshot, only the diffs and quotes that followed one.  So this
+    is a level map seeded from the stream itself.
 
     The consequence is stated rather than hidden: **a price level that has not
-    been mentioned since replay began has unknown size, and reads as zero.**
-    Every quote in a study therefore needs a warm-up window before it, which is
-    why :meth:`MakerReplay.probe_signals` skips the first seconds of tape.
+    been mentioned since replay began has unknown size and reads as zero.**
+    Every quote therefore needs a warm-up window before it, which is why the
+    probe generators skip the first seconds of tape — and why an unseeded level
+    makes the queue model *optimistic*, never pessimistic.
     """
 
     def __init__(self, symbol: str = "") -> None:
@@ -500,8 +512,8 @@ class ReplayBook:
         elif ev.kind == "ticker":
             bid, bid_qty = ev.bids[0]
             ask, ask_qty = ev.asks[0]
-            # Stale levels on the wrong side of the new touch are history, not
-            # depth; keeping them would fabricate a crossed book.
+            # Levels on the wrong side of the new touch are history, not depth;
+            # keeping them would fabricate a crossed book.
             self.bids = {p: q for p, q in self.bids.items() if p < bid}
             self.asks = {p: q for p, q in self.asks.items() if p > ask}
             self.bids[bid] = bid_qty
@@ -561,6 +573,14 @@ class ReplayBook:
         ]
         return book
 
+    def copy(self) -> "ReplayBook":
+        out = ReplayBook(self.symbol)
+        out.bids = dict(self.bids)
+        out.asks = dict(self.asks)
+        out.last_ms = self.last_ms
+        out.updates = self.updates
+        return out
+
 
 def _merge(side: dict[float, float], levels: Iterable[tuple[float, float]]) -> None:
     """Binance diff semantics: the quantity is absolute, and 0 deletes."""
@@ -587,13 +607,20 @@ def _tol(price: float, tick: float) -> float:
 class MakerOutcome:
     """What happened to one resting quote.
 
-    ``adverse_selection_bps`` is signed **against us**: positive means the mid
-    moved away from our fill in the direction that hurts (we bought and the
-    market fell), i.e. we were adversely selected.  ``markout_bps`` uses the
-    opposite, more readable convention — signed **in our favour**, so negative
-    is bad.  The two are negations of each other at
-    :data:`ADVERSE_SELECTION_HORIZON`; both are here because the frozen contract
-    names one and the report needs the other.
+    Two sign conventions live here and both are deliberate:
+
+    * ``markout_bps`` is signed **in our favour** — positive means the mid moved
+      our way after the fill.  This is the one the report prints, because
+      "negative markout is bad" is the sentence a reader needs.
+    * ``adverse_selection_bps`` is signed **against us** — positive means we
+      were adversely selected.  The frozen contract names this field, and its
+      name only makes sense with that sign.
+
+    They are negations of each other at :data:`ADVERSE_SELECTION_HORIZON`.
+
+    ``missed_reason`` is set on a *partial* fill too (``"partial_fill"``): it
+    explains why the remaining size did not fill, which is exactly the question
+    a partial raises.
     """
 
     # -- frozen contract (docs/PHASE3_SPEC.md) -------------------------- #
@@ -611,7 +638,6 @@ class MakerOutcome:
     quote_price: float = 0.0
     requested_qty: float = 0.0
     fill_ms: int = 0
-    #: Signed in our favour: positive = the mid moved our way after the fill.
     markout_bps: dict[str, float] = field(default_factory=dict)
     #: Queue size (USD) at the moment we joined, before any decay.
     queue_ahead_start_usd: float = 0.0
@@ -621,8 +647,8 @@ class MakerOutcome:
     traded_through_usd: float = 0.0
     fee_usd: float = 0.0
     #: False when the tape ran out before the quote's fate was decided.  Such a
-    #: quote is not a miss; it is an unknown, and counting it as a miss would
-    #: understate the fill rate.
+    #: quote is not a miss, it is an unknown, and counting it as a miss would
+    #: deflate the fill rate with the recorder's start time.
     resolved: bool = True
 
     @property
@@ -630,6 +656,7 @@ class MakerOutcome:
         return self.filled and self.fill_qty < self.requested_qty - 1e-12
 
     def markout(self, horizon: str) -> float | None:
+        """Markout at *horizon*, or ``None`` when the tape never reached it."""
         return self.markout_bps.get(horizon)
 
 
@@ -666,7 +693,7 @@ class ExecutionComparison:
     def maker_net_after_opportunity_cost(self) -> float:
         """Maker NET with the missed moves charged against it.
 
-        A maker arm that skips every loser looks brilliant until you notice it
+        A maker arm that skipped every loser looks brilliant until you notice it
         also skipped every winner.  This is the line that stops that.
         """
         return self.maker.net_pnl - self.maker_opportunity_cost_usd
@@ -675,26 +702,25 @@ class ExecutionComparison:
         """One sentence, written so the trap is readable rather than inferred.
 
         A high fill rate with negative markout is a *worse* outcome than a low
-        fill rate with flat markout: it means we are systematically being handed
-        inventory by someone who knows more, and the 0% maker fee is being paid
-        back through the price.
+        fill rate with flat markout: it means someone better informed is handing
+        us inventory, and the 0% maker fee is being paid back through the price.
         """
         if self.insufficient_data:
             return "INSUFFICIENT DATA — no maker/taker verdict can be drawn yet."
-        ref = self.markout_bps.get(ADVERSE_SELECTION_HORIZON)
         if not self.signals or self.maker_fills == 0:
             return "MAKER NEVER FILLED — resting produced no trades on this tape."
+        ref = self.markout_bps.get(ADVERSE_SELECTION_HORIZON)
         if ref is None:
             return (
-                f"fill rate {self.maker_fill_rate:.1%}, markout unmeasurable "
-                "(tape ended before the horizons)."
+                f"fill rate {self.maker_fill_rate:.1%}, markout unmeasurable — "
+                "the tape ends before the horizons."
             )
         if ref < -0.5:
             return (
                 f"ADVERSE SELECTION: fill rate {self.maker_fill_rate:.1%} but "
                 f"{ADVERSE_SELECTION_HORIZON} markout {ref:+.2f} bps — the fills "
-                "are on the wrong side of information, and the 0% maker fee is "
-                "being paid back through the price. A lower fill rate with flat "
+                "are on the wrong side of information and the 0% maker fee is "
+                "being paid back through the price. A LOWER fill rate with flat "
                 "markout would be the better outcome."
             )
         if ref > 0.5:
@@ -709,8 +735,6 @@ class ExecutionComparison:
         )
 
     def as_dict(self) -> dict[str, Any]:
-        from dataclasses import asdict
-
         out = asdict(self)
         out["maker_net_after_opportunity_cost"] = self.maker_net_after_opportunity_cost
         out["verdict"] = self.verdict()
@@ -728,7 +752,7 @@ class QuoteSignal:
 
     ``exit_ms``/``exit_price`` are held fixed across all three arms on purpose:
     this module compares *entry execution*, and letting the exit float too would
-    mix two questions whose answers have opposite signs.
+    mix two questions whose answers can have opposite signs.
     """
 
     symbol: str
@@ -795,7 +819,6 @@ class MakerReplay:
         # See the module docstring: 1.0 is optimistic, 0.0 pessimistic.
         self.cancel_ahead_ratio = min(1.0, max(0.0, float(cancel_ahead_ratio)))
         self.markout_horizons = dict(markout_horizons or MARKOUT_HORIZONS_MS)
-        self._cache: dict[tuple[str, ...], dict[str, TapeSlice]] = {}
 
     # ------------------------------------------------------------------ #
     # Tape access
@@ -819,14 +842,14 @@ class MakerReplay:
 
     @staticmethod
     def quote_price(
-        side: Side, book: OrderBook | ReplayBook, offset_ticks: int, tick: float
+        side: Side, book: "OrderBook | ReplayBook", offset_ticks: int, tick: float
     ) -> float:
         """Where a post-only quote of *offset_ticks* would sit.
 
         Offset 0 joins the touch, 1 rests one tick behind it, and so on.
-        Behind, always: a quote is never allowed to improve past the touch into
-        the spread here, because that is a different (and much more adversely
-        selected) strategy than the one being tested.
+        Behind, always: this never improves past the touch into the spread,
+        because quoting inside the spread is a different (and much more
+        adversely selected) strategy than the one being tested.
         """
         bid, ask = book.best_bid, book.best_ask
         if bid <= 0 or ask <= 0:
@@ -848,8 +871,8 @@ class MakerReplay:
         qty: float,
         from_ms: int,
         timeout_ms: int,
-        book_state: OrderBook | ReplayBook | None,
-        tape: TapeSlice | Sequence[TapeEvent] | Sequence[Trade] | None,
+        book_state: "OrderBook | ReplayBook | None",
+        tape: "TapeSlice | Sequence[TapeEvent] | Sequence[Trade] | None",
     ) -> MakerOutcome:
         """Rest a post-only quote at *price* and see what the tape does to it.
 
@@ -859,26 +882,27 @@ class MakerReplay:
           rejected (``missed_reason="would_cross"``) and never silently becomes
           a taker.  Re-costing it as a taker is the caller's decision and has to
           clear the NET gate again — see :meth:`compare`'s HYBRID arm.
-        * **Queue ahead.**  Whatever is resting at our price in ``book_state``
-          is in front of us.  It decays two ways: prints at the level consume it
-          from the front, and unexplained shrinkage in the published level size
-          is attributed to cancellations, of which ``cancel_ahead_ratio`` are
+        * **Queue ahead.**  Whatever rests at our price in ``book_state`` is in
+          front of us.  It decays two ways: prints at the level consume it from
+          the front, and unexplained shrinkage in the published level size is
+          attributed to cancellations, of which ``cancel_ahead_ratio`` are
           assumed to have been ahead of us.  A public feed cannot tell a
-          cancellation from a fill ahead of us — this is an **estimate**, and
-          the module docstring says which way each setting errs.
+          cancellation from a fill ahead of us, so this is an **estimate**; the
+          module docstring says which way each setting errs.
         * **Trade-through.**  Only prints whose aggressor is on the opposite
           side count: a resting bid is filled by sellers, not by buyers.  A
           print *at* our price consumes the queue first and only then us; a
-          print *through* our price (below our bid / above our ask) means the
+          print *through* our price (below our bid, above our ask) means the
           level was swept, so the queue is gone.  Price merely *touching* the
-          level fills nothing — ``touched`` records that separately.
+          level fills nothing — ``touched`` records that separately, and it is
+          the whole difference between this and a naive maker backtest.
         * **Partial fills** are first-class: we fill exactly the size that
           printed through after the queue, never more.
         * **Aging.**  Past ``from_ms + timeout_ms`` the quote is cancelled and
           reports ``missed_reason="timeout"``.
         * **Markout.**  On a fill, the mid at each horizon after the fill is
           compared with the fill price.  A horizon the tape does not reach is
-          left out of ``markout_bps`` rather than reported as zero.
+          omitted from ``markout_bps`` rather than reported as a confident zero.
         """
         events = _as_events(tape, symbol)
         requested = float(qty)
@@ -901,21 +925,18 @@ class MakerReplay:
 
         tick = _tick_of(tape)
 
-        # -- post-only ------------------------------------------------- #
+        # -- post-only -------------------------------------------------- #
         if book_state is not None:
             bid, ask = book_state.best_bid, book_state.best_ask
-            crosses = (
-                (side is Side.LONG and ask > 0 and price >= ask - _tol(price, tick))
-                or (side is Side.SHORT and bid > 0 and price <= bid + _tol(price, tick))
+            crosses = (side is Side.LONG and ask > 0 and price >= ask - _tol(price, tick)) or (
+                side is Side.SHORT and bid > 0 and price <= bid + _tol(price, tick)
             )
             if crosses:
                 out.missed_reason = "would_cross"
                 return out
 
-        # -- queue we are joining behind ------------------------------- #
-        queue_ahead = 0.0
-        if book_state is not None:
-            queue_ahead = _qty_at(book_state, side, price, tick)
+        # -- the queue we are joining behind ---------------------------- #
+        queue_ahead = _qty_at(book_state, side, price, tick) if book_state is not None else 0.0
         level_size = queue_ahead
         out.queue_ahead_start_usd = queue_ahead * price
         out.queue_ahead_usd = queue_ahead * price
@@ -927,18 +948,19 @@ class MakerReplay:
         traded_through = 0.0
         touched = False
         aged_out = False
-        # Book carried forward for markout; seeded from the quote-time book so a
+
+        # Book carried forward for markout, seeded from the quote-time book so a
         # fill in the first milliseconds still has a mid to measure against.
         book = ReplayBook(symbol)
         if book_state is not None:
             _seed(book, book_state)
 
-        start_idx = _index_at(events, int(from_ms))
         max_horizon = max(self.markout_horizons.values()) if self.markout_horizons else 0
-        markout_targets: list[tuple[str, int]] = []
+        markout_pending: list[tuple[str, int]] = []
+        markout_armed = False
         markouts: dict[str, float] = {}
 
-        for ev in events[start_idx:]:
+        for ev in events[_index_at(events, int(from_ms)) :]:
             if ev.symbol and ev.symbol != symbol:
                 continue
             past_deadline = ev.ts_ms > deadline
@@ -946,9 +968,10 @@ class MakerReplay:
                 aged_out = True
                 break
 
+            live = not past_deadline and remaining > 1e-12
             if ev.kind in ("depth", "ticker"):
                 book.apply(ev)
-                if not past_deadline and remaining > 0:
+                if live:
                     new_size = _event_level_qty(ev, side, price, tick)
                     if new_size is not None:
                         # Shrinkage we could not explain with a print is a
@@ -960,57 +983,54 @@ class MakerReplay:
                         queue_ahead = min(queue_ahead, new_size)
                         level_size = new_size
                         out.queue_ahead_usd = queue_ahead * price
-            elif ev.kind == "trade" and not past_deadline and remaining > 0:
+            elif ev.kind == "trade" and live:
                 rel = _relation(side, ev.price, price, tick)
-                if rel == "away":
-                    continue
                 # Only the opposite aggressor can lift a resting quote: a bid is
                 # hit by sellers, an ask is lifted by buyers.
-                if ev.aggressor is side:
-                    continue
-                touched = True
-                traded_through += ev.price * ev.qty
-                q = ev.qty
-                if rel == "through":
-                    # The book traded past our level, so everything resting at
-                    # it — the queue and us — was consumed getting there.
-                    queue_ahead = 0.0
-                    level_size = 0.0
-                else:  # "at"
-                    eaten = min(queue_ahead, q)
-                    queue_ahead -= eaten
-                    q -= eaten
-                    level_size = max(0.0, level_size - ev.qty)
-                out.queue_ahead_usd = queue_ahead * price
-                if q > 0 and queue_ahead <= 1e-12:
-                    take = min(remaining, q)
-                    if take > 0:
-                        filled += take
-                        remaining -= take
-                        fill_ms = ev.ts_ms
-            elif ev.kind == "trade":
-                pass
+                if rel != "away" and ev.aggressor is not side:
+                    touched = True
+                    traded_through += ev.price * ev.qty
+                    available = ev.qty
+                    if rel == "through":
+                        # The book traded past our level, so everything resting
+                        # at it — the queue and us — was consumed on the way.
+                        queue_ahead = 0.0
+                        level_size = 0.0
+                    else:  # "at"
+                        eaten = min(queue_ahead, available)
+                        queue_ahead -= eaten
+                        available -= eaten
+                        level_size = max(0.0, level_size - ev.qty)
+                    out.queue_ahead_usd = queue_ahead * price
+                    if available > 0 and queue_ahead <= 1e-12:
+                        take = min(remaining, available)
+                        if take > 0:
+                            filled += take
+                            remaining -= take
+                            fill_ms = ev.ts_ms
 
-            if filled > 0 and not markout_targets:
-                markout_targets = sorted(
+            if filled > 0 and not markout_armed:
+                markout_armed = True
+                markout_pending = sorted(
                     (label, fill_ms + ms) for label, ms in self.markout_horizons.items()
                 )
-            if markout_targets:
+            if markout_pending:
                 mid = book.mid
                 still: list[tuple[str, int]] = []
-                for label, at in markout_targets:
+                for label, at in markout_pending:
                     if ev.ts_ms >= at:
                         if mid > 0:
                             markouts[label] = mid
                     else:
                         still.append((label, at))
-                markout_targets = still
-                if (
-                    remaining <= 1e-12
-                    and not markout_targets
-                    and ev.ts_ms > fill_ms + max_horizon
-                ):
-                    break
+                markout_pending = still
+            if (
+                markout_armed
+                and not markout_pending
+                and remaining <= 1e-12
+                and ev.ts_ms >= fill_ms + max_horizon
+            ):
+                break
 
         out.touched = touched
         out.traded_through_usd = traded_through
@@ -1030,25 +1050,15 @@ class MakerReplay:
             out.adverse_selection_bps = -ref if ref is not None else 0.0
             if out.partial:
                 out.missed_reason = "partial_fill"
-            # A fill whose markout horizons the tape never reached is still a
-            # fill; only the markout is unknown.
-            out.resolved = True
             return out
 
         # -- no fill ---------------------------------------------------- #
         last_ms = events[-1].ts_ms if events else int(from_ms)
-        if aged_out:
-            out.missed_reason = "timeout"
-            out.wait_ms = max(0, int(timeout_ms))
-            out.resolved = True
-        elif last_ms >= deadline:
+        if aged_out or last_ms >= deadline:
             out.missed_reason = "timeout"
             out.wait_ms = max(0, int(timeout_ms))
             out.resolved = True
         else:
-            # The tape stopped before we learned the answer.  That is an
-            # unknown, not a miss, and pretending otherwise deflates the fill
-            # rate with the recorder's start time.
             out.missed_reason = "tape_exhausted"
             out.wait_ms = max(0, last_ms - int(from_ms))
             out.resolved = False
@@ -1070,9 +1080,9 @@ class MakerReplay:
     ) -> ExecutionComparison:
         """Run TAKER, MAKER and HYBRID over one arm's signals.
 
-        * **TAKER** — cross immediately.  This is today's behaviour and is taken
-          straight from the arm's realised trades, not re-simulated, so the
-          baseline cannot drift from the tournament's own number.
+        * **TAKER** — cross immediately.  Today's behaviour, taken straight from
+          the arm's realised trades where they exist, so the baseline cannot
+          drift away from the tournament's own number.
         * **MAKER** — post-only at ``offset_ticks`` behind the touch, never
           crossing.  An unfilled signal simply does not trade, and the NET the
           taker made on it is charged to
@@ -1086,10 +1096,13 @@ class MakerReplay:
 
         ``arm`` is duck-typed on ``.trades``: any object carrying a list of
         :class:`~app.types.ClosedTrade` works, so this runs against a tournament
-        ``ArmResult`` without importing ``tournament.py``.
+        ``ArmResult`` without importing ``tournament.py``.  ``dataset`` is
+        accepted for contract compatibility and is not required — the tape is
+        the source of truth about execution, and the bars cannot second it.
         """
         slices = _as_slices(tape)
         sigs = list(signals) if signals is not None else _signals_of(arm)
+        realised = _realised_index(arm)
         sigs = [s for s in sigs if s.symbol in slices]
         sigs.sort(key=lambda s: s.ts_ms)
 
@@ -1117,13 +1130,14 @@ class MakerReplay:
         gate = float(getattr(self.settings.risk, "min_net_edge_bps", 1.0))
 
         books = _books_at(slices, sigs)
-        for i, sig in enumerate(sigs):
+        for sig, book in zip(sigs, books):
             sl = slices[sig.symbol]
-            book = books[i]
             tick = sl.tick_size
             quote = self.quote_price(sig.side, book, offset_ticks, tick)
 
-            taker = _trade_from(sig, sig.taker_entry_price, sig.qty, self.fees, maker=False)
+            taker = realised.get((sig.symbol, sig.ts_ms)) or _trade_from(
+                sig, sig.taker_entry_price, sig.qty, self.fees, maker=False
+            )
             taker_trades.append(taker)
 
             outcome = self.simulate_quote(
@@ -1137,6 +1151,7 @@ class MakerReplay:
                 tape=sl,
             )
             queues.append(outcome.queue_ahead_start_usd)
+
             if outcome.filled:
                 cmp.maker_fills += 1
                 if outcome.partial:
@@ -1151,22 +1166,25 @@ class MakerReplay:
                 for label, bps in outcome.markout_bps.items():
                     markout_sums[label] = markout_sums.get(label, 0.0) + bps
                     markout_counts[label] = markout_counts.get(label, 0) + 1
-            else:
-                reason = outcome.missed_reason or "unknown"
-                cmp.miss_reasons[reason] = cmp.miss_reasons.get(reason, 0) + 1
-                if not outcome.resolved:
-                    cmp.maker_unresolved += 1
-                # The move we did not take is a real cost of resting.
-                cmp.maker_opportunity_cost_usd += taker.net_pnl_usd
+                continue
 
-                # HYBRID: does it still clear as a taker?
-                cross_book = _book_at(sl, sig.ts_ms + timeout_ms, seed=book)
-                decision = self._recheck_taker(sig, book, cross_book, gate)
-                if decision is not None:
-                    cmp.hybrid_crosses += 1
-                    hybrid_trades.append(
-                        _trade_from(sig, decision, sig.qty, self.fees, maker=False)
-                    )
+            reason = outcome.missed_reason or "unknown"
+            cmp.miss_reasons[reason] = cmp.miss_reasons.get(reason, 0) + 1
+            if not outcome.resolved:
+                cmp.maker_unresolved += 1
+                continue
+
+            # The move we did not take is a real cost of resting.
+            cmp.maker_opportunity_cost_usd += taker.net_pnl_usd
+
+            # HYBRID: does crossing still clear the NET gate?
+            cross_book = _book_at(sl, sig.ts_ms + timeout_ms, seed=book)
+            cross_price = self._recheck_taker(sig, book, cross_book, gate)
+            if cross_price is not None:
+                cmp.hybrid_crosses += 1
+                hybrid_trades.append(
+                    _trade_from(sig, cross_price, sig.qty, self.fees, maker=False)
+                )
 
         resolved = len(sigs) - cmp.maker_unresolved
         cmp.maker_fill_rate = (cmp.maker_fills / resolved) if resolved > 0 else 0.0
@@ -1187,7 +1205,7 @@ class MakerReplay:
             cmp.insufficient_data = True
             cmp.notes.append(
                 f"{len(sigs)} signals — the Phase-3 gate needs {MIN_QUOTES}; "
-                "these numbers are machinery checks, not findings"
+                "these numbers are a machinery check, not a finding"
             )
         if cmp.maker_unresolved:
             cmp.notes.append(
@@ -1207,26 +1225,28 @@ class MakerReplay:
     def _recheck_taker(
         self,
         sig: QuoteSignal,
-        quote_book: OrderBook | ReplayBook,
+        quote_book: "OrderBook | ReplayBook",
         cross_book: ReplayBook,
         gate_bps: float,
     ) -> float | None:
         """Would crossing still clear the NET gate, judged only on the past?
 
-        No leakage: the exit price is *not* consulted.  We start from the edge
-        the signal expected, subtract the part of the move that has already
-        happened while we waited (edge consumed is edge gone), subtract any
-        widening of the spread, and compare what is left against the gate.
+        No leakage: the exit price is never consulted.  We start from the edge
+        the signal expected, subtract the part of the move that already happened
+        while we waited (edge consumed is edge gone), subtract any widening of
+        the spread, and compare what is left against the gate.  Returns the
+        price we would cross at, or ``None`` for "do not cross".
         """
-        if cross_book.mid <= 0 or quote_book.mid <= 0:
+        quote_mid = quote_book.mid
+        if cross_book.mid <= 0 or quote_mid <= 0:
             return None
-        drift = _markout_bps(sig.side, quote_book.mid, cross_book.mid)
+        drift = _markout_bps(sig.side, quote_mid, cross_book.mid)
         spread_now = cross_book.spread_bps
-        spread_then = (
-            quote_book.spread_bps if math.isfinite(quote_book.spread_bps) else spread_now
-        )
         if not math.isfinite(spread_now):
             return None
+        spread_then = quote_book.spread_bps
+        if not math.isfinite(spread_then):
+            spread_then = spread_now
         widening = max(0.0, spread_now - spread_then)
         remaining = sig.expected_net_edge_bps - max(0.0, drift) - widening
         if remaining < gate_bps:
@@ -1247,68 +1267,60 @@ class MakerReplay:
         notional_usd: float = 50.0,
         warmup_ms: int = 30_000,
         limit: int = 500,
+        require_exit: bool = True,
     ) -> list[QuoteSignal]:
         """Evenly spaced alternating quotes — a *probe*, not a strategy.
 
-        There is no edge claimed here and none implied.  The point is to
-        exercise the same execution machinery a real arm would, so the study can
-        report fill rates and markout before ``tournament.py`` has produced an
-        arm to compare.  Sides alternate so the measurement cannot inherit a
-        directional drift in the tape.
+        No edge is claimed here and none is implied.  The point is to exercise
+        the same execution machinery a real arm would, so the study can report
+        fill rates and markout before ``tournament.py`` has produced an arm.
+        Sides alternate so the measurement cannot inherit a directional drift in
+        the tape, and a probe whose exit horizon falls past the end of the tape
+        is dropped rather than marked to the last price we happen to have.
         """
         if not sl.events:
             return []
         book = ReplayBook(sl.symbol)
-        start = sl.start_ms + max(0, warmup_ms)
-        out: list[QuoteSignal] = []
-        next_ms = start
-        exit_prices: dict[int, float] = {}
+        next_ms = sl.start_ms + max(0, warmup_ms)
+        raw: list[QuoteSignal] = []
         idx = 0
         for ev in sl.events:
-            book.apply(ev) if ev.kind in ("depth", "ticker") else None
-            if ev.ts_ms >= next_ms and book.mid > 0 and len(out) < limit:
+            if ev.kind in ("depth", "ticker"):
+                book.apply(ev)
+            if ev.ts_ms >= next_ms and len(raw) < limit:
                 side = Side.LONG if idx % 2 == 0 else Side.SHORT
                 price = book.best_ask if side is Side.LONG else book.best_bid
-                if price > 0:
-                    out.append(
+                if book.mid > 0 and price > 0:
+                    raw.append(
                         QuoteSignal(
                             symbol=sl.symbol,
                             side=side,
                             ts_ms=ev.ts_ms,
                             qty=notional_usd / price,
-                            exit_ms=ev.ts_ms + hold_ms,
+                            exit_ms=ev.ts_ms + max(1, hold_ms),
                             exit_price=0.0,  # resolved below
                             taker_entry_price=price,
-                            expected_net_edge_bps=0.0,
-                            strategy="probe",
                         )
                     )
                     idx += 1
-                next_ms = ev.ts_ms + max(1, cadence_ms)
-            exit_prices[ev.ts_ms] = book.mid
+                    next_ms = ev.ts_ms + max(1, cadence_ms)
+        if not require_exit:
+            return raw
 
-        # Resolve each probe's exit at the mid nearest its hold horizon; a probe
-        # whose horizon falls past the end of the tape is dropped rather than
-        # marked to the last price we happen to have.
-        resolved: list[QuoteSignal] = []
-        for s in out:
-            mid = _mid_at(sl, s.exit_ms)
-            if mid <= 0:
-                continue
-            resolved.append(
-                QuoteSignal(
-                    symbol=s.symbol,
-                    side=s.side,
-                    ts_ms=s.ts_ms,
-                    qty=s.qty,
-                    exit_ms=s.exit_ms,
-                    exit_price=mid,
-                    taker_entry_price=s.taker_entry_price,
-                    expected_net_edge_bps=s.expected_net_edge_bps,
-                    strategy=s.strategy,
-                )
+        mids = _mids_at(sl, [s.exit_ms for s in raw])
+        return [
+            QuoteSignal(
+                symbol=s.symbol,
+                side=s.side,
+                ts_ms=s.ts_ms,
+                qty=s.qty,
+                exit_ms=s.exit_ms,
+                exit_price=mid,
+                taker_entry_price=s.taker_entry_price,
             )
-        return resolved
+            for s, mid in zip(raw, mids)
+            if mid > 0
+        ]
 
     def quote_grid(
         self,
@@ -1321,12 +1333,12 @@ class MakerReplay:
         warmup_ms: int = 30_000,
         limit: int = 400,
     ) -> list[dict[str, Any]]:
-        """Fill rate and markout for each (timeout, offset) pair.
+        """Fill rate, wait and markout for each (timeout, offset) pair.
 
-        This is the diagnostic that answers "does resting beat crossing here?"
-        without needing a strategy at all: it is purely about whether a passive
-        quote on this venue fills, how long it waits, and what happens to the
-        price immediately afterwards.
+        This is the diagnostic that answers "does resting fill here?" without
+        needing a strategy at all: it is purely about whether a passive quote on
+        this venue gets hit, how long it waits, and what the price does to us
+        immediately afterwards.
         """
         probes = self.probe_signals(
             sl,
@@ -1335,26 +1347,20 @@ class MakerReplay:
             notional_usd=notional_usd,
             warmup_ms=warmup_ms,
             limit=limit,
+            require_exit=False,
         )
-        if not probes:
-            # Fall back to unresolved probes: a grid can still measure fills
-            # even when the tape is too short to price an exit.
-            probes = self._raw_probes(sl, cadence_ms, notional_usd, warmup_ms, limit)
         books = _books_at({sl.symbol: sl}, probes)
         rows: list[dict[str, Any]] = []
         for timeout in timeouts_ms:
             for offset in offsets:
-                fills = 0
-                unresolved = 0
-                touched = 0
+                fills = unresolved = touched = 0
                 waits: list[int] = []
                 queues: list[float] = []
                 m_sum: dict[str, float] = {}
                 m_n: dict[str, int] = {}
                 reasons: dict[str, int] = {}
                 for sig, book in zip(probes, books):
-                    tick = sl.tick_size
-                    price = self.quote_price(sig.side, book, offset, tick)
+                    price = self.quote_price(sig.side, book, offset, sl.tick_size)
                     o = self.simulate_quote(
                         symbol=sl.symbol,
                         side=sig.side,
@@ -1366,8 +1372,7 @@ class MakerReplay:
                         tape=sl,
                     )
                     queues.append(o.queue_ahead_start_usd)
-                    if o.touched:
-                        touched += 1
+                    touched += 1 if o.touched else 0
                     if o.filled:
                         fills += 1
                         waits.append(o.wait_ms)
@@ -1375,8 +1380,7 @@ class MakerReplay:
                             m_sum[label] = m_sum.get(label, 0.0) + bps
                             m_n[label] = m_n.get(label, 0) + 1
                     else:
-                        if not o.resolved:
-                            unresolved += 1
+                        unresolved += 0 if o.resolved else 1
                         r = o.missed_reason or "unknown"
                         reasons[r] = reasons.get(r, 0) + 1
                 resolved = len(probes) - unresolved
@@ -1396,43 +1400,12 @@ class MakerReplay:
                         "mean_queue_ahead_usd": (
                             sum(queues) / len(queues) if queues else 0.0
                         ),
-                        "markout_bps": {
-                            k: m_sum[k] / m_n[k] for k in m_sum if m_n.get(k)
-                        },
+                        "markout_bps": {k: m_sum[k] / m_n[k] for k in m_sum if m_n.get(k)},
                         "markout_samples": dict(m_n),
                         "miss_reasons": reasons,
                     }
                 )
         return rows
-
-    def _raw_probes(
-        self, sl: TapeSlice, cadence_ms: int, notional_usd: float, warmup_ms: int, limit: int
-    ) -> list[QuoteSignal]:
-        book = ReplayBook(sl.symbol)
-        out: list[QuoteSignal] = []
-        next_ms = sl.start_ms + max(0, warmup_ms)
-        idx = 0
-        for ev in sl.events:
-            if ev.kind in ("depth", "ticker"):
-                book.apply(ev)
-            if ev.ts_ms >= next_ms and book.mid > 0 and len(out) < limit:
-                side = Side.LONG if idx % 2 == 0 else Side.SHORT
-                price = book.best_ask if side is Side.LONG else book.best_bid
-                if price > 0:
-                    out.append(
-                        QuoteSignal(
-                            symbol=sl.symbol,
-                            side=side,
-                            ts_ms=ev.ts_ms,
-                            qty=notional_usd / price,
-                            exit_ms=ev.ts_ms + cadence_ms,
-                            exit_price=0.0,
-                            taker_entry_price=price,
-                        )
-                    )
-                    idx += 1
-                next_ms = ev.ts_ms + max(1, cadence_ms)
-        return out
 
 
 # --------------------------------------------------------------------------- #
@@ -1449,12 +1422,11 @@ def _round_tick(price: float, tick: float) -> float:
 def _relation(side: Side, print_price: float, our_price: float, tick: float) -> str:
     """Where a print sits relative to our resting quote.
 
-    For a bid: a print above us never reached us ("away"), a print at our price
-    works the queue ("at"), a print below us means the level was swept
+    For a bid: a print above us never reached us ("away"); a print at our price
+    works the queue ("at"); a print below us means the level was swept
     ("through").  Mirrored for an ask.
     """
-    tol = _tol(our_price, tick)
-    if abs(print_price - our_price) <= tol:
+    if abs(print_price - our_price) <= _tol(our_price, tick):
         return "at"
     if side is Side.LONG:
         return "through" if print_price < our_price else "away"
@@ -1469,24 +1441,22 @@ def _markout_bps(side: Side, reference: float, later: float) -> float:
     return raw if side is Side.LONG else -raw
 
 
-def _event_level_qty(
-    ev: TapeEvent, side: Side, price: float, tick: float
-) -> float | None:
-    """The new absolute size at our price in this event, or None if unmentioned."""
+def _event_level_qty(ev: TapeEvent, side: Side, price: float, tick: float) -> float | None:
+    """New absolute size at our price in this event, or ``None`` if unmentioned.
+
+    ``None`` means "this event says nothing about our level", which is not the
+    same as "our level is empty" — inventing a zero there would wipe the queue
+    every time the touch moved.
+    """
     levels = ev.bids if side is Side.LONG else ev.asks
     tol = _tol(price, tick)
     for p, q in levels:
         if abs(p - price) <= tol:
             return q
-    if ev.kind == "ticker":
-        # A bookTicker whose touch has moved past our level tells us the level
-        # is no longer at the front of the queue, but not its size; treat it as
-        # unknown rather than invent a number.
-        return None
     return None
 
 
-def _qty_at(book: OrderBook | ReplayBook, side: Side, price: float, tick: float) -> float:
+def _qty_at(book: "OrderBook | ReplayBook", side: Side, price: float, tick: float) -> float:
     if isinstance(book, ReplayBook):
         return book.qty_at(side, price, tick=tick)
     levels = book.bids if side is Side.LONG else book.asks
@@ -1497,7 +1467,7 @@ def _qty_at(book: OrderBook | ReplayBook, side: Side, price: float, tick: float)
     return 0.0
 
 
-def _seed(book: ReplayBook, src: OrderBook | ReplayBook) -> None:
+def _seed(book: ReplayBook, src: "OrderBook | ReplayBook") -> None:
     if isinstance(src, ReplayBook):
         book.bids = dict(src.bids)
         book.asks = dict(src.asks)
@@ -1509,9 +1479,7 @@ def _seed(book: ReplayBook, src: OrderBook | ReplayBook) -> None:
 
 
 def _tick_of(tape: Any) -> float:
-    if isinstance(tape, TapeSlice):
-        return tape.tick_size
-    return 0.0
+    return tape.tick_size if isinstance(tape, TapeSlice) else 0.0
 
 
 def _as_events(tape: Any, symbol: str) -> list[TapeEvent]:
@@ -1542,22 +1510,32 @@ def _as_events(tape: Any, symbol: str) -> list[TapeEvent]:
 
 
 def _as_slices(tape: Any) -> dict[str, TapeSlice]:
-    if isinstance(tape, dict):
-        return {k.upper(): v for k, v in tape.items()}
     if isinstance(tape, TapeSlice):
         return {tape.symbol: tape}
+    if isinstance(tape, dict):
+        return {str(k).upper(): v for k, v in tape.items()}
     if isinstance(tape, (str, Path)):
         return load_tape(tape)
     return {}
 
 
 def _signals_of(arm: Any) -> list[QuoteSignal]:
-    trades = getattr(arm, "trades", None)
+    trades = list(getattr(arm, "trades", None) or [])
     if not trades:
         return []
     if isinstance(trades[0], QuoteSignal):
-        return list(trades)
+        return sorted(trades, key=lambda s: s.ts_ms)
     return signals_from_trades(trades)
+
+
+def _realised_index(arm: Any) -> dict[tuple[str, int], ClosedTrade]:
+    """The arm's own taker trades, keyed so the TAKER leg can reuse them."""
+    trades = list(getattr(arm, "trades", None) or [])
+    out: dict[tuple[str, int], ClosedTrade] = {}
+    for t in trades:
+        if isinstance(t, ClosedTrade):
+            out[(t.symbol, int(t.entry_ms))] = t
+    return out
 
 
 def _index_at(events: Sequence[TapeEvent], ts_ms: int) -> int:
@@ -1595,19 +1573,16 @@ def _books_at(
                 if ev.kind in ("depth", "ticker"):
                     book.apply(ev)
                 cursor += 1
-            snap = ReplayBook(sym)
-            _seed(snap, book)
-            out[i] = snap
+            out[i] = book.copy()
     return [b if b is not None else ReplayBook("") for b in out]
 
 
 def _book_at(sl: TapeSlice, ts_ms: int, *, seed: ReplayBook | None = None) -> ReplayBook:
     book = ReplayBook(sl.symbol)
+    start = 0
     if seed is not None:
         _seed(book, seed)
         start = _index_at(sl.events, seed.last_ms)
-    else:
-        start = 0
     for ev in sl.events[start:]:
         if ev.ts_ms > ts_ms:
             break
@@ -1616,18 +1591,27 @@ def _book_at(sl: TapeSlice, ts_ms: int, *, seed: ReplayBook | None = None) -> Re
     return book
 
 
-def _mid_at(sl: TapeSlice, ts_ms: int) -> float:
+def _mids_at(sl: TapeSlice, times: Sequence[int]) -> list[float]:
+    """Mid at each of *times* in one forward pass.
+
+    A time past the end of the tape returns 0.0 — "we do not know" — rather than
+    the last mid we saw, which would silently price an exit that never happened.
+    """
+    order = sorted(range(len(times)), key=lambda i: times[i])
+    out = [0.0] * len(times)
     book = ReplayBook(sl.symbol)
-    seen = False
-    for ev in sl.events:
-        if ev.ts_ms > ts_ms:
-            break
-        if ev.kind in ("depth", "ticker"):
-            book.apply(ev)
-            seen = True
-    if not seen or sl.end_ms < ts_ms:
-        return 0.0
-    return book.mid
+    cursor = 0
+    for i in order:
+        target = times[i]
+        if target > sl.end_ms:
+            continue
+        while cursor < len(sl.events) and sl.events[cursor].ts_ms <= target:
+            ev = sl.events[cursor]
+            if ev.kind in ("depth", "ticker"):
+                book.apply(ev)
+            cursor += 1
+        out[i] = book.mid
+    return out
 
 
 def _trade_from(
@@ -1639,18 +1623,23 @@ def _trade_from(
     own exit and always charged the taker rate, because a maker exit is a
     separate question and mixing the two would let a fee saving on the way out
     disguise a bad fill on the way in.
-    """
-    from app.types import ExitReason
 
+    ``gross_pnl_usd`` is measured from the signal's **reference** (taker) entry
+    price and the difference between that and the price actually obtained is
+    booked as ``slippage_usd``, so the three lines stay additive:
+    ``net = gross − fees − slippage``.  A maker entry resting behind the touch
+    is price *improvement*, so its slippage is negative — which is the entire
+    economic case for this module, and it should be visible as its own line
+    rather than buried in a better gross.
+    """
     side_sign = 1.0 if sig.side is Side.LONG else -1.0
-    gross = (sig.exit_price - entry_price) * qty * side_sign
+    reference = sig.taker_entry_price if sig.taker_entry_price > 0 else entry_price
+    gross = (sig.exit_price - reference) * qty * side_sign
+    slippage = (entry_price - reference) * qty * side_sign
     entry_bps = fees.maker_bps(sig.symbol) if maker else fees.taker_bps(sig.symbol)
     exit_bps = fees.taker_bps(sig.symbol)
     entry_fee = entry_price * qty * entry_bps / _BPS
     exit_fee = sig.exit_price * qty * exit_bps / _BPS
-    # Slippage against the taker reference: a maker entry that rested behind the
-    # touch is *price improvement*, so this is allowed to be negative.
-    slippage = (entry_price - sig.taker_entry_price) * qty * side_sign
     return ClosedTrade(
         id=f"{sig.symbol}-{sig.ts_ms}-{'M' if maker else 'T'}",
         symbol=sig.symbol,
@@ -1677,11 +1666,12 @@ def _trade_from(
 
 
 def perf_stats(trades: Sequence[ClosedTrade]) -> PerfStats:
-    """``PerfStats`` over a list of closed trades.
+    """``PerfStats`` over a bare list of closed trades.
 
-    Same arithmetic as ``app.sim.ledger.Ledger.stats``, over a bare list rather
-    than a ledger, with the drawdown taken from the NET equity path in exit
-    order — the only honest way to get one without an account behind it.
+    Same arithmetic as ``app.sim.ledger.Ledger.stats`` (including its
+    positive-magnitude ``avg_loss``), with the drawdown taken from the NET
+    equity path in exit order — the only honest way to get one without an
+    account behind it.
     """
     stats = PerfStats()
     if not trades:
@@ -1697,7 +1687,7 @@ def perf_stats(trades: Sequence[ClosedTrade]) -> PerfStats:
     stats.net_pnl = sum(t.net_pnl_usd for t in trades)
     stats.avg_win = (sum(t.net_pnl_usd for t in wins) / len(wins)) if wins else 0.0
     stats.avg_loss = (
-        -abs(sum(t.net_pnl_usd for t in losses)) / len(losses) if losses else 0.0
+        abs(sum(t.net_pnl_usd for t in losses)) / len(losses) if losses else 0.0
     )
     gross_win = sum(t.net_pnl_usd for t in wins)
     gross_loss = abs(sum(t.net_pnl_usd for t in losses))
@@ -1708,9 +1698,7 @@ def perf_stats(trades: Sequence[ClosedTrade]) -> PerfStats:
     stats.expectancy = stats.net_pnl / stats.trades
     stats.avg_holding_seconds = sum(t.holding_seconds for t in trades) / len(trades)
 
-    equity = 0.0
-    peak = 0.0
-    worst = 0.0
+    equity = peak = worst = 0.0
     for t in sorted(trades, key=lambda x: x.exit_ms):
         equity += t.net_pnl_usd
         peak = max(peak, equity)

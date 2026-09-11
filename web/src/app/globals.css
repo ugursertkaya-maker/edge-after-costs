@@ -1779,3 +1779,792 @@ table.tbl td.x {
 .dist-key.is-over b {
   color: var(--neg);
 }
+
+/* ==========================================================================
+   PHASE 3 — the strategy tournament, the promotion gates and the champion
+   --------------------------------------------------------------------------
+   One rule governs everything below, and it is the same shape as the V2 rule
+   one section up: an IN-SAMPLE number is not a result. So in-sample columns
+   are hatched, desaturated and headed by a line that says so in words, while
+   the out-of-sample block sits first, unhatched and bordered, because it is
+   the only half a promotion decision is allowed to read. Nothing here is
+   decorative — the two blocks look different because they mean different
+   things.
+   ========================================================================== */
+
+/* ------------------------------------------------------------ table tools */
+.tools {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  flex-wrap: wrap;
+  padding: 8px 12px;
+  border-bottom: 1px solid var(--line);
+  background: var(--bg-2);
+}
+
+.tools-spacer {
+  flex: 1 1 auto;
+}
+
+.sel {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  border: 1px solid var(--line);
+  background: var(--bg-1);
+  padding: 0 0 0 8px;
+  height: 23px;
+}
+
+.sel-k {
+  font-family: var(--font-mono);
+  font-size: 9px;
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+  color: var(--fg-4);
+  white-space: nowrap;
+}
+
+.sel-input {
+  appearance: none;
+  border: 0;
+  border-left: 1px solid var(--line-soft);
+  background: transparent;
+  color: var(--fg-1);
+  font-family: var(--font-mono);
+  font-size: 10.5px;
+  height: 100%;
+  padding: 0 8px;
+  cursor: pointer;
+  max-width: 190px;
+}
+
+.sel-input:hover:not(:disabled) {
+  color: var(--fg-0);
+}
+
+.sel-input:disabled {
+  color: var(--fg-4);
+  cursor: default;
+}
+
+.sel-input option {
+  background: var(--bg-2);
+  color: var(--fg-1);
+}
+
+.tally {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+
+.tally-n {
+  font-family: var(--font-mono);
+  font-size: 10px;
+  color: var(--fg-4);
+}
+
+/* ------------------------------------------------------------ OOS verdict */
+/* A verdict, not a label. FİNALİST is the only one that earns green; SINIRDA
+   is amber because "positive but under the bar" is precisely the reading that
+   gets rounded up into a winner when nobody is watching; ÖRNEKLEM YETERSİZ is
+   toneless because an unjudged arm has not failed. */
+.oos {
+  display: inline-block;
+  min-width: 96px;
+  padding: 0 7px;
+  font-family: var(--font-mono);
+  font-size: 9.5px;
+  font-weight: 600;
+  letter-spacing: 0.07em;
+  text-align: center;
+  border: 1px solid var(--line);
+  color: var(--fg-3);
+  background: var(--bg-2);
+  white-space: nowrap;
+}
+
+.oos.is-finalist {
+  color: var(--pos);
+  border-color: rgba(53, 210, 154, 0.4);
+  background: var(--pos-wash);
+}
+
+.oos.is-marginal {
+  color: var(--warn);
+  border-color: rgba(240, 180, 41, 0.36);
+  background: var(--warn-wash);
+}
+
+.oos.is-failed {
+  color: var(--neg);
+  border-color: rgba(255, 95, 109, 0.28);
+  background: transparent;
+}
+
+.oos.is-thin {
+  color: var(--fg-3);
+  border-color: var(--line);
+  border-style: dashed;
+}
+
+.oos.is-unknown {
+  color: var(--fg-4);
+}
+
+/* ------------------------------------------------------- tournament table */
+table.tbl-tour {
+  font-size: 11px;
+}
+
+/* Two header rows: the group band, then the columns. The band is the load
+   bearing element of the whole panel — it is what stops an in-sample profit
+   factor from being read as a result. */
+table.tbl-tour thead tr.grp th {
+  top: 0;
+  height: 21px;
+  padding: 3px 10px;
+  text-align: center;
+  font-size: 9px;
+  letter-spacing: 0.14em;
+  border-bottom: 1px solid var(--line);
+}
+
+table.tbl-tour thead tr.cols th {
+  top: 21px;
+}
+
+table.tbl-tour th.gh.g-id {
+  text-align: left;
+  color: var(--fg-4);
+}
+
+table.tbl-tour th.gh.g-oos {
+  color: var(--info);
+  background: rgba(90, 169, 230, 0.1);
+  border-bottom: 2px solid rgba(90, 169, 230, 0.55);
+}
+
+table.tbl-tour th.gh.g-is {
+  color: var(--warn);
+  background: rgba(240, 180, 41, 0.08);
+  border-bottom: 2px solid rgba(240, 180, 41, 0.45);
+}
+
+table.tbl-tour th.gh.g-all {
+  color: var(--fg-4);
+  background: var(--bg-2);
+}
+
+/* Group boundaries. The selector leans on the fact that the column order is
+   fixed and each group is contiguous, so the first cell of a group is the
+   only one preceded by a cell from another group. */
+table.tbl-tour td:not(.c-oos) + td.c-oos,
+table.tbl-tour tr.cols th:not(.c-oos) + th.c-oos {
+  border-left: 2px solid rgba(90, 169, 230, 0.55);
+}
+
+table.tbl-tour td:not(.c-is) + td.c-is,
+table.tbl-tour tr.cols th:not(.c-is) + th.c-is {
+  border-left: 2px solid rgba(240, 180, 41, 0.45);
+}
+
+table.tbl-tour td:not(.c-all) + td.c-all,
+table.tbl-tour tr.cols th:not(.c-all) + th.c-all {
+  border-left: 1px solid var(--line-strong);
+}
+
+table.tbl-tour td.c-oos {
+  background: rgba(90, 169, 230, 0.04);
+}
+
+/* The hatch is the point: an in-sample figure is visibly not a clean
+   measurement surface, at any zoom level, without having to read the header. */
+table.tbl-tour td.c-is {
+  color: var(--fg-3);
+  background-color: rgba(240, 180, 41, 0.03);
+  background-image: repeating-linear-gradient(
+    -45deg,
+    rgba(240, 180, 41, 0.07) 0,
+    rgba(240, 180, 41, 0.07) 1px,
+    transparent 1px,
+    transparent 6px
+  );
+}
+
+table.tbl-tour td.c-is.net {
+  background-color: rgba(240, 180, 41, 0.03);
+  font-weight: 400;
+}
+
+/* Identity survives a sideways scroll; a 22-column research log is unreadable
+   if the row loses its name. */
+table.tbl-tour th.stick,
+table.tbl-tour td.stick {
+  position: sticky;
+  left: 0;
+  background: var(--bg-1);
+  z-index: 1;
+  border-right: 1px solid var(--line);
+}
+
+table.tbl-tour th.stick {
+  background: var(--bg-2);
+  z-index: 3;
+}
+
+table.tbl-tour tbody tr:hover td.stick {
+  background: var(--bg-2);
+}
+
+/* ------------------------------------------------------------- finalists */
+.fin-list {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+.fin {
+  border: 1px solid var(--line);
+  background: var(--bg-2);
+}
+
+.fin.is-pass {
+  border-color: rgba(53, 210, 154, 0.34);
+}
+
+.fin.is-fail {
+  border-color: rgba(255, 95, 109, 0.26);
+}
+
+.fin-head {
+  display: flex;
+  align-items: baseline;
+  gap: 12px;
+  flex-wrap: wrap;
+  padding: 9px 12px;
+  border-bottom: 1px solid var(--line);
+  background: var(--bg-3);
+}
+
+.fin-name {
+  font-family: var(--font-mono);
+  font-size: 12px;
+  font-weight: 600;
+  letter-spacing: 0.08em;
+  color: var(--fg-0);
+}
+
+.fin-sub {
+  font-family: var(--font-mono);
+  font-size: 10.5px;
+  color: var(--fg-3);
+}
+
+.fin-verdict {
+  margin-left: auto;
+  font-family: var(--font-mono);
+  font-size: 9.5px;
+  font-weight: 600;
+  letter-spacing: 0.1em;
+  padding: 1px 8px;
+  border: 1px solid var(--line);
+  color: var(--fg-3);
+}
+
+.fin-verdict.is-pass {
+  color: var(--pos);
+  border-color: rgba(53, 210, 154, 0.4);
+  background: var(--pos-wash);
+}
+
+.fin-verdict.is-fail {
+  color: var(--neg);
+  border-color: rgba(255, 95, 109, 0.4);
+  background: var(--neg-wash);
+}
+
+.fin-body {
+  display: grid;
+  grid-template-columns: minmax(0, 1.4fr) minmax(0, 1fr);
+  gap: 1px;
+  background: var(--line-soft);
+}
+
+@media (max-width: 1080px) {
+  .fin-body {
+    grid-template-columns: minmax(0, 1fr);
+  }
+}
+
+.fgroup,
+.stress,
+.mc {
+  background: var(--bg-1);
+  padding: 10px 12px 11px;
+  min-width: 0;
+}
+
+.fgroup {
+  grid-row: span 2;
+}
+
+@media (max-width: 1080px) {
+  .fgroup {
+    grid-row: auto;
+  }
+}
+
+.fgroup-t {
+  font-family: var(--font-mono);
+  font-size: 9px;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+  color: var(--fg-4);
+  padding-bottom: 6px;
+  margin-bottom: 7px;
+  border-bottom: 1px solid var(--line-soft);
+}
+
+.fgroup-n {
+  float: right;
+  letter-spacing: 0.06em;
+  color: var(--fg-3);
+  text-transform: none;
+}
+
+/* ------------------------------------------------------------ gate lines */
+.gates {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.gate {
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+  font-size: 11px;
+  line-height: 1.45;
+  color: var(--fg-2);
+}
+
+.gate-m {
+  font-family: var(--font-mono);
+  font-size: 11px;
+  width: 12px;
+  flex: none;
+  text-align: center;
+  color: var(--fg-4);
+}
+
+.gate.is-pass .gate-m {
+  color: var(--pos);
+}
+
+.gate.is-fail .gate-m {
+  color: var(--neg);
+}
+
+.gate.is-fail .gate-t {
+  color: var(--fg-1);
+}
+
+/* A line that does not state its own verdict is drawn neutral: the panel does
+   not colour a claim it was not given. */
+.gate.is-unknown .gate-t {
+  color: var(--fg-3);
+}
+
+/* ----------------------------------------------------------- stress chips */
+.stress-list {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+
+.schip {
+  display: inline-flex;
+  align-items: baseline;
+  gap: 7px;
+  padding: 2px 8px;
+  border: 1px solid var(--line);
+  background: var(--bg-2);
+  font-size: 10.5px;
+}
+
+.schip.is-pass {
+  border-color: rgba(53, 210, 154, 0.3);
+}
+
+.schip.is-fail {
+  border-color: rgba(255, 95, 109, 0.3);
+  background: var(--neg-wash);
+}
+
+.schip-k {
+  color: var(--fg-2);
+}
+
+.schip-v {
+  font-family: var(--font-mono);
+  font-variant-numeric: tabular-nums slashed-zero;
+  color: var(--fg-1);
+}
+
+/* --------------------------------------------------- the empty finalists */
+/* The most important copy on the page. Nothing passing the gates is the
+   expected outcome, so it is composed as a statement with the standard it
+   failed printed underneath — never as an empty table and never as a
+   spinner, because both of those read as "broken" rather than as "answered". */
+.fin-empty {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.fin-empty-head {
+  display: flex;
+  align-items: center;
+  gap: 9px;
+}
+
+.fin-empty-mark {
+  width: 9px;
+  height: 9px;
+  flex: none;
+  border: 1px solid rgba(240, 180, 41, 0.6);
+  background: var(--warn-wash);
+}
+
+.fin-empty-t {
+  font-family: var(--font-mono);
+  font-size: 13px;
+  font-weight: 600;
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+  color: var(--fg-0);
+}
+
+.fin-empty.is-none .fin-empty-t {
+  color: var(--warn);
+}
+
+.fin-empty-x {
+  font-size: 11.5px;
+  line-height: 1.6;
+  color: var(--fg-2);
+  max-width: 92ch;
+}
+
+.gateref {
+  border: 1px solid var(--line);
+  background: var(--bg-2);
+  padding: 10px 12px 11px;
+}
+
+.gateref-t {
+  font-family: var(--font-mono);
+  font-size: 9px;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+  color: var(--fg-4);
+  padding-bottom: 7px;
+  margin-bottom: 8px;
+  border-bottom: 1px solid var(--line-soft);
+}
+
+.gateref-l {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(330px, 1fr));
+  gap: 5px 18px;
+}
+
+.gateref-l li {
+  display: flex;
+  align-items: baseline;
+  gap: 9px;
+  font-size: 11px;
+  line-height: 1.45;
+  color: var(--fg-2);
+}
+
+.gateref-n {
+  font-family: var(--font-mono);
+  font-variant-numeric: tabular-nums slashed-zero;
+  font-size: 10px;
+  color: var(--fg-4);
+  flex: none;
+}
+
+.gateref-f {
+  margin-top: 9px;
+  padding-top: 8px;
+  border-top: 1px solid var(--line-soft);
+  font-size: 10.5px;
+  line-height: 1.5;
+  color: var(--fg-4);
+}
+
+/* ------------------------------------------------------------- champion */
+.champ {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+.champ-id {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.champ-k {
+  font-family: var(--font-mono);
+  font-size: 9px;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+  color: var(--fg-4);
+}
+
+.champ-v {
+  font-family: var(--font-mono);
+  font-size: 17px;
+  font-weight: 600;
+  letter-spacing: 0.06em;
+  color: var(--fg-0);
+}
+
+.champ-n {
+  font-size: 10.5px;
+  color: var(--fg-4);
+}
+
+/* ------------------------------------------------ the two profit factors */
+/* Deliberately symmetrical: neither figure is the "real" one. The gap in the
+   middle is the reading, which is why it is given its own cell rather than
+   being left for the operator to subtract. */
+.vs {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto minmax(0, 1fr);
+  border: 1px solid var(--line);
+  background: var(--bg-1);
+}
+
+.vs-cell {
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+  padding: 12px 15px 13px;
+  min-width: 0;
+}
+
+.vs-cell.is-live {
+  background: linear-gradient(180deg, var(--bg-2), var(--bg-1));
+}
+
+.vs-k {
+  font-family: var(--font-mono);
+  font-size: 9.5px;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+  color: var(--fg-3);
+}
+
+.vs-v {
+  font-family: var(--font-mono);
+  font-variant-numeric: tabular-nums slashed-zero;
+  font-size: 27px;
+  font-weight: 600;
+  line-height: 1.1;
+  color: var(--fg-0);
+}
+
+.vs-v.is-empty {
+  color: var(--fg-3);
+}
+
+.vs-n {
+  font-size: 10px;
+  color: var(--fg-4);
+}
+
+.vs-gap {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 2px;
+  padding: 0 16px;
+  background: var(--bg-0);
+  border-left: 1px solid var(--line-soft);
+  border-right: 1px solid var(--line-soft);
+}
+
+.vs-op {
+  font-family: var(--font-mono);
+  font-size: 13px;
+  color: var(--fg-4);
+}
+
+.vs-d {
+  font-family: var(--font-mono);
+  font-variant-numeric: tabular-nums slashed-zero;
+  font-size: 15px;
+  font-weight: 600;
+  color: var(--fg-1);
+}
+
+.vs-d.pos {
+  color: var(--pos);
+}
+.vs-d.neg {
+  color: var(--neg);
+}
+.vs-d.flat,
+.vs-d.is-empty {
+  color: var(--fg-3);
+}
+
+.vs-dk {
+  font-family: var(--font-mono);
+  font-size: 9px;
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+  color: var(--fg-4);
+}
+
+.vs-note {
+  grid-column: 1 / -1;
+  padding: 8px 15px 10px;
+  border-top: 1px solid var(--line-soft);
+  font-size: 11px;
+  line-height: 1.55;
+  color: var(--fg-3);
+}
+
+@media (max-width: 820px) {
+  .vs {
+    grid-template-columns: minmax(0, 1fr);
+  }
+  .vs-gap {
+    flex-direction: row;
+    gap: 10px;
+    padding: 6px 15px;
+    border: 0;
+    border-top: 1px solid var(--line-soft);
+    border-bottom: 1px solid var(--line-soft);
+  }
+}
+
+/* ------------------------------------------------------- tape recorder */
+/* The maker study's progress bar. The track is the server's own 14-day
+   retention window, not an invented target — a progress bar against a number
+   nobody set would be decoration. */
+.tape {
+  border-top: 1px solid var(--line);
+  padding: 10px 12px 11px;
+  display: flex;
+  flex-direction: column;
+  gap: 7px;
+}
+
+.tape-head {
+  display: flex;
+  align-items: center;
+  gap: 9px;
+  flex-wrap: wrap;
+}
+
+.tape-t {
+  font-family: var(--font-mono);
+  font-size: 9px;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+  color: var(--fg-4);
+}
+
+.tape-n {
+  margin-left: auto;
+  font-family: var(--font-mono);
+  font-variant-numeric: tabular-nums slashed-zero;
+  font-size: 11.5px;
+  font-weight: 600;
+  color: var(--fg-1);
+}
+
+.tape-track {
+  position: relative;
+  height: 8px;
+  background: var(--bg-3);
+  border: 1px solid var(--line-soft);
+}
+
+.tape-fill {
+  position: absolute;
+  left: 0;
+  top: 0;
+  bottom: 0;
+  background: var(--info);
+  opacity: 0.8;
+}
+
+.tape-scale {
+  display: flex;
+  justify-content: space-between;
+  font-family: var(--font-mono);
+  font-size: 9px;
+  color: var(--fg-4);
+}
+
+.tape-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(92px, 1fr));
+  gap: 6px 12px;
+}
+
+.tape-item {
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+  min-width: 0;
+}
+
+.tape-k {
+  font-family: var(--font-mono);
+  font-size: 9px;
+  letter-spacing: 0.09em;
+  text-transform: uppercase;
+  color: var(--fg-4);
+}
+
+.tape-v {
+  font-family: var(--font-mono);
+  font-variant-numeric: tabular-nums slashed-zero;
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--fg-0);
+}
+
+.tape-note {
+  font-size: 10.5px;
+  line-height: 1.5;
+  color: var(--fg-4);
+}
+
+.tape-note.is-warn {
+  color: var(--warn);
+}
+
+.fin-body.is-solo {
+  grid-template-columns: minmax(0, 1fr);
+}
