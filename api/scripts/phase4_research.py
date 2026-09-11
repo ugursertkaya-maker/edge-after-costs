@@ -259,12 +259,12 @@ def run_fold(matrix, labels, split, spec, *, mdl, cal, evmod, sp,
     # ensemble gives hundreds of rows the same leaf probability, which the
     # value-based fallback cannot tell apart from genuine overlap.
     calibrator = cal.fit_calibrator(p_va, va.y, method="isotonic", keys=va.ts_ms)
-    p_te = calibrator.transform(champion.model.predict_p_win(te.X))
+    p_te = calibrator.predict(champion.model.predict_p_win(te.X))
     calibration = cal.evaluate_calibration(p_te, te.y)
 
     win_bps = spec.net_target_pct * 100.0
     sweep = evmod.threshold_search(
-        calibrator.transform(p_va), va.y,
+        calibrator.predict(p_va), va.y,
         net_returns=np.full(len(va.y), win_bps),
         thresholds=thresholds, cost_bps=round_trip_bps,
     )
