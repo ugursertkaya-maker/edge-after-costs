@@ -44,6 +44,7 @@ from typing import Any, Callable, Sequence
 
 from app.config import Settings, get_settings
 from app.types import (
+    NetTargets,
     Bar,
     BookLevel,
     ClosedTrade,
@@ -638,7 +639,8 @@ class _Backtester:
             + float(getattr(opp, "slippage_bps", 0.0))
         )
 
-        tp, sl = self._levels(p, entry_price, round_trip_bps, info)
+        tp, sl, targets = self._levels(p, entry_price, round_trip_bps, info,
+                                       filled=filled, book=book)
         if tp <= 0 or sl <= 0:
             self._count_reject("NO_EXIT_LEVELS")
             return
@@ -663,21 +665,60 @@ class _Backtester:
             target_bps=p.signal.target_bps,
             stop_bps=p.signal.stop_bps,
             expected_net_edge_bps=float(getattr(opp, "net_edge_bps", 0.0)),
-            time_stop_ms=ts + self.settings.exits.time_stop_seconds * 1000,
+            time_stop_ms=ts + self.settings.horizon.time_stop_seconds * 1000,
             last_price=entry_price,
+            targets=targets,
+            break_even_price=targets.break_even_price if targets else 0.0,
+            checkpoint_ms=ts + self.settings.horizon.checkpoint_seconds * 1000,
         )
         self.ledger.open(pos, res)
         self.entries_filled += 1
 
     def _levels(
-        self, p: _Pending, entry_price: float, round_trip_bps: float, info: SymbolInfo
-    ) -> tuple[float, float]:
+        self,
+        p: _Pending,
+        entry_price: float,
+        round_trip_bps: float,
+        info: SymbolInfo,
+        *,
+        filled: float = 0.0,
+        book=None,
+    ) -> tuple[float, float, "NetTargets | None"]:
         """Exit levels anchored on the *actual* fill price.
 
         The risk engine sized the position from the decision-time price; by the
-        time we fill, price has moved, so the levels are recomputed by the real
-        ``ExitEngine`` around the fill.  The verdict's levels are the fallback.
+        time we fill, price has moved, so the levels are recomputed around the
+        fill.  Prefer the fee-aware net targets — that is what makes the NET
+        take-profit profile (micro/base/fast/extended) actually bind here, so the
+        profile comparison in docs/V2_SPEC.md H.1 measures something.  Fall back
+        to the V1 ATR levels, then to the verdict's, so a target engine failure
+        degrades instead of dropping the trade.
         """
+        notional = entry_price * filled if filled > 0 else 0.0
+        if notional > 0:
+            try:
+                targets = self.c.exits.net_levels(
+                    p.signal.side,
+                    entry_price,
+                    p.features,
+                    p.signal,
+                    symbol=p.symbol,
+                    notional_usd=notional,
+                    qty=filled,
+                    book=book,
+                    info=info,
+                    slippage_bps_entry=self.cfg.slippage_bps,
+                    slippage_bps_exit=self.cfg.slippage_bps,
+                )
+                if targets.net_tp_price > 0 and targets.stop_price > 0:
+                    return (
+                        float(targets.net_tp_price),
+                        float(targets.stop_price),
+                        targets,
+                    )
+            except Exception as exc:  # pragma: no cover - surfaced as a note
+                self.notes.append(f"exits.net_levels failed: {exc!r}")
+
         try:
             tp, sl = self.c.exits.initial_levels(
                 p.signal.side,
@@ -688,12 +729,13 @@ class _Backtester:
                 info=info,
             )
             if tp > 0 and sl > 0:
-                return float(tp), float(sl)
+                return float(tp), float(sl), None
         except Exception as exc:  # pragma: no cover - surfaced as a note
             self.notes.append(f"exits.initial_levels failed: {exc!r}")
         return (
             float(getattr(p.verdict, "take_profit", 0.0)),
             float(getattr(p.verdict, "stop_loss", 0.0)),
+            None,
         )
 
     # -- phase: exits ------------------------------------------------------- #

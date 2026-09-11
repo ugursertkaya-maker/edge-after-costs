@@ -436,3 +436,49 @@ def test_reset_clears_state():
     eng.compute(make_snapshot(bars=bars))
     eng.reset()
     assert eng.compute(make_snapshot(bars=bars[:2])).bars_available == 2
+
+
+# --------------------------------------------------------------------------- #
+# Volume ratio on a mostly-empty tape (Binance.US reality)
+# --------------------------------------------------------------------------- #
+
+
+def test_volume_ratio_is_neutral_when_the_baseline_is_unmeasurable():
+    """55% of BTC/USD 1m bars have no trades at all. A ratio against a mean of
+    ~0 is arithmetic, not information — and 1291x fires every volume gate."""
+    from app.features import MAX_VOLUME_RATIO, VOLUME_WINDOW, _volume_ratio
+
+    empty = [0.0] * VOLUME_WINDOW
+    assert _volume_ratio(empty, 5_000.0) == 1.0
+
+    mostly_empty = [0.0] * (VOLUME_WINDOW - 2) + [10.0, 10.0]
+    assert _volume_ratio(mostly_empty, 5_000.0) == 1.0
+
+
+def test_volume_ratio_is_capped():
+    from app.features import MAX_VOLUME_RATIO, VOLUME_WINDOW, _volume_ratio
+
+    active = [100.0] * VOLUME_WINDOW
+    assert _volume_ratio(active, 1_000_000.0) == MAX_VOLUME_RATIO
+
+
+def test_volume_ratio_is_exact_on_a_measurable_window():
+    from app.features import VOLUME_WINDOW, _volume_ratio
+
+    window = [100.0] * VOLUME_WINDOW
+    assert _volume_ratio(window, 180.0) == pytest.approx(1.8)
+
+
+def test_volume_ratio_needs_a_full_window_first():
+    from app.features import VOLUME_WINDOW, _volume_ratio
+
+    assert _volume_ratio([100.0] * (VOLUME_WINDOW - 1), 500.0) == 1.0
+
+
+def test_a_quiet_spell_then_one_print_does_not_look_like_a_breakout():
+    """The regression: a single trade after silence used to read as a 1291x
+    volume expansion and trip every breakout gate."""
+    from app.features import VOLUME_WINDOW, _volume_ratio
+
+    quiet = [0.0] * (VOLUME_WINDOW - 1) + [50.0]
+    assert _volume_ratio(quiet, 5_000.0) == 1.0

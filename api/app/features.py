@@ -160,6 +160,35 @@ class _SymbolState:
     spread_baseline_bps: float = 0.0
 
 
+# A ratio against a near-empty baseline is arithmetic, not information.  On
+# Binance.US most 1-minute bars on the majors contain **no trades at all**
+# (55% on BTC/USD, 87% on ADA/USD — see docs/ECONOMICS.md), so a naive
+# last/mean ratio produces readings like 1291x the moment a single print lands.
+# Strategies gate on `volume_ratio > 1.8`, so that turns volume *confirmation*
+# into volume *noise* and fires a breakout on any trade after a quiet spell.
+MIN_ACTIVE_BARS = VOLUME_WINDOW // 2   # baseline must be measurable at all
+MAX_VOLUME_RATIO = 20.0                # beyond this the number says nothing more
+
+
+def _volume_ratio(prev_vols: list[float], current: float) -> float:
+    """Current bar volume against its recent baseline, or 1.0 when unmeasurable.
+
+    Returns the neutral 1.0 — not 0.0 — whenever the window is too short or too
+    empty to support a ratio, because 0.0 reads as "volume collapsed" and would
+    be just as wrong in the other direction.
+    """
+    if len(prev_vols) < VOLUME_WINDOW:
+        return 1.0
+    window = prev_vols[-VOLUME_WINDOW:]
+    active = sum(1 for v in window if v > 0)
+    if active < MIN_ACTIVE_BARS:
+        return 1.0
+    base = sum(window) / VOLUME_WINDOW
+    if base <= 0:
+        return 1.0
+    return min(current / base, MAX_VOLUME_RATIO)
+
+
 class FeatureEngine:
     """Turns a :class:`MarketSnapshot` into a fully populated :class:`Features`.
 
@@ -397,11 +426,7 @@ class FeatureEngine:
         # --- volume ratio --------------------------------------------------- #
         prev_vols = list(st.quote_vols)          # the *previous* bars
         st.quote_vols.append(float(bar.quote_volume))
-        if len(prev_vols) >= VOLUME_WINDOW:
-            base = sum(prev_vols[-VOLUME_WINDOW:]) / VOLUME_WINDOW
-            st.volume_ratio = (bar.quote_volume / base) if base > 0 else 1.0
-        else:
-            st.volume_ratio = 1.0
+        st.volume_ratio = _volume_ratio(prev_vols, float(bar.quote_volume))
 
         # --- multi-horizon returns ------------------------------------------ #
         st.closes.append(close)
