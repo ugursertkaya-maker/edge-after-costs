@@ -54,6 +54,9 @@ class ExitReason(str, enum.Enum):
     TIME_STOP = "TIME_STOP"
     SIGNAL_REVERSAL = "SIGNAL_REVERSAL"
     RISK_EXIT = "RISK_EXIT"
+    # V2 — the 25-minute checkpoint's two active verdicts.
+    EXIT_WEAK = "EXIT_WEAK"            # going nowhere; stop paying for the seat
+    ROTATE_CAPITAL = "ROTATE_CAPITAL"  # a materially better idea wants this cash
 
 
 class OrderType(str, enum.Enum):
@@ -80,6 +83,12 @@ class RejectReason(str, enum.Enum):
     BAD_REWARD_RISK = "BAD_REWARD_RISK"
     SLIPPAGE_TOO_HIGH = "SLIPPAGE_TOO_HIGH"
     NOT_SUPPORTED_SHORT = "NOT_SUPPORTED_SHORT"
+    # V2 portfolio gates
+    NET_TARGET_UNREACHABLE = "NET_TARGET_UNREACHABLE"
+    CASH_RESERVE = "CASH_RESERVE"
+    PORTFOLIO_RISK_BUDGET = "PORTFOLIO_RISK_BUDGET"
+    CORRELATED_EXPOSURE = "CORRELATED_EXPOSURE"
+    DIRECTIONAL_EXPOSURE = "DIRECTIONAL_EXPOSURE"
 
 
 # --------------------------------------------------------------------------- #
@@ -443,6 +452,13 @@ class Position:
     expected_net_edge_bps: float = 0.0
     time_stop_ms: int = 0
     last_price: float = 0.0
+    # V2 — fee-aware targets and the 25/60 minute horizon.
+    targets: "NetTargets | None" = None
+    break_even_price: float = 0.0
+    checkpoint_ms: int = 0
+    checkpoint_done: bool = False
+    entry_is_maker: bool = False
+    extended: bool = False
     meta: dict[str, Any] = field(default_factory=dict)
 
     def unrealized_usd(self, price: float) -> float:
@@ -539,3 +555,116 @@ class PerfStats:
     @property
     def win_rate(self) -> float:
         return self.wins / self.trades if self.trades else 0.0
+
+
+# --------------------------------------------------------------------------- #
+# V2 — fee-aware net targets and portfolio state
+# --------------------------------------------------------------------------- #
+
+
+@dataclass
+class CostBreakdown:
+    """Every cost line standing between a gross price move and money banked.
+
+    Kept as separate fields rather than one number because the dashboard has to
+    show "profit before costs", "total costs" and "real net profit" as three
+    distinct values — a gross figure presented as profit is the single most
+    common way a trading dashboard lies.
+    """
+
+    entry_fee_usd: float = 0.0
+    exit_fee_usd: float = 0.0
+    spread_cost_usd: float = 0.0
+    entry_slippage_usd: float = 0.0
+    exit_slippage_usd: float = 0.0
+    latency_buffer_usd: float = 0.0
+
+    @property
+    def fees_usd(self) -> float:
+        return self.entry_fee_usd + self.exit_fee_usd
+
+    @property
+    def slippage_usd(self) -> float:
+        return self.entry_slippage_usd + self.exit_slippage_usd
+
+    @property
+    def total_usd(self) -> float:
+        return (
+            self.fees_usd + self.slippage_usd
+            + self.spread_cost_usd + self.latency_buffer_usd
+        )
+
+    def total_bps(self, notional_usd: float) -> float:
+        if notional_usd <= 0:
+            return 0.0
+        return self.total_usd / notional_usd * 10_000.0
+
+
+@dataclass
+class NetTargets:
+    """What a position must reach for the *net* target to be real.
+
+    ``net_tp_pct`` is a percentage of the position notional, after every line in
+    ``costs``.  ``gross_move_required_bps`` is therefore always larger than the
+    net target — that gap is the whole point of this structure.
+    """
+
+    profile: str
+    net_tp_pct: float
+    break_even_price: float
+    net_tp_price: float
+    stop_price: float
+    emergency_stop_price: float
+    gross_move_required_bps: float
+    expected_net_profit_usd: float
+    expected_gross_profit_usd: float
+    costs: CostBreakdown = field(default_factory=CostBreakdown)
+    entry_is_maker: bool = False
+    exit_is_maker: bool = False
+    reachable: bool = True
+    notes: list[str] = field(default_factory=list)
+
+    @property
+    def net_after_costs_usd(self) -> float:
+        return self.expected_gross_profit_usd - self.costs.total_usd
+
+
+@dataclass
+class PortfolioState:
+    """The whole book at one instant — what the allocator decides against."""
+
+    ts_ms: int
+    equity: float
+    cash: float
+    deployed_usd: float
+    reserve_required_usd: float
+    open_risk_usd: float
+    correlated_risk_usd: float
+    directional_exposure_pct: float
+    positions: list[Position] = field(default_factory=list)
+
+    @property
+    def available_usd(self) -> float:
+        """Cash that may actually be deployed, after the reserve is set aside."""
+        return max(0.0, self.cash - self.reserve_required_usd)
+
+    @property
+    def open_risk_pct(self) -> float:
+        return self.open_risk_usd / self.equity * 100.0 if self.equity > 0 else 0.0
+
+    @property
+    def deployed_pct(self) -> float:
+        return self.deployed_usd / self.equity * 100.0 if self.equity > 0 else 0.0
+
+
+@dataclass
+class Allocation:
+    """One approved slice of capital, produced by the allocation engine."""
+
+    opportunity: "Opportunity"
+    qty: float
+    notional_usd: float
+    risk_usd: float
+    targets: NetTargets
+    rank: int = 0
+    notes: list[str] = field(default_factory=list)

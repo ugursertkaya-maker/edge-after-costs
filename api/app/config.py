@@ -259,6 +259,104 @@ class BacktestConfigDefaults:
 
 
 @dataclass(frozen=True)
+class ProfitConfig:
+    """Fee-aware NET take-profit engine (V2).
+
+    A fixed dollar target is economically incoherent: $0.50 is 5% of a $10
+    position and 0.25% of a $200 one.  Targets are therefore expressed as a NET
+    percentage of the position, and the engine solves backwards through every
+    cost line to the gross price that actually delivers it.
+    """
+
+    # Research profiles, all NET of fees + spread + slippage + latency buffer.
+    profile: str = _es("NET_TP_PROFILE", "base")  # micro | base | fast | extended
+    micro_pct: float = _ef("NET_TP_MICRO_PCT", 0.25)
+    base_pct: float = _ef("NET_TP_BASE_PCT", 0.50)
+    fast_pct: float = _ef("NET_TP_FAST_PCT", 0.75)
+    extended_pct: float = _ef("NET_TP_EXTENDED_PCT", 1.00)
+
+    # Extra margin demanded above the modelled cost, to cover execution
+    # uncertainty the model cannot see.
+    latency_buffer_bps: float = _ef("NET_TP_LATENCY_BUFFER_BPS", 1.0)
+    uncertainty_margin: float = _ef("NET_TP_UNCERTAINTY_MARGIN", 1.25)
+
+    # Volatility sanity: a NET target the market cannot reach in the horizon is
+    # not a target, it is a time stop with extra steps.
+    max_target_atr_mult: float = _ef("NET_TP_MAX_ATR_MULT", 6.0)
+
+    def target_pct(self, name: str | None = None) -> float:
+        return {
+            "micro": self.micro_pct, "base": self.base_pct,
+            "fast": self.fast_pct, "extended": self.extended_pct,
+        }.get(name or self.profile, self.base_pct)
+
+    @property
+    def all_profiles(self) -> tuple[str, ...]:
+        return ("micro", "base", "fast", "extended")
+
+
+@dataclass(frozen=True)
+class ExecutionStyleConfig:
+    """Maker-first execution (V2).
+
+    Binance.US currently charges 0% maker.  Resting is therefore strictly
+    cheaper than crossing whenever it fills — but it does not always fill, and
+    an unfilled maker order must never be auto-converted into a market order:
+    it has to re-qualify on taker economics first.
+    """
+
+    maker_first: bool = _eb("MAKER_FIRST", True)
+    maker_offset_ticks: int = _ei("MAKER_OFFSET_TICKS", 1)
+    maker_wait_seconds: int = _ei("MAKER_WAIT_SECONDS", 20)
+    maker_requote_limit: int = _ei("MAKER_REQUOTE_LIMIT", 2)
+    # Cross the spread only if the trade still clears the NET gate as a taker.
+    allow_taker_fallback: bool = _eb("ALLOW_TAKER_FALLBACK", True)
+    cancel_on_signal_loss: bool = _eb("CANCEL_ON_SIGNAL_LOSS", True)
+
+
+@dataclass(frozen=True)
+class PortfolioConfig:
+    """Many small positions, bounded by risk rather than by a position count.
+
+    The old 1-3 position cap is replaced by a capital-and-risk budget.  The
+    count ceiling that remains is a safety valve, not the normal constraint.
+    """
+
+    max_open_positions: int = _ei("MAX_OPEN_POSITIONS", 25)   # emergency ceiling only
+    total_open_risk_pct: float = _ef("TOTAL_OPEN_RISK_PCT", 3.0)  # 2 | 3 | 5 profiles
+    cash_reserve_pct: float = _ef("CASH_RESERVE_PCT", 20.0)       # 10 | 20 | 30
+    min_position_usd: float = _ef("MIN_POSITION_USD", 10.0)
+    max_position_usd: float = _ef("MAX_POSITION_USD", 125.0)
+    max_positions_per_symbol: int = _ei("MAX_POSITIONS_PER_SYMBOL", 1)
+
+    # Correlation: eight simultaneous crypto longs are one large crypto long.
+    correlation_window_bars: int = _ei("CORRELATION_WINDOW_BARS", 120)
+    max_correlated_risk_pct: float = _ef("MAX_CORRELATED_RISK_PCT", 2.0)
+    correlation_threshold: float = _ef("CORRELATION_THRESHOLD", 0.65)
+    max_directional_exposure_pct: float = _ef("MAX_DIRECTIONAL_EXPOSURE_PCT", 70.0)
+
+    # Allocation: better setups get more capital, but only via edge and risk.
+    allocation_mode: str = _es("ALLOCATION_MODE", "dynamic")  # few_large|many_small|dynamic
+
+
+@dataclass(frozen=True)
+class HorizonConfig:
+    """The 25-60 minute development window.
+
+    25 minutes is a checkpoint, never a lock: profit taken early is taken, a
+    stop hit at minute two is honoured at minute two.
+    """
+
+    checkpoint_seconds: int = _ei("HORIZON_CHECKPOINT_SECONDS", 1_500)   # 25 min
+    time_stop_seconds: int = _ei("HORIZON_TIME_STOP_SECONDS", 3_600)     # 60 min
+    allow_extension: bool = _eb("HORIZON_ALLOW_EXTENSION", True)
+    extension_seconds: int = _ei("HORIZON_EXTENSION_SECONDS", 1_800)
+    # At the checkpoint, a position doing nothing yields to a better idea.
+    rotate_if_edge_ratio: float = _ef("HORIZON_ROTATE_IF_EDGE_RATIO", 1.75)
+    rotate_min_progress_frac: float = _ef("HORIZON_ROTATE_MIN_PROGRESS", 0.25)
+
+
+@dataclass(frozen=True)
 class WorkerConfig:
     evaluate_interval_ms: int = _ei("EVAL_INTERVAL_MS", 1_000)
     position_monitor_interval_ms: int = _ei("POSITION_MONITOR_INTERVAL_MS", 500)
@@ -293,6 +391,10 @@ class Settings:
     exits: ExitConfig = field(default_factory=ExitConfig)
     worker: WorkerConfig = field(default_factory=WorkerConfig)
     backtest: BacktestConfigDefaults = field(default_factory=BacktestConfigDefaults)
+    profit: ProfitConfig = field(default_factory=ProfitConfig)
+    execution_style: ExecutionStyleConfig = field(default_factory=ExecutionStyleConfig)
+    portfolio: PortfolioConfig = field(default_factory=PortfolioConfig)
+    horizon: HorizonConfig = field(default_factory=HorizonConfig)
 
     @property
     def is_paper(self) -> bool:
