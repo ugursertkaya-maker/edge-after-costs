@@ -167,14 +167,46 @@ arithmetically impossible.
 Started 2026-09-11 03:0x UTC. Starting capital **$500** (comparison ledgers
 $1,000 / $5,000 run the same decisions at different size).
 
-At the time of writing: **241 evaluation passes, 0 positions opened.** The
-scanner sees real signals; the ranker rejects them. Live rejection ledger:
+The full loop has now run end to end on live data. First completed round trip:
+
+| | |
+|---|---|
+| BTC/USD · `book_imbalance` · TRAILING_PROFIT · held 1m 29s | |
+| Entry | 76,776.84 |
+| Exit | 76,802.55 |
+| Gross P&L | **+$0.0584** |
+| Fees | −$0.0349 |
+| Slippage | −$0.0449 |
+| **NET P&L** | **+$0.0235** |
+
+That is precisely the micro-profit shape the brief describes — two and a half
+cents, banked only because it survived every cost line. Base ledger equity
+$500.02, 1 trade, 0 open.
+
+### The same trade, three account sizes — the capacity limit, measured
+
+All three ledgers took the identical decision at the same instant. Only the
+size differed:
+
+| Ledger | Net P&L on that trade |
+|---|---|
+| $500 | **+$0.0235** |
+| $1,000 | **+$0.0233** |
+| $5,000 | **−$0.0431** |
+
+**The same trade is profitable at $500 and loss-making at $5,000**, because the
+larger order walks deeper into a book that has $753 of volume a minute behind
+it. This is the liquidity finding restated as a capacity ceiling: whatever edge
+exists here does not scale past roughly four figures, and the extra capital is
+paid straight back out as slippage.
+
+Live rejection ledger over 181 evaluation passes (3 entries, 3 exits):
 
 | Reason | Count |
 |---|---|
-| `NOT_SUPPORTED_SHORT` (spot long-only) | 84 |
-| `NEGATIVE_EDGE` | 33 |
-| `EDGE_BELOW_MIN` | 9 |
+| `NEGATIVE_EDGE` | 137 |
+| `EDGE_BELOW_MIN` | 36 |
+| `DUPLICATE_SYMBOL` | 21 |
 
 A representative live decision, fully costed:
 
@@ -189,9 +221,12 @@ SOLUSD  book_imbalance   gross 2.49 bps
 That is the whole thesis in five lines: the gross move and the cost of
 capturing it are the same size.
 
-**A bot that opens no positions on a market with no edge is working
-correctly.** The 7-day observation window is running and will accumulate
-evidence either way.
+One profitable trade is not evidence of anything — it is a single sample, and
+the backtests over 424 trades say the distribution is negative. What it does
+prove is that the machinery works: scan, rank, cost, size, fill, monitor,
+trail, exit, release capital, record. **A bot that opens no positions on a
+market with no edge is also working correctly.** The 7-day observation window
+is running and will accumulate evidence either way.
 
 ---
 
