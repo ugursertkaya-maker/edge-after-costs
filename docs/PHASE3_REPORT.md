@@ -7,15 +7,25 @@ Live: <https://your-domain.example/cryptobot> · 1,167 automated tests passing
 
 ## The answer
 
-**No robust profitable strategy exists on Binance.US for this system as
-specified. NO.**
+**No robust profitable strategy was found. NO — with one axis still being
+measured, named below rather than glossed over.**
 
-That conclusion rests on **590,306 out-of-sample trades** across 1,400 evaluated
+The search covered **590,306 out-of-sample trades** across 1,400 evaluated
 candidates, four coins, ten strategy families, seven regimes and six holding
-horizons, pooling to **−$92,365** net. It is not a close call and it is not a
-small sample.
+horizons, pooling to **−$92,365** net. On the family, parameter, horizon,
+regime and coin axes the answer is unambiguous and the sample is large.
 
-Nothing was tuned to reach it, and nothing was hidden to protect it. Every arm
+**What that run did not vary was the exit and stop geometry.** Every one of the
+1,400 arms ran the baseline pair — a 17 bps net target against an `atr:2` stop.
+That stop is horizon-scaled (`mult × 1m-ATR × √horizon`), so at the 60-minute
+baseline it is ≈ **34 bps**: a reward:risk of **0.5 : 1**, which needs a **~67%
+hit rate** to break even. Nothing came close to 67%, and nothing should be
+expected to. A second sweep that varies the target and the stop across all 17
+exit profiles and 11 stop profiles is running now; its result is appended below
+when it lands, and until then the honest scope of the "NO" is *the families, at
+that geometry*.
+
+Nothing was tuned to reach this, and nothing was hidden to protect it. Every arm
 tested — including the losers, including the abandoned — is in
 `/tmp/phase3/tournament.txt` and the top 150 are on the dashboard.
 
@@ -126,12 +136,16 @@ there is no subset that survives. Slippage is 2.9–3.0× fees on every one.
 Every regime is negative. There is no regime in which some family works, so the
 "activate a strategy only in its regime" design has nothing to activate.
 
-**The mechanical diagnosis**, visible in those last two columns: average win
-$0.22–0.25 against average loss $0.23–0.42, with a nominal reward:risk of about
-4:1 (a 17 bps target against a ~4 bps ATR stop). Positions are systematically
-**not reaching their targets while losses run past their stops** — the exits
-give back more than the entries earn. That is the single clearest mechanical
-finding of the search.
+**What those last two columns actually say.** Average win $0.22–0.25 against
+average loss $0.23–0.42 is a ratio of roughly **0.79**. Set against the
+baseline's nominal reward:risk of **0.5 : 1** (17 bps target, ≈34 bps
+horizon-scaled stop), that is *better* than the geometry implies — the trailing
+and time exits are cutting some losses short rather than letting them run.
+
+So there is no exit defect here. The arms lose because a 0.5 : 1 payoff needs a
+~67% hit rate and the best family managed 39%. That is a statement about the
+signal and the geometry together, not about the exit machinery, and it is the
+reason the second sweep varies the geometry rather than the signal.
 
 ### Per family
 
@@ -227,14 +241,13 @@ What remains structurally unprofitable, precisely:
    starts at 3–5 minutes.
 3. **Flow and volume strategies.** They need a tape this venue does not produce:
    130 candidates generated zero signals in 120 days.
-4. **The exit logic as built.** Average win $0.22 against average loss $0.28 on
-   a nominal 4:1 reward:risk means targets are not being reached while stops are
-   being overshot. This is the one finding that is a *defect* rather than a
-   market fact, and it is the first thing to fix before any further search.
+What is **not** ruled out, and is being measured:
 
-What is **not** ruled out: **maker-first on BTC/USD specifically**, where the
-early tape shows a 16% fill rate at flat markout. That is the only remaining
-candidate structure, and it needs 24 hours of tape to be answerable.
+* **The exit and stop geometry.** The 1,400-arm run held a 0.5 : 1 payoff fixed.
+  A target larger than its stop needs a far lower hit rate to break even, and
+  that axis has not been searched yet. This is the live question.
+* **Maker-first on BTC/USD specifically**, where the early tape shows a 16% fill
+  rate at flat markout. It needs 24 hours of tape to be answerable.
 
 ## 24–27. Housekeeping
 
@@ -251,13 +264,12 @@ candidate structure, and it needs 24 hours of tape to be answerable.
 
 ## What I would do next, in order
 
-1. **Fix the exits before searching again.** The avg-win/avg-loss inversion at
-   4:1 nominal reward:risk is a bug-shaped result, not a market fact. Until a
-   position that reaches its target actually books its target, every other
-   result is measured through a broken instrument.
-2. **Let the tape reach 24 hours and re-run the execution study.** It is one
-   command and it answers the only open structural question.
+1. **Finish the exit/stop sweep.** It is the one searched axis the main run held
+   fixed, and it held it at an unfavourable 0.5 : 1 payoff. Running.
+2. **Let the tape reach 24 hours and re-run the execution study.** One command,
+   and it answers the remaining structural question.
 3. **Do not tune.** 1,400 candidates, 590,306 out-of-sample trades, ten
-   families, seven regimes, six horizons, four coins — all negative. Anything
-   that turns green after tuning on this sample is curve fitting, and the gates
-   exist precisely to refuse it.
+   families, seven regimes, six horizons, four coins — all negative on those
+   axes. Anything that turns green after tuning on this sample is curve fitting,
+   and the gates exist precisely to refuse it. Widening the search to an axis
+   that was never searched is not the same thing as tuning one that was.
