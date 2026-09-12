@@ -197,6 +197,12 @@ class TradingWorker:
         # makes a symbol that qualifies once an hour look identical to one that
         # never qualifies at all.
         self._funnel = FunnelReport()
+        # Phase 6 §17. Binance.US spot cannot short, so a short signal is
+        # refused at the risk gate -- but it is still a prediction the system
+        # made, and discarding it silently throws away exactly the information
+        # needed to know how much edge lives on the side we cannot trade.
+        # Counted per strategy, with the edge it claimed, never executed.
+        self._unexecutable_shorts: dict[str, dict[str, float]] = {}
         self._ranked: list[Opportunity] = []
         self._stop = asyncio.Event()
         self._db_ok = False
@@ -626,6 +632,8 @@ class TradingWorker:
                         else "UNKNOWN"
                     )
                     self.stats.rejects[name] = self.stats.rejects.get(name, 0) + 1
+                    if name == "NOT_SUPPORTED_SHORT":
+                        self._note_unexecutable_short(opp)
                     decisions.append(
                         self._decision_row(opp, ts_ms, False, verdict.reject_reason)
                     )
@@ -1021,6 +1029,39 @@ class TradingWorker:
             })
         return board
 
+    def _note_unexecutable_short(self, opp: Opportunity) -> None:
+        """Record a short we predicted and cannot trade on spot (§17).
+
+        Kept apart from the executed book on purpose: mixing them would let a
+        side we never traded flatter or damn a P&L we actually realised. The
+        edge recorded is what the ranker expected, not an outcome -- nothing
+        here claims the trade would have won.
+        """
+        key = opp.signal.strategy
+        row = self._unexecutable_shorts.setdefault(
+            key, {"signals": 0.0, "sum_net_edge_bps": 0.0, "best_net_edge_bps": 0.0}
+        )
+        row["signals"] += 1.0
+        row["sum_net_edge_bps"] += float(opp.net_edge_bps)
+        row["best_net_edge_bps"] = max(
+            row["best_net_edge_bps"], float(opp.net_edge_bps)
+        )
+
+    def _short_side_block(self) -> dict[str, Any]:
+        """What the long-only constraint is costing us in observed signal."""
+        out: dict[str, Any] = {"by_strategy": {}, "total_signals": 0}
+        for strategy, row in sorted(self._unexecutable_shorts.items()):
+            n = int(row["signals"])
+            out["by_strategy"][strategy] = {
+                "signals": n,
+                "mean_net_edge_bps": round(row["sum_net_edge_bps"] / n, 3) if n else 0.0,
+                "best_net_edge_bps": round(row["best_net_edge_bps"], 3),
+                "executable": False,
+                "note": "spot is long-only; recorded, never traded, never faked",
+            }
+            out["total_signals"] += n
+        return out
+
     def _record_funnel(self, rows: list[ScannerRow]) -> None:
         """Fold one evaluation pass into the cumulative funnel."""
         report = self._funnel
@@ -1285,6 +1326,7 @@ class TradingWorker:
             "board": self._opportunity_board(),
             "funnel": self._symbol_funnel(ledger),
             "opportunities": self.recycler.queue.as_dict(),
+            "short_side": self._short_side_block(),
             "recycling": self._recycling_block(ledger, ts),
             "missed": _read_json(
                 Path(self.s.research.directory) / "missed.json"
