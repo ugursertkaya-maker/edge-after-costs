@@ -589,6 +589,49 @@ def test_identical_books_are_called_out_not_presented_as_a_comparison():
     assert "NOT the" in text
 
 
+def test_near_identical_books_are_called_out_too():
+    """The case that actually occurs: twelve arms, two distinct books.  A band
+    that moves one trade has not changed the strategy, and an earlier version of
+    this callout missed it because it only fired on a peak of two or fewer."""
+    results = []
+    for prof in PROFILES:
+        for band in DEPLOY_BANDS_PCT:
+            r = profile_result(f"{prof}@{band:.0f}%", profile=prof, band=band,
+                               net=-42.40, gross=-34.41, trades=320)
+            # One band nudges a single trade; everything else is the same book.
+            if band == 70.0:
+                r.trades, r.net_pnl, r.max_positions = 322, -42.67, 3
+            else:
+                r.max_positions = 2
+            results.append(r)
+    text = format_comparison(results)
+    assert "only 2 distinct books" in text
+    assert "NOT the binding constraint" in text
+    assert "3 risk budgets x 4 deployment bands" in text
+
+
+def test_a_peak_far_below_the_target_is_called_out():
+    results = []
+    for i, prof in enumerate(PROFILES):
+        r = profile_result(f"{prof}@60%", profile=prof, net=-float(i + 1),
+                           trades=100 + i)
+        r.max_positions = 4          # distinct books, but nowhere near 8-15
+        results.append(r)
+    text = format_comparison(results)
+    assert "Peak concurrent positions across every arm is 4" in text
+
+
+def test_no_callout_when_the_arms_genuinely_differ():
+    results = []
+    for i, prof in enumerate(PROFILES):
+        r = profile_result(f"{prof}@60%", profile=prof, net=-float(i + 1),
+                           trades=100 + i)
+        r.max_positions = 9 + i
+        results.append(r)
+    text = format_comparison(results)
+    assert "WHY THE ROWS LOOK THE WAY THEY DO" not in text
+
+
 def test_recording_components_forwards_decisions_untouched():
     cfg = BacktestConfig(starting_equity=500.0)
     settings = arm_settings(cfg, "standard", 70.0)

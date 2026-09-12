@@ -1192,35 +1192,63 @@ def _pf(v: float) -> str:
     return "inf" if v == float("inf") else f"{v:.2f}"
 
 
+#: Low end of the spec's 8–15 simultaneous-position target.  A book whose peak
+#: never reaches this was never anywhere near its budget, whatever the budget
+#: was set to.
+TARGET_POSITIONS_LOW = 8
+
+
 def _identical_note(results: Sequence[ProfileResult]) -> str | None:
     """Say out loud when the profiles varied a limit nothing ever reached.
 
-    This is the Phase 3 allocation-mode result restated: byte-identical books
-    from three different settings mean the varied knob was not the binding
-    constraint.  Reporting twelve identical rows as a comparison would be the
-    same mistake with a bigger table.
+    This is the Phase 3 allocation-mode result restated, and it is the most
+    important line in the report when it fires: identical — or near-identical —
+    books from twelve different settings mean the varied knob was not the
+    binding constraint.  Presenting twelve such rows as a comparison would be
+    Phase 3's mistake with a bigger table.
+
+    Three strengths of the same statement, because the evidence comes in three
+    strengths: every arm identical, *fewer distinct books than arms*, or a peak
+    position count that never approached the 8–15 target.  The middle case is
+    the one that actually occurs — a deployment band nudges one or two trades
+    without changing anything structural — and it is the one an earlier version
+    of this function missed.
     """
     ran = [r for r in results if r.ran]
     if len(ran) < 2:
         return None
-    keys = {(r.trades, round(r.net_pnl, 8), r.max_positions) for r in ran}
-    if len(keys) > 1:
-        peak = max(r.max_positions for r in ran)
-        if peak <= 2:
-            return (
-                f"Peak concurrent positions across every arm is {peak}. The risk "
-                f"budget is not the binding constraint — this is Phase 3's "
-                f"allocation-mode finding again: you cannot allocate across "
-                f"candidates that do not exist."
-            )
-        return None
-    return (
-        f"All {len(ran)} arms produced an identical book ({ran[0].trades} trades, "
-        f"net {ran[0].net_pnl:+.2f}, peak {ran[0].max_positions} positions). The "
-        f"total-open-risk budget and the deployment band are therefore NOT the "
-        f"binding constraint — exactly what Phase 3 found for the three allocation "
-        f"modes. Varying a ceiling nothing reaches varies nothing."
-    )
+    books = {(r.trades, round(r.net_pnl, 8), r.max_positions) for r in ran}
+    peak = max(r.max_positions for r in ran)
+    budgets = len({r.total_open_risk_pct for r in ran})
+    bands = len({r.deploy_band_pct for r in ran})
+
+    if len(books) == 1:
+        return (
+            f"All {len(ran)} arms produced an identical book ({ran[0].trades} trades, "
+            f"net {ran[0].net_pnl:+.2f}, peak {ran[0].max_positions} positions). The "
+            f"total-open-risk budget and the deployment band are therefore NOT the "
+            f"binding constraint — exactly what Phase 3 found for the three allocation "
+            f"modes. Varying a ceiling nothing reaches varies nothing."
+        )
+
+    if len(books) < len(ran):
+        return (
+            f"{len(ran)} arms ({budgets} risk budgets x {bands} deployment bands) "
+            f"produced only {len(books)} distinct books, peaking at {peak} concurrent "
+            f"positions against a 20-position ceiling and an 8-15 target. The budget "
+            f"and the band are NOT the binding constraint — this is Phase 3's "
+            f"allocation-mode finding again, and the rows that do differ differ by a "
+            f"trade or two, not by a strategy. Read idle_by_reason, not this table."
+        )
+
+    if peak < TARGET_POSITIONS_LOW:
+        return (
+            f"Peak concurrent positions across every arm is {peak}, against the "
+            f"8-15 target and the 20 ceiling. No arm ever approached its own risk "
+            f"budget, so the budget cannot be what separates them — you cannot "
+            f"allocate across candidates that do not exist."
+        )
+    return None
 
 
 def format_comparison(
