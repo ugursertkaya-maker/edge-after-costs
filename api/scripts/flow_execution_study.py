@@ -59,6 +59,12 @@ def main() -> int:
             ts_ms=int(r["entry_ms"]), qty=float(r["qty"]),
             exit_ms=int(r["exit_ms"]), exit_price=float(r["exit_price"]),
             taker_entry_price=float(r["entry_price"]),
+            # HYBRID re-qualifies at the timeout against the edge it expected
+            # when it decided. Omitting this is not a neutral default: a zero
+            # expected edge can never clear min_net_edge_bps, so hybrid would
+            # report a 0% cross rate that is an artefact of the export.
+            expected_net_edge_bps=float(r.get("expected_net_edge_bps") or 0.0),
+            regime=str(r.get("regime") or "unknown"),
             strategy=r["strategy"],
         )
         for r in rows if float(r["qty"]) > 0 and float(r["entry_price"]) > 0
