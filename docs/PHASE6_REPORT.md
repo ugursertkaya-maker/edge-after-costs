@@ -142,3 +142,95 @@ claim that survives only because the alternative was never evaluated is not a
 finding — so the alternative is evaluated, every cycle, and the funnel records
 the outcome. If XRP ever genuinely out-ranks BTC on net expected value, XRP
 trades.
+
+---
+
+## 5. Holding behaviour, measured before it was changed
+
+139 live trades. **No trade in this project has ever lasted longer than 293
+seconds.** The 5–10m, 10–25m, 25–60m and >60m buckets are all empty, so the
+25-minute checkpoint and 60-minute time stop built in V2 have **never once
+fired**.
+
+| Strategy | n | median | mean | max | net $ | exit reasons |
+|---|---|---|---|---|---|---|
+| momentum_scalp | 67 | **27 s** | 71 s | 293 s | +1.17 | 33 TP · 18 SL · 16 trail |
+| flow_impulse | 48 | **24 s** | 32 s | 122 s | **+4.24** | 18 TP · 3 SL · 27 trail |
+| book_imbalance | 21 | 89 s | 114 s | 275 s | −5.57 | 5 TP · 10 SL · 6 trail |
+| breakout_scalp | 3 | 53 s | 53 s | 53 s | −1.12 | 3 SL |
+
+The brief's worry was that `flow_impulse` might be forced to sit for 25 minutes.
+**The opposite was happening.** `momentum_scalp` — a strategy that needs time to
+develop — has a **27-second median hold**. That is the churn the brief names,
+and it was measured rather than assumed.
+
+### Net P&L by holding bucket, per strategy — never pooled
+
+| Strategy | <30s | 30–60s | 1–2m | 2–5m | 5–10m … >60m |
+|---|---|---|---|---|---|
+| momentum_scalp | +0.80 (39) | +0.60 (4) | +0.47 (3) | **−0.69 (21)** | — |
+| **flow_impulse** | **+1.85 (30)** | **+1.47 (12)** | +0.36 (3) | +0.57 (3) | — |
+| book_imbalance | −1.03 (2) | −1.84 (6) | −1.87 (5) | −0.83 (8) | — |
+| breakout_scalp | — | −1.12 (3) | — | — | — |
+
+`flow_impulse` is positive in every bucket it occupies. `book_imbalance` is
+negative in every one of its. An empty bucket renders empty, never as a zero —
+"no trades here" and "these trades netted nothing" are different facts.
+
+### The holding profiles, as implemented
+
+| Strategy | min | typical | max | decay exit | re-eval entry score |
+|---|---|---|---|---|---|
+| flow_impulse | **0 s** | 30 s | 180 s | yes, 20 s halflife | yes |
+| book_imbalance | **0 s** | 120 s | 600 s | yes, 90 s halflife | yes |
+| momentum_scalp | 60 s | 600 s | 2400 s | no | **no** |
+| breakout_scalp | 60 s | 900 s | 3600 s | no | **no** |
+| trend_pullback | 120 s | 1500 s | 3600 s | no | **no** |
+| mean_reversion | 60 s | 600 s | 2400 s | no | own stretch targets |
+
+Decay is **measured, not timed**:
+`decay = 1 − clamp(trigger_now / trigger_at_entry)`, exiting when
+`decay > 0.5^(held / halflife)`. At entry the tolerance is 1.0, so nothing can
+decay out immediately; an **intact** impulse survives every tolerance at any
+age. A 30-second `flow_impulse` trade is correct when the impulse is spent, and
+a 120-second one is correct when it is not. No universal minimum hold exists,
+and `min_hold_seconds` is zero for both flow strategies by design.
+
+## 6. TAKER vs MAKER vs HYBRID on flow_impulse's own signals
+
+48 `flow_impulse` signals, replayed against **23.0 hours** of recorded L2 and
+tape (4,900 BTC prints, 2,414 ETH, 967 SOL). Wait windows chosen for a signal
+whose median hold is 32 seconds — waiting 20 seconds for a maker fill on a
+30-second alpha measures the alpha decaying, not the execution.
+
+| maker wait | **maker fill %** | hybrid cross % | TAKER net | MAKER net | MAKER after opp. cost | HYBRID net | markout |
+|---|---|---|---|---|---|---|---|
+| 50 ms | **0.0%** | 100% | $4.2410 | $0.0000 | −$4.2410 | $4.3525 | — |
+| 100 ms | **0.0%** | 100% | $4.2410 | $0.0000 | −$4.2410 | **$4.5227** | — |
+| 250 ms | **0.0%** | 100% | $4.2410 | $0.0000 | −$4.2410 | $4.0214 | — |
+| 500 ms | **0.0%** | 100% | $4.2410 | $0.0000 | −$4.2410 | $4.2532 | — |
+| 1,000 ms | 6.2% | 93.8% | $4.2410 | $0.1038 | −$4.0803 | $3.8838 | +0.54 bps |
+| 2,000 ms | 12.5% | 87.5% | $4.2410 | $0.1694 | −$3.6538 | $3.0473 | +0.62 bps |
+
+**Maker execution is not available at this timescale.** A post-only quote at or
+one tick behind the touch fills **0% of the time within half a second**. Fill
+rate rises with patience — 6.2% at one second, 12.5% at two — and hybrid's net
+*falls* as it waits: $4.52 → $3.88 → $3.05. The markout on the fills that do
+happen is mildly **positive** (+0.54 to +0.62 bps), so those fills are not
+adversely selected; there simply are not enough of them, and the waiting costs
+more than the fee saves.
+
+**Hybrid is indistinguishable from taker.** Every arm lands between $3.88 and
+$4.52 — a spread of $0.64 — against a taker total of $4.2410 whose own standard
+error is **$0.80**. The entire observed spread across every wait window is
+**0.8 of one standard error**. There is no measurable difference, and reporting
+the 100 ms row as a 6.6% improvement would be reading noise.
+
+**Pure maker is the worst arm by far** once the signals it never filled are
+charged to it: $0.17 earned against $3.65 of missed trades, i.e. **−$3.49**.
+Skipping the losers is only an achievement if you did not also skip the winners.
+
+This is the second independent reason the maker thesis is finished. The P&L
+audit killed it for the bar-driven strategies because they lose at the mid;
+this kills it for `flow_impulse` because you cannot rest a quote for long enough
+to be filled without outliving the alpha you are trying to capture.
