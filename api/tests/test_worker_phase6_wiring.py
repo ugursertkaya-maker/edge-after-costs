@@ -111,5 +111,5 @@ class TestFunnelLadderStaysMonotone:
         assert f.bottleneck()[0] == "selected"
 
     def test_the_worker_marks_the_whole_prefix(self):
-        src = _source(worker_main.TradingWorker._symbol_funnel)
+        src = _source(worker_main.TradingWorker._record_funnel)
         assert 'FUNNEL_STAGES[: FUNNEL_STAGES.index("ranked") + 1]' in src

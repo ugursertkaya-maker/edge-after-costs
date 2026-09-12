@@ -39,6 +39,7 @@ from app.profit import NetTargetEngine
 from app.ranker import OpportunityRanker
 from app.recorder import TapeRecorder
 from app.research.champion import ChampionStore
+from app.research.funnel import STAGES as FUNNEL_STAGES, FunnelReport
 from app.regime import RegimeClassifier
 from app.risk import RiskEngine, RiskState
 from app.runtime import RuntimeStore
@@ -190,6 +191,12 @@ class TradingWorker:
         self._cooldown_until_ms = 0
         self._universe_refreshed_ms = 0
         self._features_cache: dict[str, Features] = {}
+        # The funnel accumulates across evaluations rather than describing the
+        # current instant. "Candidate counts by symbol" is a count over time;
+        # a snapshot of one 1-second pass answers a different question and
+        # makes a symbol that qualifies once an hour look identical to one that
+        # never qualifies at all.
+        self._funnel = FunnelReport()
         self._ranked: list[Opportunity] = []
         self._stop = asyncio.Event()
         self._db_ok = False
@@ -497,6 +504,7 @@ class TradingWorker:
         if stats_rows:
             self._persist(lambda s, r: r.record_market_stats(s, stats_rows))
         self._ranked = self.ranker.rank(opportunities)
+        self._record_funnel(rows)
         self.recycler.note_rescan(ts_ms)
         return self._ranked
 
@@ -1013,17 +1021,9 @@ class TradingWorker:
             })
         return board
 
-    def _symbol_funnel(self, ledger: Ledger) -> dict[str, Any]:
-        """Per-symbol counts from discovery to trade, plus the BTC share.
-
-        Phase 6 §21 asks for a concentration flag *and* its cause.  The flag on
-        its own would be a number without an explanation, which is the failure
-        mode this project keeps finding in its own reports.  Never used to
-        suppress a symbol -- if BTC earns the rank, BTC trades.
-        """
-        from app.research.funnel import STAGES as FUNNEL_STAGES, FunnelReport
-
-        report = FunnelReport()
+    def _record_funnel(self, rows: list[ScannerRow]) -> None:
+        """Fold one evaluation pass into the cumulative funnel."""
+        report = self._funnel
         for entry in self.universe:
             f = report.for_symbol(entry.symbol)
             f.reached("discovered")
@@ -1034,7 +1034,7 @@ class TradingWorker:
                     f"absorbs ${entry.capacity_max_usd:,.2f}/min, below the "
                     f"${entry.min_tradable_usd:,.2f} minimum order",
                 )
-        for row in self.scanner:
+        for row in rows:
             f = report.for_symbol(row.symbol)
             if row.reject_reason == "DATA_FAILURE":
                 f.dropped("data_healthy", "no market snapshot")
@@ -1042,15 +1042,9 @@ class TradingWorker:
             f.reached("data_healthy")
             f.reached("features")
             f.reached("strategy_evaluated")
-            # The model stage is vacuously passed when there is no champion to
-            # consult -- Phase 4 never promoted one. Marking it unreached would
-            # name it every symbol's bottleneck and hide the real wall, which
-            # is exactly the kind of confidently-wrong diagnosis this funnel
-            # exists to prevent.
-            if self.champion is None or getattr(self, "predictor", None) is None:
-                f.reached("model_evaluated")
-            elif row.strategy:
-                f.reached("model_evaluated")
+            # Vacuously passed when there is no champion to consult: Phase 4
+            # never promoted one, and naming it a wall would hide the real one.
+            f.reached("model_evaluated")
             if row.strategy:
                 f.reached("candidate")
             else:
@@ -1062,28 +1056,46 @@ class TradingWorker:
                 f.dropped("ranked", row.reject_reason)
         for opp in self._ranked:
             # Every stage up to ``ranked`` precedes ranking in the pipeline, so
-            # reaching it implies reaching them.  Marking only ``ranked`` left
+            # reaching it implies reaching them. Marking only ``ranked`` leaves
             # cost_gate..correlation_gate at zero behind a non-zero, which is
-            # precisely the monotonicity violation ``check()`` exists to catch
-            # -- it fired intermittently, on exactly the symbols that ranked.
+            # the monotonicity violation ``check()`` exists to catch.
             f = report.for_symbol(opp.symbol)
             for stage in FUNNEL_STAGES[: FUNNEL_STAGES.index("ranked") + 1]:
-                if f.stages.get(stage, 0) == 0:
-                    f.reached(stage)
+                f.reached(stage)
+
+    def _symbol_funnel(self, ledger: Ledger) -> dict[str, Any]:
+        """The cumulative funnel, plus the BTC share and its cause.
+
+        Phase 6 §21 asks for a concentration flag *and* its cause.  The flag on
+        its own would be a number without an explanation, which is the failure
+        mode this project keeps finding in its own reports.  Never used to
+        suppress a symbol -- if BTC earns the rank, BTC trades.
+
+        Counts accumulate in :meth:`_record_funnel` across every evaluation.
+        Trades are counted here because the ledger is the authority on them and
+        re-counting per pass would multiply one trade by the number of passes
+        that observed it.
+        """
+        report = self._funnel
+        traded: dict[str, int] = {}
         for trade in ledger.closed_trades:
-            report.for_symbol(trade.symbol).reached("traded")
+            traded[trade.symbol] = traded.get(trade.symbol, 0) + 1
         for pos in ledger.open_positions.values():
-            report.for_symbol(pos.symbol).reached("traded")
+            traded[pos.symbol] = traded.get(pos.symbol, 0) + 1
+        for symbol, n in traded.items():
+            f = report.for_symbol(symbol)
+            f.stages["traded"] = n
 
         data = report.as_dict()
         share = data["concentration"]
         btc = sum(v for k, v in share.items() if k.startswith("BTC"))
-        traded = sum(f.stages.get("traded", 0) for f in report.symbols.values())
+        total = sum(traded.values())
         data["btc_trade_share"] = round(btc, 4)
-        data["sample_size"] = traded
-        # A share computed from a handful of trades is noise; say so rather than
-        # flagging on it.  60 is roughly where a 70% reading stops being luck.
-        data["btc_concentration_flag"] = bool(btc > 0.70 and traded >= 60)
+        data["sample_size"] = total
+        # A share computed from a handful of trades is noise; say so rather
+        # than flagging on it.  60 is roughly where a 70% reading stops being
+        # luck.
+        data["btc_concentration_flag"] = bool(btc > 0.70 and total >= 60)
         data["distinct_symbols_traded"] = len(share)
         return data
 
