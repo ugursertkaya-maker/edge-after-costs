@@ -333,3 +333,61 @@ The strategy stays in PAPER, collecting. Reports at 100, 200 and 500 trades.
   scanned so that the claim stays falsifiable, not because it is doubted.
 * **Nothing here says the account will make money.** Phases 3–5 said it will
   not, and the one strategy that disagrees has traded for twelve hours.
+
+---
+
+## 11. The venue-wide quote grid — and why the answer differs by symbol
+
+`scripts/run_execution_study.py`, 120 probe quotes per cell, against the same
+23.01-hour tape. **The tool refused to draw a conclusion** — it needs 24 hours
+and said so, in its own words, rather than reporting the numbers as a finding.
+They are reported here as what they are: a complete dry run of the machinery,
+one hour short of its own bar.
+
+Probe signals carry **no claimed edge**, so their net P&L is meaningless. Fill
+rate and markout are the measurements.
+
+| symbol | fill @ 5 s | fill @ 15 s | fill @ 30 s | markout 1 s | markout 5 s | verdict |
+|---|---|---|---|---|---|---|
+| **BTCUSD** | 5.0% | **20.0%** | **32.5%** | −0.18 bps | **−0.07 bps** | **FLAT** |
+| ETHUSD | 0.8% | 2.5% | 5.0% | −1.39 bps | **−2.07 bps** | **ADVERSE SELECTION** |
+| SOLUSD | 0.8% | 2.5% | 4.2% | −5.18 bps | **−5.68 bps** | **ADVERSE SELECTION** |
+
+**Read the markout before the fill rate.** A high fill rate with negative
+markout is worse than a low one with flat markout: it means the 0% maker fee is
+being handed back through the price.
+
+* **BTCUSD is the one pair where resting works.** 20% of quotes fill inside 15
+  seconds and the 5-second markout is −0.07 bps, i.e. nothing. On this tape the
+  fee saving is real.
+* **ETHUSD and SOLUSD fills are informed against us.** SOL gives back **5.68 bps
+  within five seconds** and 9.53 bps within thirty, against a fee saving of
+  about 1 bps. The quotes that fill on those pairs fill *because* someone knew
+  something.
+
+**`touched-but-not-filled: 54 of 220 touched quote-cells (24.5%)`.** A naive
+maker backtest that books every touch as a fill would have reported 220 fills
+where the queue model gives 166 — overstating by a third. That single line is
+the reason this study models the queue instead of the price.
+
+### How this fits with §6
+
+The two studies answer different questions and agree.
+
+* §6 asked whether **`flow_impulse`** can use maker execution: **no**, because
+  at any wait short enough to preserve a 32-second alpha the fill rate is 0%.
+* §11 asks whether **the venue** rewards resting at all: **on BTCUSD yes, on
+  ETHUSD and SOLUSD no** — and the wait needed to get BTCUSD's 20% is 15
+  seconds, roughly half the entire life of a `flow_impulse` trade.
+
+So the honest synthesis is narrower than "maker does not work here": **there is
+a real maker opportunity on BTCUSD at a 15–30 second horizon, and no strategy in
+this project trades at that horizon with an edge.** `flow_impulse` is too fast
+to wait; `momentum_scalp` is slow enough but is beta. That is a gap worth
+naming, not a door worth closing — but it is a *future* strategy's opportunity,
+not this one's, and nothing in it rescues the current book.
+
+**This run must be repeated once the recorder passes 24 hours.** The machinery
+is exercised and correct; the sample is one hour short of its own gate, and the
+gate exists precisely so that a number like SOL's −5.68 bps is not promoted to a
+conclusion on 3 fills.
