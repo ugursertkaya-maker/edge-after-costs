@@ -613,3 +613,154 @@ def test_the_plan_serialises_for_the_dashboard() -> None:
     payload = make_plan(make_engine(), candidates=10).as_dict()
     assert json.loads(json.dumps(payload)) == payload
     assert payload["slots"] == 10
+
+
+# --------------------------------------------------------------------------- #
+# Capital release (V6)
+# --------------------------------------------------------------------------- #
+#
+# The Phase 6 question is not "may we open this?" but "how long is the capital
+# from a close out of the game?".  The answer has to be *zero ticks*: the same
+# call that books the exit has to leave the portfolio view able to fund the next
+# trade.  These check every budget the closed position was holding.
+
+
+def released(eng, state, pid: str, **kw):
+    """``release`` addressed by position id, so the fixtures stay readable."""
+    pos = next(p for p in state.positions if p.id == pid)
+    return eng.release(state, pos, **kw)
+
+
+def test_a_close_returns_cash_risk_and_the_slot_in_the_same_call() -> None:
+    eng = make_engine()
+    state = make_state(
+        eng,
+        cash=400.0,
+        positions=[
+            make_position("a", "ETHUSD", notional=60.0, risk=0.60),
+            make_position("b", "SOLUSD", notional=40.0, risk=0.40),
+        ],
+    )
+    assert state.deployed_usd == pytest.approx(100.0)
+
+    after = released(eng, state, "a", proceeds_usd=60.0)
+
+    assert [p.id for p in after.positions] == ["b"]
+    assert after.cash == pytest.approx(460.0)
+    assert after.deployed_usd == pytest.approx(40.0)
+    assert after.open_risk_usd == pytest.approx(0.40)
+    assert after.available_usd == pytest.approx(360.0)   # $460 less the $100 reserve
+    # Nothing about the ledger's total moved: a scratch exit is not a P&L event.
+    assert after.equity == pytest.approx(state.equity)
+    assert after.cash + after.deployed_usd == pytest.approx(after.equity)
+
+
+def test_release_recomputes_the_numbers_that_cannot_be_subtracted() -> None:
+    """Correlated risk and directional exposure are functions of the whole book.
+
+    Repairing them by subtraction is arithmetically wrong — with unknown
+    correlations the aggregate of two $1 risks is $2, not $1 + something — so a
+    release that did not recompute would keep refusing the next candidate on a
+    bet we no longer have on.
+    """
+    eng = make_engine()
+    state = make_state(
+        eng,
+        cash=400.0,
+        positions=[
+            make_position("a", "ETHUSD", notional=60.0, risk=0.60),
+            make_position("b", "SOLUSD", notional=40.0, risk=0.40),
+        ],
+    )
+    assert state.correlated_risk_usd == pytest.approx(1.00)   # rho unknown = 1.0
+    assert state.directional_exposure_pct == pytest.approx(20.0)
+
+    after = released(eng, state, "a", proceeds_usd=60.0)
+
+    assert after.correlated_risk_usd == pytest.approx(0.40)
+    assert after.directional_exposure_pct == pytest.approx(8.0)
+
+
+def test_a_winner_moves_equity_by_the_realised_pnl_and_the_books_still_balance() -> None:
+    eng = make_engine()
+    state = make_state(
+        eng, cash=450.0, positions=[make_position("a", "ETHUSD", notional=50.0, risk=0.5)]
+    )
+    after = released(eng, state, "a", proceeds_usd=55.0)
+
+    assert after.cash == pytest.approx(505.0)
+    assert after.deployed_usd == pytest.approx(0.0)
+    assert after.equity == pytest.approx(505.0)
+    assert after.cash + after.deployed_usd == pytest.approx(after.equity)
+    # The reserve is a fraction of equity, so it followed the equity up.
+    assert after.reserve_required_usd == pytest.approx(101.0)
+    assert after.available_usd == pytest.approx(404.0)
+
+
+def test_a_loser_is_released_exactly_the_same_way() -> None:
+    eng = make_engine()
+    state = make_state(
+        eng, cash=450.0, positions=[make_position("a", "ETHUSD", notional=50.0, risk=0.5)]
+    )
+    after = released(eng, state, "a", proceeds_usd=47.5)
+
+    assert after.cash == pytest.approx(497.5)
+    assert after.equity == pytest.approx(497.5)
+    assert after.open_risk_usd == pytest.approx(0.0)
+    assert after.cash + after.deployed_usd == pytest.approx(after.equity)
+
+
+def test_a_partial_exit_releases_pro_rata_and_leaves_the_rest_open() -> None:
+    """Pretending the remainder vanished would invent P&L; so would ignoring it."""
+    eng = make_engine()
+    state = make_state(
+        eng, cash=450.0, positions=[make_position("a", "ETHUSD", notional=50.0, risk=0.5)]
+    )
+    pos = state.positions[0]
+    after = eng.release(state, pos, qty=pos.qty / 2.0, proceeds_usd=25.0)
+
+    assert len(after.positions) == 1
+    rest = after.positions[0]
+    assert rest.qty == pytest.approx(pos.qty / 2.0)
+    assert rest.notional_usd == pytest.approx(25.0)
+    assert rest.risk_usd == pytest.approx(0.25)
+    assert after.cash == pytest.approx(475.0)
+    assert after.deployed_usd == pytest.approx(25.0)
+    assert after.open_risk_usd == pytest.approx(0.25)
+
+
+def test_unknown_proceeds_mean_the_mark_and_invent_no_pnl() -> None:
+    eng = make_engine()
+    state = make_state(
+        eng, cash=450.0, positions=[make_position("a", "ETHUSD", notional=50.0, risk=0.5)]
+    )
+    after = released(eng, state, "a")
+
+    assert after.cash == pytest.approx(500.0)
+    assert after.equity == pytest.approx(state.equity)
+
+
+def test_the_symbol_is_open_for_business_again_immediately() -> None:
+    """``DUPLICATE_SYMBOL`` must stop firing in the call that closed it — not on
+    the next state refresh, which is a whole tick of an unavailable symbol."""
+    eng = make_engine()
+    state = make_state(
+        eng, cash=450.0, positions=[make_position("a", "ETHUSD", notional=50.0, risk=0.5)]
+    )
+    opp = make_opp("ETHUSD")
+    assert eng.can_open(opp, state, risk_usd=0.5, notional_usd=50.0) is RejectReason.DUPLICATE_SYMBOL
+
+    after = released(eng, state, "a", proceeds_usd=50.0)
+    assert eng.can_open(opp, after, risk_usd=0.5, notional_usd=50.0) is None
+
+
+def test_releasing_a_position_the_book_does_not_hold_still_credits_the_cash() -> None:
+    """The ledger has already moved the money either way; refusing to record it
+    here would put the portfolio view *behind* the ledger, which is the exact
+    failure this method exists to prevent."""
+    eng = make_engine()
+    state = make_state(eng, cash=500.0)
+    after = eng.release(state, make_position("ghost", "ETHUSD", notional=50.0, risk=0.5),
+                        proceeds_usd=50.0)
+    assert after.positions == []
+    assert after.cash == pytest.approx(550.0)

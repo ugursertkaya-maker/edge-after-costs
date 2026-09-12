@@ -36,8 +36,10 @@ from app.portfolio import (
     TARGET_BOOK_MIN,
     IdleAttribution,
     IdleAttributionError,
+    IdleContext,
     IdleReason,
     attribute_idle,
+    blocked_idle_reason,
     idle_reason_for,
 )
 from app.risk import RiskEngine
@@ -730,3 +732,257 @@ def test_the_whole_cycle_reconciles_on_a_partly_deployed_book() -> None:
     assert sum(att.by_reason.values()) == pytest.approx(att.total_idle_usd, abs=1e-9)
     assert att.deployed_usd == pytest.approx(120.0 + result.deployed_usd)
     assert att.deployed_pct + att.idle_pct == pytest.approx(100.0)
+
+
+# --------------------------------------------------------------------------- #
+# V6 — the four buckets that name a delay instead of blaming the market
+# --------------------------------------------------------------------------- #
+#
+# Same account, same arithmetic: $500, a $100 reserve, a $400 band.  What
+# changes is that the caller now hands over what it observed — a block, when it
+# last ranked, when capital last came back — and the attribution can say
+# "we were not allowed to trade" or "we had not looked yet" instead of
+# reporting either as "nothing qualified".
+
+
+def ctx(**kw) -> IdleContext:
+    return IdleContext(**kw)
+
+
+@pytest.mark.parametrize(
+    "context",
+    [
+        None,
+        ctx(),
+        ctx(capital_released_ms=2_000, last_rank_ms=1_000),
+        ctx(blocked_reason=RejectReason.LOSS_STREAK_COOLDOWN),
+        ctx(blocked_reason="SOMETHING_THE_ENUM_DOES_NOT_MODEL"),
+        ctx(state_bug_usd=75.0),
+        ctx(state_bug_usd=10_000.0),          # a bug bigger than the account
+    ],
+)
+def test_every_context_still_sums_exactly_to_the_idle_balance(context) -> None:
+    """The V5 invariant is the one thing V6 may not break.
+
+    Every new bucket takes its dollars *from inside* the idle balance rather
+    than adding to it, so the reconciliation holds for every context shape —
+    including a declared bug larger than the whole account.
+    """
+    eng = make_engine()
+    state = make_state(eng, cash=500.0)
+    opps = ranked(4)
+    att = attribute_idle(
+        state,
+        ranked=opps,
+        rejections=refuse(opps, RejectReason.NEGATIVE_EDGE),
+        target_pct=80.0,
+        context=context,
+        settings=eng.settings,
+    )
+    assert sum(att.by_reason.values()) == pytest.approx(att.total_idle_usd, abs=1e-9)
+    assert att.residual() == pytest.approx(0.0, abs=1e-9)
+    assert set(att.by_reason) == {r.value for r in IdleReason}
+    assert all(v >= 0.0 for v in att.by_reason.values())
+
+
+def test_no_context_reproduces_the_phase_five_attribution_byte_for_byte() -> None:
+    """The context is additive. A caller that supplies none sees V5."""
+    eng = make_engine()
+    state = make_state(eng, cash=500.0)
+    opps = ranked(3)
+    common = dict(
+        ranked=opps,
+        rejections=refuse(opps, RejectReason.THIN_DEPTH),
+        target_pct=80.0,
+        settings=eng.settings,
+    )
+    assert (
+        attribute_idle(state, **common).by_reason
+        == attribute_idle(state, context=ctx(), **common).by_reason
+    )
+    assert attribute_idle(state, **common).usd(IdleReason.LIQUIDITY_LIMIT) == pytest.approx(
+        3 * SLOT
+    )
+
+
+# -- COOLDOWN ---------------------------------------------------------------- #
+
+
+def test_a_cooldown_is_a_cooldown_and_not_a_spent_risk_budget() -> None:
+    """Sitting out and being full of risk are different sentences."""
+    assert idle_reason_for(RejectReason.LOSS_STREAK_COOLDOWN) is IdleReason.COOLDOWN
+    assert idle_reason_for(RejectReason.DAILY_LOSS_LIMIT) is IdleReason.RISK_LIMIT
+
+
+def test_a_block_takes_the_whole_band_before_the_market_can_be_blamed() -> None:
+    """Under a cooldown no candidate could have been taken, whatever it ranked."""
+    eng = make_engine()
+    state = make_state(eng, cash=500.0)
+    opps = ranked(4)
+    att = attribute_idle(
+        state,
+        ranked=opps,
+        rejections=refuse(opps, RejectReason.NEGATIVE_EDGE),
+        target_pct=80.0,
+        context=ctx(blocked_reason=RejectReason.LOSS_STREAK_COOLDOWN),
+        settings=eng.settings,
+    )
+    assert att.usd(IdleReason.COOLDOWN) == pytest.approx(DEPLOYABLE)
+    assert att.usd(IdleReason.EXECUTION_COST) == 0.0, "policy refused it, not the venue"
+    assert att.usd(IdleReason.CASH_RESERVE) == pytest.approx(RESERVE)
+    assert att.dominant_reason is IdleReason.COOLDOWN
+
+
+def test_a_symbol_cooldown_arrives_as_an_ordinary_rejection() -> None:
+    """§15's per-coin anti-churn window has no ``RejectReason`` of its own, so
+    the recycler states the bucket directly and the walk honours it."""
+    eng = make_engine()
+    state = make_state(eng, cash=500.0)
+    opps = ranked(2)
+    att = attribute_idle(
+        state,
+        ranked=opps,
+        rejections={o.symbol: IdleReason.COOLDOWN for o in opps},
+        target_pct=80.0,
+        settings=eng.settings,
+    )
+    assert att.usd(IdleReason.COOLDOWN) == pytest.approx(2 * SLOT)
+    assert att.usd(IdleReason.NO_QUALIFIED_SIGNAL) == pytest.approx(DEPLOYABLE - 2 * SLOT)
+
+
+# -- SCANNER_DELAY ----------------------------------------------------------- #
+
+
+def test_capital_freed_after_the_last_ranking_is_our_delay_not_the_markets() -> None:
+    eng = make_engine()
+    state = make_state(eng, cash=500.0)
+    att = attribute_idle(
+        state,
+        target_pct=80.0,
+        context=ctx(last_rank_ms=1_000, capital_released_ms=2_000, ts_ms=2_100),
+        settings=eng.settings,
+    )
+    assert att.usd(IdleReason.SCANNER_DELAY) == pytest.approx(DEPLOYABLE)
+    assert att.usd(IdleReason.NO_QUALIFIED_SIGNAL) == 0.0
+    assert any("has not been looked at yet" in n for n in att.notes)
+
+
+def test_a_ranking_that_saw_the_money_is_no_longer_a_scanner_delay() -> None:
+    """The same book, one millisecond of ordering apart, reads the other way —
+    which is the whole distinction the bucket exists to draw."""
+    eng = make_engine()
+    state = make_state(eng, cash=500.0)
+    att = attribute_idle(
+        state,
+        target_pct=80.0,
+        context=ctx(last_rank_ms=2_001, capital_released_ms=2_000),
+        settings=eng.settings,
+    )
+    assert att.usd(IdleReason.NO_QUALIFIED_SIGNAL) == pytest.approx(DEPLOYABLE)
+    assert att.usd(IdleReason.SCANNER_DELAY) == 0.0
+
+
+def test_only_the_unspent_tail_is_scanner_delay() -> None:
+    """A refusal is still a refusal: the scanner being behind does not relabel
+    dollars the allocator demonstrably reached."""
+    eng = make_engine()
+    state = make_state(eng, cash=500.0)
+    opps = ranked(2)
+    att = attribute_idle(
+        state,
+        ranked=opps,
+        rejections=refuse(opps, RejectReason.NEGATIVE_EDGE),
+        target_pct=80.0,
+        context=ctx(last_rank_ms=1_000, capital_released_ms=2_000),
+        settings=eng.settings,
+    )
+    assert att.usd(IdleReason.EXECUTION_COST) == pytest.approx(2 * SLOT)
+    assert att.usd(IdleReason.SCANNER_DELAY) == pytest.approx(DEPLOYABLE - 2 * SLOT)
+
+
+# -- CAPITAL_STATE_BUG ------------------------------------------------------- #
+
+
+def test_a_declared_state_bug_is_charged_before_anything_that_looks_deliberate() -> None:
+    """Charged first, ahead of the reserve: a defect laundered through
+    ``CASH_RESERVE`` reads as policy, and policy is not investigated."""
+    eng = make_engine()
+    state = make_state(eng, cash=500.0)
+    att = attribute_idle(
+        state, target_pct=80.0, context=ctx(state_bug_usd=75.0), settings=eng.settings
+    )
+    assert att.usd(IdleReason.CAPITAL_STATE_BUG) == pytest.approx(75.0)
+    assert att.usd(IdleReason.CASH_RESERVE) == pytest.approx(RESERVE)
+    assert sum(att.by_reason.values()) == pytest.approx(500.0)
+
+
+def test_a_book_that_does_not_add_up_says_so_instead_of_absorbing_it() -> None:
+    """$500 of cash, no positions and $400 of equity is not a market condition."""
+    eng = make_engine()
+    state = make_state(eng, cash=500.0, equity=400.0)
+    att = attribute_idle(state, target_pct=80.0, context=ctx(), settings=eng.settings)
+
+    assert att.usd(IdleReason.CAPITAL_STATE_BUG) == pytest.approx(100.0)
+    assert sum(att.by_reason.values()) == pytest.approx(500.0)
+    assert any("do not balance" in n for n in att.notes)
+
+
+def test_the_books_check_is_opt_in_so_a_fixture_is_never_called_a_defect() -> None:
+    eng = make_engine()
+    state = make_state(eng, cash=500.0, equity=400.0)
+    for context in (None, ctx(check_books=False)):
+        att = attribute_idle(
+            state, target_pct=80.0, context=context, settings=eng.settings
+        )
+        assert att.usd(IdleReason.CAPITAL_STATE_BUG) == 0.0
+        assert sum(att.by_reason.values()) == pytest.approx(500.0)
+
+
+def test_a_bug_larger_than_the_account_cannot_manufacture_idle_cash() -> None:
+    eng = make_engine()
+    state = make_state(eng, cash=500.0)
+    att = attribute_idle(
+        state, target_pct=80.0, context=ctx(state_bug_usd=10_000.0), settings=eng.settings
+    )
+    assert att.usd(IdleReason.CAPITAL_STATE_BUG) == pytest.approx(500.0)
+    assert att.usd(IdleReason.CASH_RESERVE) == 0.0
+    assert sum(att.by_reason.values()) == pytest.approx(500.0)
+
+
+def test_the_two_sources_of_a_bug_are_not_double_charged() -> None:
+    """One defect seen through two windows is one defect."""
+    eng = make_engine()
+    state = make_state(eng, cash=500.0, equity=400.0)   # a $100 gap
+    att = attribute_idle(
+        state, target_pct=80.0, context=ctx(state_bug_usd=40.0), settings=eng.settings
+    )
+    assert att.usd(IdleReason.CAPITAL_STATE_BUG) == pytest.approx(100.0)
+
+
+# -- OTHER ------------------------------------------------------------------- #
+
+
+def test_an_unreadable_block_is_other_while_an_unreadable_refusal_is_not() -> None:
+    """A block we cannot parse still withheld the money on purpose; a rejection
+    we cannot parse is the absence of a decision.  Different sentences."""
+    assert blocked_idle_reason("SOMETHING_NEW") is IdleReason.OTHER
+    assert blocked_idle_reason(None) is IdleReason.OTHER
+    assert idle_reason_for("SOMETHING_NEW") is IdleReason.NO_QUALIFIED_SIGNAL
+    # Labels we *can* read are read the same way by both.
+    assert blocked_idle_reason(RejectReason.KILL_SWITCH) is IdleReason.RISK_LIMIT
+    assert blocked_idle_reason(RejectReason.STALE_BOOK) is IdleReason.NO_QUALIFIED_SIGNAL
+    assert blocked_idle_reason("COOLDOWN") is IdleReason.COOLDOWN
+
+
+def test_a_block_the_enum_does_not_model_lands_in_other() -> None:
+    eng = make_engine()
+    state = make_state(eng, cash=500.0)
+    att = attribute_idle(
+        state,
+        target_pct=80.0,
+        context=ctx(blocked_reason="DATA_FEED_UNDER_MAINTENANCE"),
+        settings=eng.settings,
+    )
+    assert att.usd(IdleReason.OTHER) == pytest.approx(DEPLOYABLE)
+    assert att.usd(IdleReason.NO_QUALIFIED_SIGNAL) == 0.0
+    assert sum(att.by_reason.values()) == pytest.approx(500.0)

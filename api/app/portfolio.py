@@ -55,6 +55,30 @@ The distinction the attribution exists to settle is narrow and worth stating:
 idle cash dominated by ``NO_QUALIFIED_SIGNAL`` means the universe is too small
 and expanding it is the fix; idle cash dominated by ``EXECUTION_COST`` means the
 venue's round trip eats the edge and expanding the universe cannot help.
+
+V6 — the capital comes back *now*
+---------------------------------
+
+Phase 5 measured where the money was not.  Phase 6 asks a narrower question
+about the money that *is* working: when a position closes, how long is that
+capital out of the game?
+
+* :meth:`PortfolioEngine.release` is the inverse of :meth:`_commit`.  A close
+  removes the position, returns the proceeds to cash, drops its risk out of the
+  open-risk budget and **recomputes correlated risk and directional exposure in
+  the same call** — because a book that still believes it holds a position it
+  sold refuses the next trade on a budget that is already free.
+* :class:`RecycleEvent` times the path: close → capital released → rescan →
+  next entry.  The two published numbers are ``close_to_rescan_ms`` and
+  ``close_to_entry_ms``, and they exist so that "the scheduler was the
+  constraint" stops being a suspicion.
+* Three of the four new :class:`IdleReason` members exist to name delays the
+  old six would have mis-charged: ``COOLDOWN`` (we were not allowed to trade),
+  ``SCANNER_DELAY`` (the money arrived after the last ranking, so nothing had
+  looked at it yet) and ``CAPITAL_STATE_BUG`` (the books do not balance).  The
+  last one is the important one: an accounting error must show up as an
+  accounting error rather than be absorbed by whichever bucket happens to be
+  walked last.
 """
 
 from __future__ import annotations
@@ -170,7 +194,25 @@ class DeploymentPlan:
 
 
 class IdleReason(str, enum.Enum):
-    """Why a dollar is not working.  Exactly one of these owns each idle dollar."""
+    """Why a dollar is not working.  Exactly one of these owns each idle dollar.
+
+    The first six are Phase 5's.  The last four are Phase 6's and every one of
+    them names a delay that the original six would have charged to the market:
+
+    * ``COOLDOWN`` — we were not permitted to enter, whatever was ranked.
+      Previously this arrived as ``RISK_LIMIT``, which reads as "the loss budget
+      was spent" and is a different sentence from "we were sitting out".
+    * ``SCANNER_DELAY`` — the capital was freed *after* the last ranking, so no
+      candidate list has yet been produced that could have spent it.  Charging
+      that to ``NO_QUALIFIED_SIGNAL`` would claim we looked and found nothing
+      when in fact we had not looked.
+    * ``CAPITAL_STATE_BUG`` — cash, exposure and equity do not reconcile.  It is
+      a bucket for *our* defects, and it is deliberately loud.
+    * ``OTHER`` — capital the caller states is unusable for a reason this enum
+      does not model.  Reachable only through an explicit declaration
+      (:class:`IdleContext`); an unparseable *rejection* is still the absence of
+      a decision, i.e. ``NO_QUALIFIED_SIGNAL``.
+    """
 
     NO_QUALIFIED_SIGNAL = "NO_QUALIFIED_SIGNAL"
     CORRELATION_LIMIT = "CORRELATION_LIMIT"
@@ -178,6 +220,11 @@ class IdleReason(str, enum.Enum):
     LIQUIDITY_LIMIT = "LIQUIDITY_LIMIT"
     EXECUTION_COST = "EXECUTION_COST"
     CASH_RESERVE = "CASH_RESERVE"
+    # V6
+    COOLDOWN = "COOLDOWN"
+    SCANNER_DELAY = "SCANNER_DELAY"
+    CAPITAL_STATE_BUG = "CAPITAL_STATE_BUG"
+    OTHER = "OTHER"
 
 
 class IdleAttributionError(RuntimeError):
@@ -230,8 +277,10 @@ _REJECT_TO_IDLE: dict[RejectReason, IdleReason] = {
     RejectReason.ABNORMAL_VOLATILITY: IdleReason.RISK_LIMIT,
     RejectReason.DAILY_LOSS_LIMIT: IdleReason.RISK_LIMIT,
     RejectReason.WEEKLY_LOSS_LIMIT: IdleReason.RISK_LIMIT,
-    RejectReason.LOSS_STREAK_COOLDOWN: IdleReason.RISK_LIMIT,
     RejectReason.KILL_SWITCH: IdleReason.RISK_LIMIT,
+    # Sitting out is not the same statement as "the loss budget is spent": one
+    # says a timer is running, the other says the book is full of risk.
+    RejectReason.LOSS_STREAK_COOLDOWN: IdleReason.COOLDOWN,
     RejectReason.MAX_POSITIONS: IdleReason.RISK_LIMIT,
     # It would have duplicated exposure we already carry.
     RejectReason.DUPLICATE_SYMBOL: IdleReason.CORRELATION_LIMIT,
@@ -265,6 +314,70 @@ def idle_reason_for(reason: "RejectReason | str | None") -> IdleReason:
         return IdleReason(text)
     except ValueError:
         return IdleReason.NO_QUALIFIED_SIGNAL
+
+
+def blocked_idle_reason(reason: "RejectReason | IdleReason | str | None") -> IdleReason:
+    """The bucket an *account-level block* belongs to.
+
+    Same table as :func:`idle_reason_for` with one deliberate difference in the
+    fallback.  A rejection we cannot parse is the absence of a decision, so it
+    falls to ``NO_QUALIFIED_SIGNAL``.  A *block* is the opposite: the caller is
+    telling us capital was withheld on purpose and only the label is unfamiliar,
+    and calling that "nothing qualified" would be a straightforward lie.  So it
+    falls to ``OTHER``, which is the only thing ``OTHER`` is for.
+    """
+    if reason is None:
+        return IdleReason.OTHER
+    if isinstance(reason, (RejectReason, IdleReason)):
+        return idle_reason_for(reason)
+    return idle_reason_for(reason) if _is_known_label(reason) else IdleReason.OTHER
+
+
+def _is_known_label(reason: Any) -> bool:
+    """Whether a string names a reject reason or an idle reason we model."""
+    text = str(getattr(reason, "value", reason))
+    for enum_cls in (RejectReason, IdleReason):
+        try:
+            enum_cls(text)
+        except ValueError:
+            continue
+        return True
+    return False
+
+
+@dataclass(frozen=True)
+class IdleContext:
+    """What the *caller* knows that a :class:`PortfolioState` cannot say.
+
+    A book snapshot records cash, exposure and risk.  It cannot record that the
+    account was in a cooldown, that the money arrived after the last scan, or
+    that a close failed to return what it should have — and those are exactly
+    the three things Phase 6 needs the attribution to be able to name.  So they
+    arrive here, explicitly, from the component that observed them.
+
+    Supplying a context also switches on the books check (see
+    ``check_books``).  That is opt-in rather than automatic because a
+    hand-assembled state — a research sweep, a fixture — is not a claim about a
+    real ledger, and reporting an accounting defect against a state nobody
+    claimed was real would make ``CAPITAL_STATE_BUG`` the bucket everyone
+    learns to ignore.
+    """
+
+    ts_ms: int = 0
+    #: When the ranked list this attribution is reading was produced.
+    last_rank_ms: int = 0
+    #: When a close most recently returned capital to cash.
+    capital_released_ms: int = 0
+    #: An account-level block in force right now (``RejectReason`` or a label).
+    blocked_reason: Any = None
+    #: Capital a close should have returned and demonstrably did not.
+    state_bug_usd: float = 0.0
+    check_books: bool = True
+
+    @property
+    def scanner_is_behind(self) -> bool:
+        """True when capital was freed after the most recent ranking."""
+        return self.capital_released_ms > 0 and self.capital_released_ms > self.last_rank_ms
 
 
 @dataclass
@@ -360,6 +473,7 @@ def attribute_idle(
     rejections: Any = None,
     target_pct: float | None = None,
     equity: float | None = None,
+    context: "IdleContext | None" = None,
     settings: "Settings | None" = None,
 ) -> IdleAttribution:
     """Charge every idle dollar to exactly one :class:`IdleReason`.
@@ -394,6 +508,27 @@ def attribute_idle(
        have been nothing to buy with the remainder.  It is what makes the
        Phase 3 shape (zero candidates → 100% ``NO_QUALIFIED_SIGNAL``) fall out
        of the arithmetic instead of being special-cased.
+
+    V6 inserts two steps and re-labels one, all of them *inside* the same
+    balance — nothing is ever added to the idle total, only taken from it
+    earlier, so the reconciliation in :meth:`IdleAttribution.check` is
+    untouched:
+
+    0. **Capital that does not reconcile is charged to** ``CAPITAL_STATE_BUG``
+       **before anything else** — either an amount the caller measured (a close
+       that did not return what it should have) or, when a
+       :class:`IdleContext` is supplied, the gap between ``cash + deployed``
+       and equity.  Charging it first means a defect cannot be laundered
+       through ``CASH_RESERVE`` on its way to looking deliberate.
+    2b. **A declared block takes the whole band budget**, because under a
+       cooldown or a kill switch no candidate could have been taken whatever it
+       was ranked.  Attributing the same dollars to the refusals below it would
+       claim the market refused capital that policy had already withdrawn.
+    4.  **The remainder is** ``SCANNER_DELAY`` **rather than**
+       ``NO_QUALIFIED_SIGNAL`` **when the capital was freed after the last
+       ranking.**  Same dollars, different sentence, and the difference is the
+       whole of §12: "nothing qualified" is a market fact, "we had not looked
+       yet" is a loop-shape fact and is ours to fix.
 
     "One position's worth" is ``budget / slots`` clamped to the allowed position
     band, where ``slots`` is how many more positions the book needs to reach
@@ -435,6 +570,11 @@ def attribute_idle(
         The ledger's equity.  Defaults to ``state.equity``; ``deployed_pct`` and
         ``idle_pct`` are both computed against it so the two always agree with
         the ledger and with each other.
+    context:
+        Optional :class:`IdleContext` — what the caller observed that the book
+        snapshot cannot record (a block in force, when the last ranking ran,
+        when capital was last released).  Omitting it reproduces the Phase 5
+        attribution exactly.
     """
     if settings is None:
         from app.config import get_settings
@@ -457,10 +597,21 @@ def attribute_idle(
     by_reject: dict[str, float] = {}
     notes: list[str] = []
 
+    # 0. capital that does not reconcile, charged before any bucket that could
+    # make it look deliberate.
+    unreconciled = _clamp(_state_bug_usd(state, eq, context), 0.0, total_idle)
+    buckets[IdleReason.CAPITAL_STATE_BUG.value] += unreconciled
+    if unreconciled > _EPS:
+        notes.append(
+            f"books do not balance: ${unreconciled:.2f} unaccounted for "
+            f"(cash ${state.cash:.2f} + deployed ${state.deployed_usd:.2f} "
+            f"vs equity ${eq:.2f})"
+        )
+
     # 1. the reserve, which was never deployable.
-    reserve = _clamp(float(state.reserve_required_usd), 0.0, total_idle)
+    reserve = _clamp(float(state.reserve_required_usd), 0.0, total_idle - unreconciled)
     buckets[IdleReason.CASH_RESERVE.value] += reserve
-    deployable = total_idle - reserve
+    deployable = total_idle - unreconciled - reserve
 
     # 2. capital the band deliberately leaves alone.
     room_to_band = max(eq * target / 100.0 - deployed, 0.0)
@@ -471,6 +622,14 @@ def attribute_idle(
         notes.append(
             f"above_band=${above_band:.2f} (target {target:.0f}% of ${eq:.2f})"
         )
+
+    # 2b. a block withdraws the whole budget before the market gets to refuse it.
+    if context is not None and context.blocked_reason is not None and budget > _EPS:
+        bucket = blocked_idle_reason(context.blocked_reason)
+        buckets[bucket.value] += budget
+        label = str(getattr(context.blocked_reason, "value", context.blocked_reason))
+        notes.append(f"blocked by {label}: ${budget:.2f} could not be deployed at all")
+        budget = 0.0
 
     # 3. walk the refusals in the order capital would have reached them.
     order = _walk_order(ranked, _normalise_rejections(rejections))
@@ -496,8 +655,16 @@ def attribute_idle(
     # 4. the list ran out before the money did.  Charged unconditionally, dust
     # included: rounding the tail away is a residual bucket by another name.
     if budget > 0.0:
-        buckets[IdleReason.NO_QUALIFIED_SIGNAL.value] += budget
-        if budget > _EPS:
+        behind = context is not None and context.scanner_is_behind
+        tail = IdleReason.SCANNER_DELAY if behind else IdleReason.NO_QUALIFIED_SIGNAL
+        buckets[tail.value] += budget
+        if budget > _EPS and behind:
+            notes.append(
+                f"capital freed at {context.capital_released_ms} after the last "
+                f"ranking at {context.last_rank_ms}: ${budget:.2f} has not been "
+                f"looked at yet"
+            )
+        elif budget > _EPS:
             notes.append(
                 f"no further candidates: ${budget:.2f} of the band had nothing to buy"
             )
@@ -512,6 +679,33 @@ def attribute_idle(
         by_reject_reason=by_reject,
         notes=notes,
     ).check()
+
+
+def _state_bug_usd(
+    state: PortfolioState, equity: float, context: "IdleContext | None"
+) -> float:
+    """Dollars the book cannot account for.
+
+    Two sources, and the larger wins rather than the two being added: a caller
+    that measured a specific failed release *and* a snapshot that does not
+    balance is almost always looking at one defect through two windows, and
+    double-charging it would overstate the only bucket nobody should have to
+    argue about.
+
+    The identity being checked is the ledger's own: cash plus marked exposure
+    is equity.  It holds by construction for a paper spot account, so a gap is
+    not a modelling approximation — it is capital that left one column without
+    arriving in another.
+    """
+    if context is None:
+        return 0.0
+    declared = max(float(context.state_bug_usd), 0.0)
+    observed = 0.0
+    if context.check_books and equity > 0.0:
+        gap = abs(float(state.cash) + float(state.deployed_usd) - equity)
+        if gap > 1e-6 * max(1.0, equity):
+            observed = gap
+    return max(declared, observed)
 
 
 def _slot_cost(budget: float, open_positions: int, *, equity: float, cfg: Any) -> float:
@@ -579,6 +773,93 @@ def _walk_order(
             seen.add(symbol)
             out.append((symbol, reason))
     return out
+
+
+# --------------------------------------------------------------------------- #
+# Capital recycling (V6)
+# --------------------------------------------------------------------------- #
+
+
+@dataclass
+class RecycleEvent:
+    """One close, timed all the way to the trade that reused its capital.
+
+    Four timestamps and two derived intervals.  The intervals are the point:
+
+    * ``close_to_rescan_ms`` is **ours**.  It is loop shape, nothing else, and
+      a number in the hundreds of milliseconds means the close triggered the
+      rescan; a number the size of the evaluation interval means it waited for
+      the next tick, which is the defect §12 exists to remove.
+    * ``close_to_entry_ms`` is ours *and* the market's, and is ``None`` when no
+      entry followed.  ``None`` is not a missing measurement — it is the
+      measurement, and ``qualified_candidate_existed`` says which of the two
+      readings it is: no candidate existed (the market), or one did and we
+      still did not deploy (us).
+
+    Mutable by design: the close and the entry are observed by different calls
+    at different times, so the event is opened by :meth:`CapitalRecycler.on_close`
+    and completed later, if an entry ever happens.
+    """
+
+    closed_trade_id: str
+    closed_ms: int
+    capital_released_ms: int
+    rescan_triggered_ms: int
+    next_entry_ms: int | None = None
+    qualified_candidate_existed: bool = False
+    # Additions; the six fields above are the frozen contract.
+    symbol: str = ""
+    released_usd: float = 0.0
+    risk_released_usd: float = 0.0
+    available_usd_after: float = 0.0
+    deployed_pct_after: float = 0.0
+    next_entry_symbol: str | None = None
+    rescan_handled: bool = False
+    state_bug_usd: float = 0.0
+    notes: list[str] = field(default_factory=list)
+
+    @property
+    def close_to_rescan_ms(self) -> int:
+        """Milliseconds from the close to the rescan it triggered."""
+        return max(self.rescan_triggered_ms - self.closed_ms, 0)
+
+    @property
+    def close_to_entry_ms(self) -> int | None:
+        """Milliseconds from the close to the next entry, or ``None`` if none."""
+        if self.next_entry_ms is None:
+            return None
+        return max(self.next_entry_ms - self.closed_ms, 0)
+
+    @property
+    def release_ms(self) -> int:
+        """How long the capital itself took to come back.  Should be ~0."""
+        return max(self.capital_released_ms - self.closed_ms, 0)
+
+    @property
+    def redeployed(self) -> bool:
+        return self.next_entry_ms is not None
+
+    def as_dict(self) -> dict:
+        return {
+            "closed_trade_id": self.closed_trade_id,
+            "symbol": self.symbol,
+            "closed_ms": self.closed_ms,
+            "capital_released_ms": self.capital_released_ms,
+            "rescan_triggered_ms": self.rescan_triggered_ms,
+            "next_entry_ms": self.next_entry_ms,
+            "next_entry_symbol": self.next_entry_symbol,
+            "qualified_candidate_existed": self.qualified_candidate_existed,
+            "close_to_rescan_ms": self.close_to_rescan_ms,
+            "close_to_entry_ms": self.close_to_entry_ms,
+            "release_ms": self.release_ms,
+            "released_usd": self.released_usd,
+            "risk_released_usd": self.risk_released_usd,
+            "available_usd_after": self.available_usd_after,
+            "deployed_pct_after": self.deployed_pct_after,
+            "rescan_handled": self.rescan_handled,
+            "state_bug_usd": self.state_bug_usd,
+            "notes": list(self.notes),
+        }
 
 
 # --------------------------------------------------------------------------- #
@@ -925,6 +1206,7 @@ class PortfolioEngine:
         rejections: Any = None,
         target_pct: float | None = None,
         equity: float | None = None,
+        context: "IdleContext | None" = None,
     ) -> IdleAttribution:
         """:func:`attribute_idle` against *this* engine's settings and band."""
         return attribute_idle(
@@ -935,6 +1217,7 @@ class PortfolioEngine:
                 target_pct if target_pct is not None else self.target_deployed_pct
             ),
             equity=equity,
+            context=context,
             settings=self.settings,
         )
 
@@ -1434,6 +1717,84 @@ class PortfolioEngine:
             correlated_risk_usd=self.correlation.correlated_risk(positions, self.view),
             directional_exposure_pct=self.correlation.directional_exposure_pct(
                 positions, working.equity, self.view
+            ),
+            positions=positions,
+        )
+
+    def release(
+        self,
+        state: PortfolioState,
+        position: Position,
+        *,
+        proceeds_usd: float | None = None,
+        qty: float | None = None,
+        ts_ms: int | None = None,
+    ) -> PortfolioState:
+        """Fold a *close* out of the book — the exact inverse of :meth:`_commit`.
+
+        Called in the same breath as the exit fill, not on the next tick.  Every
+        budget the position was consuming is returned here:
+
+        * the cash, credited with what the exit actually fetched
+          (``proceeds_usd``, net of the exit fee).  Exposure falls by what the
+          position was *marked* at, and equity by the difference between the
+          two — which is the realised P&L.  Crediting the cost basis instead
+          would keep ``cash + exposure == equity`` only for a scratch trade and
+          report every winner as an accounting defect;
+        * the position, removed from the book, so ``DUPLICATE_SYMBOL`` stops
+          refusing its own symbol the instant the symbol is no longer held;
+        * its share of the open-risk budget;
+        * **correlated risk and directional exposure, recomputed** — both are
+          functions of the whole book, not sums over it, so neither can be
+          repaired by subtraction.  This is the line that makes the release
+          synchronous in any useful sense: a stale correlation number refuses
+          the next candidate on a bet we no longer have on.
+
+        A partial exit releases pro rata and leaves the remainder open, matching
+        :meth:`app.sim.ledger.Ledger.close`.  Passing an unheld position is a
+        no-op on the positions list and still credits the cash, because the
+        caller's ledger has already moved the money either way.
+        """
+        closed_qty = float(position.qty if qty is None else qty)
+        share = _clamp(closed_qty / position.qty, 0.0, 1.0) if position.qty > 0 else 1.0
+        mark = position.last_price or position.entry_price
+        marked = closed_qty * max(float(mark), 0.0)
+        # Unknown proceeds means "assume it fetched the mark": that leaves
+        # equity untouched, which is the only assumption that invents no P&L.
+        cash_in = float(proceeds_usd) if proceeds_usd is not None else marked
+        basis = float(position.notional_usd) * share
+        risk_back = max(float(position.risk_usd), 0.0) * share
+
+        positions: list[Position] = []
+        for p in state.positions:
+            if p.id != position.id:
+                positions.append(p)
+            elif share < 1.0:
+                # Keep the remainder, with its cost basis reduced pro rata.
+                positions.append(
+                    replace(
+                        p,
+                        qty=p.qty - closed_qty,
+                        notional_usd=p.notional_usd - basis,
+                        risk_usd=max(p.risk_usd - risk_back, 0.0),
+                    )
+                )
+
+        equity = state.equity + cash_in - marked
+        return replace(
+            state,
+            ts_ms=int(ts_ms if ts_ms is not None else state.ts_ms),
+            equity=equity,
+            cash=state.cash + cash_in,
+            deployed_usd=max(state.deployed_usd - marked, 0.0),
+            # The reserve is a fraction of equity, so a close that moved equity
+            # moves it too; leaving it stale would mis-state available_usd,
+            # which is the number the next entry is sized against.
+            reserve_required_usd=max(equity, 0.0) * self.cfg.cash_reserve_pct / 100.0,
+            open_risk_usd=max(state.open_risk_usd - risk_back, 0.0),
+            correlated_risk_usd=self.correlation.correlated_risk(positions, self.view),
+            directional_exposure_pct=self.correlation.directional_exposure_pct(
+                positions, state.equity, self.view
             ),
             positions=positions,
         )

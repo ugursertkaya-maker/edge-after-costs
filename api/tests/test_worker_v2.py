@@ -12,6 +12,7 @@ import pytest
 
 from app.config import reload_settings
 from app.exits import CheckpointVerdict
+from app.portfolio import IdleReason
 from app.types import (
     ExitReason,
     Features,
@@ -391,10 +392,11 @@ def test_every_idle_dollar_is_attributed_to_a_reason(worker):
     worker.evaluate_once(1_000_000)
     cap = worker.dashboard_payload("base")["capital"]
     assert cap is not None
-    assert set(cap["idle_by_reason"]) == {
-        "NO_QUALIFIED_SIGNAL", "CORRELATION_LIMIT", "RISK_LIMIT",
-        "LIQUIDITY_LIMIT", "EXECUTION_COST", "CASH_RESERVE",
-    }
+    # Every bucket the enum defines, present whether or not it holds a dollar:
+    # a dashboard column that appears and disappears with the data is one
+    # nobody reads. Asserted against the enum rather than a copied list so that
+    # adding a bucket (Phase 6 added four) is not reported as a regression.
+    assert set(cap["idle_by_reason"]) == {r.value for r in IdleReason}
     assert sum(cap["idle_by_reason"].values()) == pytest.approx(
         cap["idle_usd"], abs=0.02
     )

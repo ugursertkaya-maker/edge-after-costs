@@ -30,6 +30,7 @@ from app.research.profiles import (
     PROFILE_RISK_PCT,
     PROFILES,
     BreakerReport,
+    IdleReason,
     ProfileResult,
     RecordedRejection,
     arm_settings,
@@ -501,10 +502,15 @@ def test_idle_with_no_rejections_is_no_qualified_signal():
 
 def test_idle_attribution_carries_every_bucket_even_at_zero():
     out = attribute_idle_usd(0.0, {"EXECUTION_COST": 1.0})
-    assert set(out) == {
+    # Every member, whatever the enum currently holds: the property under test
+    # is that a bucket never disappears when it is empty, not which buckets
+    # exist. Phase 6 added four and a hardcoded list would have read as a
+    # regression rather than as the addition it was.
+    assert set(out) == {r.value for r in IdleReason}
+    assert {
         "NO_QUALIFIED_SIGNAL", "CORRELATION_LIMIT", "RISK_LIMIT",
         "LIQUIDITY_LIMIT", "EXECUTION_COST", "CASH_RESERVE",
-    }
+    } <= set(out)
     assert sum(out.values()) == 0.0
 
 

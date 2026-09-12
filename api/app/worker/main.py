@@ -34,6 +34,7 @@ from app.exits import CheckpointVerdict, ExitEngine
 from app.features import FeatureEngine
 from app import holding
 from app.portfolio import PortfolioEngine
+from app.queue import CapitalRecycler
 from app.profit import NetTargetEngine
 from app.ranker import OpportunityRanker
 from app.recorder import TapeRecorder
@@ -143,6 +144,16 @@ class TradingWorker:
         self.strategies = get_strategies()
         self.ranker = OpportunityRanker(settings=self.s, expectancy=self._expectancy)
         self.portfolio = PortfolioEngine(settings=self.s)
+        # Close -> release -> rescan, measured end to end. ``rescan`` is
+        # ``evaluate_once`` itself, so a close re-ranks in the same call rather
+        # than waiting out an eval interval.
+        self.recycler = CapitalRecycler(
+            portfolio=self.portfolio,
+            rescan=self.evaluate_once,
+            emit=lambda kind, detail: self._persist(
+                lambda s, r: r.log_risk_event(s, kind, **detail)
+            ),
+        )
         self.profit = NetTargetEngine(settings=self.s)
         self.risk = RiskEngine(settings=self.s, portfolio=self.portfolio)
         self.exits = ExitEngine(settings=self.s)
@@ -486,6 +497,7 @@ class TradingWorker:
         if stats_rows:
             self._persist(lambda s, r: r.record_market_stats(s, stats_rows))
         self._ranked = self.ranker.rank(opportunities)
+        self.recycler.note_rescan(ts_ms)
         return self._ranked
 
     def _evaluate_symbol(
@@ -693,6 +705,13 @@ class TradingWorker:
         )
         ledger.open(pos, result)
         self.stats.entries += 1
+        if ledger.name == "base":
+            # Closes close_to_entry_ms and claims the episode, so the same
+            # impulse cannot be re-entered from the queue.
+            self.recycler.note_entry(
+                pos.symbol, ts_ms=ts_ms,
+                episode_id=str(pos.meta.get("episode_id") or "") or None,
+            )
         log.info(
             "ENTRY %s %s %s %s qty=%.6f @ %.6f notional=$%.2f risk=$%.2f "
             "net_tp=%.6f be=%.6f edge=%.1fbps",
@@ -1091,6 +1110,15 @@ class TradingWorker:
 
         trade = ledger.close(pos, result, reason, ts_ms)
         self.stats.exits += 1
+        # Release and re-rank inside this call, not on the next tick. The
+        # ledger already credited cash; what was stale for a tick is the
+        # PORTFOLIO view -- correlated risk, directional exposure, the reserve,
+        # DUPLICATE_SYMBOL -- and that is the view that decides whether the next
+        # candidate is allowed in. Only the base ledger drives the scan; the
+        # comparison ledgers follow the same decisions and must not each
+        # trigger their own rescan.
+        if ledger.name == "base":
+            self.recycler.on_close(ledger, pos, trade=trade, ts_ms=ts_ms)
         log.info(
             "EXIT  %s %s %s net=$%.4f fees=$%.4f reason=%s hold=%.0fs",
             ledger.name, trade.symbol, trade.strategy, trade.net_pnl_usd,
@@ -1222,6 +1250,8 @@ class TradingWorker:
             "capital": self._capital_block(ledger, ts),
             "board": self._opportunity_board(),
             "funnel": self._symbol_funnel(ledger),
+            "opportunities": self.recycler.queue.as_dict(),
+            "recycling": self._recycling_block(ledger, ts),
             "missed": _read_json(
                 Path(self.s.research.directory) / "missed.json"
             ),
@@ -1384,6 +1414,31 @@ class TradingWorker:
             "gate_reasons": list(self.champion.gate_reasons),
         }
 
+    def _recycling_block(self, ledger: Ledger, ts: int) -> dict[str, Any]:
+        """Close -> release -> rescan -> redeploy, with the latencies.
+
+        Phase 6 §22.  The point of the panel is that idle capital after a close
+        has a duration attached to it, so "we freed the money and then sat on
+        it" cannot pass as "there was nothing to buy".
+        """
+        block: dict[str, Any] = dict(self.recycler.latency())
+        last = self.recycler.last
+        block["last"] = last.as_dict() if last is not None else None
+        block["events"] = [e.as_dict() for e in self.recycler.events[-25:]]
+        block["available_cash_usd"] = round(ledger.cash, 2)
+        block["qualified_opportunities"] = len(self._ranked)
+        # Idle duration measured from the last release, not from process start:
+        # an account that has never traded is not "idle for six hours".
+        released = last.capital_released_ms if last is not None else 0
+        block["idle_seconds"] = round((ts - released) / 1000.0, 1) if released else None
+        nxt = self._ranked[0] if self._ranked else None
+        block["next_candidate"] = (
+            {"symbol": nxt.symbol, "strategy": nxt.signal.strategy,
+             "net_edge_bps": round(nxt.net_edge_bps, 3)} if nxt else None
+        )
+        block["next_entry_strategy"] = nxt.signal.strategy if nxt else None
+        return block
+
     def _capital_block(self, ledger: Ledger, ts: int) -> dict[str, Any] | None:
         """Capital utilisation, with every idle dollar attributed to a reason.
 
@@ -1404,6 +1459,16 @@ class TradingWorker:
                 rejections=self.stats.rejects,
                 target_pct=target,
                 equity=ledger.equity,
+                # Lets the attribution separate a scanner that has not run
+                # from a market with nothing in it, and charge a genuine
+                # accounting imbalance to CAPITAL_STATE_BUG instead of
+                # laundering it through a policy bucket.
+                context=self.recycler.idle_context(
+                    ts_ms=ts,
+                    blocked_reason=self.risk.blocked_reason(
+                        self._risk_state(ledger, ts)
+                    ),
+                ),
             )
         except Exception:
             log.exception("idle attribution failed")
