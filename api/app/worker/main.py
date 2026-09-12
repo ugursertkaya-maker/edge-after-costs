@@ -68,7 +68,7 @@ from app.types import (
     SymbolInfo,
     now_ms,
 )
-from app.universe import Tier, UniverseEntry, UniverseSelector
+from app.universe import Tier, TierPolicy, UniverseEntry, UniverseSelector
 
 #: WARM subscribes to ``depth20@1000ms``, so its book is one-second snapshots.
 WARM_SNAPSHOT_INTERVAL_MS = int(os.getenv("WARM_SNAPSHOT_INTERVAL_MS", "1000"))
@@ -344,7 +344,26 @@ class TradingWorker:
         except Exception:
             hot = [e.symbol for e in entries if e.tier == "hot"]
             warm = [e.symbol for e in entries if e.tier == "warm"]
-        self.feed.set_universe(hot, warm)
+        # Subscription quality is not the same question as economic
+        # attractiveness, and the tiers were conflating them. HOT membership is
+        # decided by edge ratio, so on a quiet session every pair is demoted and
+        # the HOT tier empties -- leaving the symbols we DO evaluate on
+        # one-second snapshots while eight full-depth slots sit unused. The
+        # stream costs nothing when the slots are free, and a fresher book is
+        # strictly better data for the same decision. The tier label still
+        # reports the economics; only the subscription follows what we evaluate.
+        subscribe_hot = list(hot)
+        if len(subscribe_hot) < TierPolicy().hot_max:
+            spare = TierPolicy().hot_max - len(subscribe_hot)
+            promoted = [s for s in warm if s not in subscribe_hot][:spare]
+            subscribe_hot.extend(promoted)
+            warm = [s for s in warm if s not in subscribe_hot]
+            if promoted:
+                log.info(
+                    "promoted %s to the full-depth stream: %d HOT slots were idle",
+                    ",".join(promoted), spare,
+                )
+        self.feed.set_universe(subscribe_hot, warm)
         # COLD is ranked and reported but NEVER evaluated, because it is never
         # subscribed. Leaving it in ``self.universe`` put unsubscribed symbols
         # through the strategy loop with books ten minutes old, which produced

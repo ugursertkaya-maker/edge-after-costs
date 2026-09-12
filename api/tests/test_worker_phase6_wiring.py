@@ -238,3 +238,31 @@ class TestFreshnessBudgetIsTierAware:
     def test_warm_still_rejects_a_genuinely_dead_feed(self):
         w = self._worker()
         assert w._freshness_budget_ms(self._entry("warm")) < 60_000
+
+
+class TestIdleDepthSlotsAreUsed:
+    """Subscription quality and economic attractiveness are different questions.
+
+    HOT membership is decided by edge ratio, so on a quiet session every pair
+    demotes and the HOT tier empties -- leaving the symbols we DO evaluate on
+    one-second snapshots while eight full-depth slots sit unused. Observed
+    live: `universe: 1 evaluated (hot= warm=ETHUSD)`.
+    """
+
+    def test_refresh_promotes_warm_into_idle_depth_slots(self):
+        src = _source(worker_main.TradingWorker.refresh_universe)
+        assert "subscribe_hot" in src
+        assert "hot_max" in src
+
+    def test_cold_is_never_promoted(self):
+        """COLD is a watchlist; it is excluded from self.universe before this."""
+        src = _source(worker_main.TradingWorker.refresh_universe)
+        promote = src[src.index("subscribe_hot"):]
+        assert "warm" in promote
+        assert "watchlist" not in promote.split("set_universe")[0]
+
+    def test_the_tier_label_is_not_rewritten(self):
+        """Economics reporting must still say WARM; only the stream changes."""
+        src = _source(worker_main.TradingWorker.refresh_universe)
+        assert "e.tier = " not in src
+        assert 'replace(' not in src.split("subscribe_hot")[1][:400]

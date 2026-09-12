@@ -468,7 +468,11 @@ def test_cold_tier_symbols_are_not_subscribed_to_the_feed(worker, monkeypatch):
 
     assert "ZECUSDT" not in seen.get("hot", []) + seen.get("warm", [])
     assert "BTCUSD" in seen["hot"]
-    assert "ETHUSD" in seen["warm"]
+    # ETHUSD is WARM on economics but gets the full-depth stream anyway: HOT
+    # slots were idle, and the tier label answers "is this worth trading",
+    # not "how good should its data be".
+    assert "ETHUSD" in seen["hot"]
+    assert "ETHUSD" not in seen.get("warm", [])
     # COLD is ranked and reported but never evaluated: a symbol that is not
     # subscribed must not reach a strategy on a book nobody is updating.
     assert [e.symbol for e in worker.watchlist] == ["ZECUSDT"]
