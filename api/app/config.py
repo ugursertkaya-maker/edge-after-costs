@@ -7,8 +7,9 @@ variable can never silently enable something dangerous.
 
 from __future__ import annotations
 
+import math
 import os
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from functools import lru_cache
 
 
@@ -46,6 +47,30 @@ def _s(name: str, default: str) -> str:
 
 def _es(name: str, default: str):
     return field(default_factory=lambda: _s(name, default))
+
+
+def _money_tuple(name: str, default: tuple[float, ...]) -> tuple[float, ...]:
+    """Parse "500,1000" into (500.0, 1000.0); fall back on anything unparseable.
+
+    A malformed comparison-ledger list must degrade to the default rather than
+    take the worker down: these books are research instruments, and losing them
+    is not worth losing the trader.
+    """
+    raw = os.getenv(name)
+    if not raw:
+        return default
+    out: list[float] = []
+    for part in raw.split(","):
+        part = part.strip()
+        if not part:
+            continue
+        try:
+            value = float(part)
+        except ValueError:
+            return default
+        if value > 0:
+            out.append(value)
+    return tuple(out) if out else default
 
 
 def _ef(name: str, default: float):
@@ -173,7 +198,14 @@ class RiskConfig:
     """The $500 risk model (§14) plus the global circuit breakers (§21)."""
 
     starting_equity: float = _ef("STARTING_EQUITY", 500.0)
-    comparison_ledgers: tuple[float, ...] = (1_000.0, 5_000.0)
+    #: Side-by-side research books. They follow the SAME decisions as the
+    #: primary ledger at a different account size, so they measure capacity,
+    #: not strategy. Configurable because which sizes are interesting changes
+    #: with the primary: running a $5,000 comparison against a $5,000 primary
+    #: would be two identical books.
+    comparison_ledgers: tuple[float, ...] = field(
+        default_factory=lambda: _money_tuple("COMPARISON_LEDGERS", (1_000.0, 5_000.0))
+    )
 
     risk_per_trade_pct: float = _ef("RISK_PER_TRADE_PCT", 0.5)  # % of equity at stop
     max_concurrent_positions: int = _ei("MAX_CONCURRENT_POSITIONS", 3)
@@ -341,7 +373,12 @@ class PortfolioConfig:
     count ceiling that remains is a safety valve, not the normal constraint.
     """
 
-    max_open_positions: int = _ei("MAX_OPEN_POSITIONS", 20)   # emergency ceiling only
+    #: Emergency ceiling only, and it must stay one. 0 means "derive", so the
+    #: count never becomes the binding constraint on a larger account: a $500
+    #: book at $50 a position tops out at 10 positions, a $5,000 book at $500 a
+    #: position needs the same 10 -- but a book whose positions are capped far
+    #: below that by L2 depth needs many more slots to use the same capital.
+    max_open_positions: int = _ei("MAX_OPEN_POSITIONS", 0)
     total_open_risk_pct: float = _ef("TOTAL_OPEN_RISK_PCT", 3.0)  # 2 | 3 | 5 profiles
     cash_reserve_pct: float = _ef("CASH_RESERVE_PCT", 20.0)       # 10 | 20 | 30
     min_position_usd: float = _ef("MIN_POSITION_USD", 10.0)
@@ -353,7 +390,13 @@ class PortfolioConfig:
     # unreachable, and the dominant idle reason misreported as
     # CORRELATION_LIMIT. At $50 the same candidate list deploys 57.1% and the
     # dominant reason is NO_QUALIFIED_SIGNAL -- the diagnosis itself changes.
-    max_position_usd: float = _ef("MAX_POSITION_USD", 50.0)
+    #: Explicit override; 0 means "derive from equity" (see
+    #: :meth:`Settings.max_position_usd_for`). The derivation keeps the
+    #: documented reasoning -- $50 was 10% of a $500 account -- while letting
+    #: the ceiling follow the account instead of freezing at a dollar figure
+    #: chosen for a different one.
+    max_position_usd: float = _ef("MAX_POSITION_USD", 0.0)
+    max_position_pct_equity_alloc: float = _ef("MAX_POSITION_PCT_EQUITY_ALLOC", 10.0)
     #: Share of equity the allocator aims to have working. A stopping
     #: condition, never a quota: it stops allocating when the band is reached
     #: OR when candidates run out, and never lowers the bar to fill it.
@@ -544,6 +587,65 @@ class Settings:
     recycle: RecycleConfig = field(default_factory=RecycleConfig)
     horizon: HorizonConfig = field(default_factory=HorizonConfig)
     holding: HoldingConfig = field(default_factory=HoldingConfig)
+
+    def __post_init__(self) -> None:
+        """Resolve account-size derivations into ``portfolio``.
+
+        Done here rather than at each call site because eight modules already
+        read ``settings.portfolio.max_position_usd`` and
+        ``settings.portfolio.max_open_positions``. Resolving centrally means a
+        sentinel of 0 never escapes into sizing arithmetic, where it would
+        silently become "no positions allowed".
+        """
+        resolved = replace(
+            self.portfolio,
+            max_position_usd=self._derived_max_position_usd(),
+            max_open_positions=self._derived_max_open_positions(),
+        )
+        object.__setattr__(self, "portfolio", resolved)
+
+    def _derived_max_position_usd(self) -> float:
+        override = self.portfolio.max_position_usd
+        if override > 0:
+            return override
+        pct = max(0.0, self.portfolio.max_position_pct_equity_alloc) / 100.0
+        return max(self.portfolio.min_position_usd, self.risk.starting_equity * pct)
+
+    def _derived_max_open_positions(self) -> int:
+        override = self.portfolio.max_open_positions
+        if override > 0:
+            return override
+        floor_size = max(self.portfolio.min_position_usd, 1.0)
+        target = self.risk.starting_equity * self.portfolio.target_deployed_pct / 100.0
+        return int(min(max(20, math.ceil(target / floor_size)), 200))
+
+    # ---------------------------------------------------------------- #
+    # Account-size derivations
+    #
+    # These exist because a dollar constant chosen for a $500 book silently
+    # becomes the binding constraint on a $5,000 one. Each returns the explicit
+    # override when set, so an operator can still pin any of them.
+    # ---------------------------------------------------------------- #
+
+    @property
+    def max_position_usd(self) -> float:
+        """Largest position the allocator may open, in USD (already resolved)."""
+        return self.portfolio.max_position_usd
+
+    @property
+    def target_active_capital_usd(self) -> float:
+        """The capital the allocator aims to have working. Never a quota."""
+        return self.risk.starting_equity * self.portfolio.target_deployed_pct / 100.0
+
+    @property
+    def cash_reserve_usd(self) -> float:
+        """Capital deliberately held back. Policy, not failure."""
+        return self.risk.starting_equity * self.portfolio.cash_reserve_pct / 100.0
+
+    @property
+    def max_open_positions(self) -> int:
+        """Emergency ceiling on concurrent positions (already resolved)."""
+        return self.portfolio.max_open_positions
     recorder: RecorderConfig = field(default_factory=RecorderConfig)
     research: ResearchConfig = field(default_factory=ResearchConfig)
 

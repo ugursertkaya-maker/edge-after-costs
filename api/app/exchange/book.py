@@ -70,10 +70,18 @@ class BookManager:
         self._states: dict[str, _SymbolState] = {}
         #: Bounded audit trail for the data-quality dashboard.
         self.desync_events: deque = deque(maxlen=100)
+        #: Symbols asked to re-snapshot because their book is stale rather
+        #: than wrong. Kept apart from ``desynced`` so a slow feed never
+        #: invalidates a book that an open position still needs to exit on.
+        self._resync_requests: set[str] = set()
 
     # ------------------------------------------------------------------ #
     # ingest
     # ------------------------------------------------------------------ #
+
+    def clear_resync_request(self, symbol: str) -> None:
+        """Drop a pending request once a fresh snapshot has landed."""
+        self._resync_requests.discard(symbol.upper())
 
     def apply_snapshot(
         self,
@@ -85,6 +93,7 @@ class BookManager:
     ) -> None:
         """Install a REST ``/api/v3/depth`` snapshot and replay buffered diffs."""
         sym = symbol.upper()
+        self._resync_requests.discard(sym)
         st = self._state(sym)
         st.bids = _to_map(bids)
         st.asks = _to_map(asks)
@@ -284,6 +293,22 @@ class BookManager:
         st.counters.desyncs += 1
         self.desync_events.append((sym, why, st.book.last_update_ms))
 
+    def request_resync(self, symbol: str, why: str) -> None:
+        """Ask for a fresh snapshot **without** invalidating the current book.
+
+        :meth:`mark_desynced` is the right call when the book is known to be
+        *wrong* -- a sequence gap means the levels no longer describe the
+        market.  A book that is merely *old* is a different condition: the
+        levels were correct when they arrived, and throwing them away has a
+        cost that is easy to miss.  ``desynced`` makes ``is_valid()`` false,
+        and the position monitor skips any symbol whose book is invalid, so
+        marking a stale book desynced silently disables its stop-loss.  Exits
+        matter more when the feed is struggling, not less.
+        """
+        sym = symbol.upper()
+        self._resync_requests.add(sym)
+        self._state(sym).desync_reason = why
+
     def needs_resync(self) -> list[str]:
         """Symbols whose diff book must be re-snapshotted, in stable order."""
         out = [
@@ -291,7 +316,7 @@ class BookManager:
             for sym, st in self._states.items()
             if st.book.desynced or (st.mode == "diff" and not st.has_snapshot)
         ]
-        return sorted(out)
+        return sorted(set(out) | self._resync_requests)
 
     def stats(self) -> dict[str, object]:
         per_symbol: dict[str, dict[str, object]] = {}

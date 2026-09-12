@@ -259,6 +259,10 @@ class IdleAttributionError(RuntimeError):
 _REJECT_TO_IDLE: dict[RejectReason, IdleReason] = {
     # Nothing usable to decide on.
     RejectReason.STALE_BOOK: IdleReason.NO_QUALIFIED_SIGNAL,
+    # STALE_MARKET_DATA is OUR pipeline failing to deliver a usable book, not
+    # the market failing to offer a trade. It belongs with the defects so the
+    # dashboard shows idle cash caused by a feed problem as a feed problem.
+    RejectReason.STALE_MARKET_DATA: IdleReason.SCANNER_DELAY,
     RejectReason.DATA_FAILURE: IdleReason.NO_QUALIFIED_SIGNAL,
     RejectReason.NOT_SUPPORTED_SHORT: IdleReason.NO_QUALIFIED_SIGNAL,
     # The round trip ate the edge.

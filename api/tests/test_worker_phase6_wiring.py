@@ -198,32 +198,43 @@ class TestShortSideBestEdgeIsObserved:
         assert block == {"by_strategy": {}, "total_signals": 0}
 
 
-class TestStaleBooksNeverReachAStrategy:
-    """Freshness is checked where the data is consumed, not where it is routed.
+class TestFreshnessBudgetIsTierAware:
+    """One number cannot describe two subscription cadences.
 
-    Getting tier/subscription logic exactly right has now failed twice in
-    production: COLD pairs were evaluated while unsubscribed, and then a
-    WARM-demoted BTCUSD was evaluated on a book ten minutes old, which the
-    regime classifier reads as ABNORMAL and every strategy then refuses. A
-    guard at the point of use is robust to whatever the tiering does next.
+    HOT takes depth@100ms; WARM takes depth20@1000ms and is routinely 1-3s old
+    by construction. Judging WARM by the HOT bar excluded every WARM symbol
+    permanently -- SOLUSD reported STALE_BOOK at 3,530ms on a working feed.
     """
 
-    def test_snapshot_checks_book_age(self):
-        src = _source(worker_main.TradingWorker._snapshot)
-        assert "max_book_age_ms" in src
-        assert "last_update_ms" in src
+    def _worker(self):
+        w = worker_main.TradingWorker.__new__(worker_main.TradingWorker)
+        from app.config import get_settings
+        w.s = get_settings()
+        return w
 
-    def test_a_stale_book_produces_no_snapshot(self):
-        src = _source(worker_main.TradingWorker._snapshot)
-        guard = src[src.index("max_book_age_ms"):]
-        assert "return None" in guard.split("\n", 3)[1:][0] or "return None" in guard[:200]
+    def _entry(self, tier: str):
+        from app.types import SymbolInfo
+        from app.universe import UniverseEntry
+        return UniverseEntry(
+            symbol="SOLUSD",
+            info=SymbolInfo(symbol="SOLUSD", base_asset="SOL", quote_asset="USD",
+                            status="TRADING", step_size=1e-3, tick_size=0.01,
+                            min_qty=1e-3, min_notional=1.0),
+            quote_volume_24h=3e5, trades_24h=650, spread_bps=1.0,
+            volatility_bps=300.0, depth_usd=10_000.0, score=0.5, tier=tier,
+        )
 
-    def test_stale_is_reported_separately_from_missing(self):
-        """'No book' and 'a book too old to act on' need different fixes."""
-        src = _source(worker_main.TradingWorker.evaluate_once)
-        assert "STALE_BOOK" in src
-        assert "DATA_FAILURE" in src
+    def test_hot_keeps_the_original_bar(self):
+        w = self._worker()
+        assert w._freshness_budget_ms(self._entry("hot")) == w.s.risk.max_book_age_ms
 
-    def test_the_skip_is_remembered_with_its_age(self):
-        src = _source(worker_main.TradingWorker._snapshot)
-        assert "_stale_skips" in src
+    def test_warm_gets_room_for_its_own_snapshot_cadence(self):
+        w = self._worker()
+        warm = w._freshness_budget_ms(self._entry("warm"))
+        assert warm > w.s.risk.max_book_age_ms
+        # The exact case that was wrongly excluded.
+        assert warm > 3530, "a working 1s-snapshot feed must not read as stale"
+
+    def test_warm_still_rejects_a_genuinely_dead_feed(self):
+        w = self._worker()
+        assert w._freshness_budget_ms(self._entry("warm")) < 60_000

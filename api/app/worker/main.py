@@ -61,13 +61,22 @@ from app.types import (
     Position,
     PortfolioState,
     Regime,
+    RejectReason,
     RegimeState,
     Side,
     Signal,
     SymbolInfo,
     now_ms,
 )
-from app.universe import UniverseEntry, UniverseSelector
+from app.universe import Tier, UniverseEntry, UniverseSelector
+
+#: WARM subscribes to ``depth20@1000ms``, so its book is one-second snapshots.
+WARM_SNAPSHOT_INTERVAL_MS = 1_000
+#: How many WARM snapshot intervals a book may lag before it is too old to act
+#: on. Measured on the live combined stream, a healthy WARM book reaches ~3.5s
+#: between applied snapshots, so three intervals rejected a working feed. Five
+#: covers the observed jitter and still catches a feed that has actually died.
+WARM_STALENESS_SNAPSHOTS = 5
 
 log = logging.getLogger("cryptobot.worker")
 
@@ -193,8 +202,8 @@ class TradingWorker:
         self._cooldown_until_ms = 0
         self._universe_refreshed_ms = 0
         self._features_cache: dict[str, Features] = {}
-        #: symbol -> book age when it was last skipped for staleness.
-        self._stale_skips: dict[str, int] = {}
+        #: symbol -> the full STALE_MARKET_DATA record while it is excluded.
+        self._stale_books: dict[str, dict[str, Any]] = {}
         # The funnel accumulates across evaluations rather than describing the
         # current instant. "Candidate counts by symbol" is a count over time;
         # a snapshot of one 1-second pass answers a different question and
@@ -397,23 +406,113 @@ class TradingWorker:
     # Snapshot assembly
     # ------------------------------------------------------------------ #
 
+    def _check_book_freshness(
+        self, entry: UniverseEntry, book: Any, ts_ms: int
+    ) -> dict[str, Any] | None:
+        """``None`` when the book may be used; a full record when it may not.
+
+        The record carries everything needed to tell a dead subscription from a
+        slow one without going back to the logs, because "stale" on its own has
+        twice been diagnosed wrongly in this project.
+
+        A stale HOT or WARM symbol is also handed to the book manager's resync
+        path, so recovery is attempted rather than merely reported; it returns
+        to evaluation by itself on the first fresh update.
+        """
+        last_update_ms = int(getattr(book, "last_update_ms", 0) or 0)
+        budget_ms = self._freshness_budget_ms(entry)
+        # An unpopulated book is not "ten minutes old": it has no age at all.
+        # ``features.NO_BOOK_AGE_MS`` is a sentinel and reporting it as a
+        # measurement is how 600,000ms came to be read as a real book age.
+        never_updated = last_update_ms <= 0
+        age_ms = None if never_updated else max(0, ts_ms - last_update_ms)
+        if not never_updated and age_ms is not None and age_ms <= budget_ms:
+            if self._stale_books.pop(entry.symbol, None) is not None:
+                log.info(
+                    "market data recovered: %s book age %dms within %dms budget",
+                    entry.symbol, age_ms, budget_ms,
+                )
+            return None
+
+        record = {
+            "symbol": entry.symbol,
+            "tier": entry.tier,
+            "book_age_ms": age_ms,          # None => never updated, not a number
+            "never_updated": never_updated,
+            "last_update_ms": last_update_ms or None,
+            "current_time_ms": ts_ms,
+            "freshness_budget_ms": budget_ms,
+            # getattr, because a feed that cannot report its own subscription
+            # set must not crash the guard that exists to keep us safe.
+            "subscribed": entry.symbol in set(getattr(self.feed, "universe", []) or []),
+            "websocket_connected": bool(getattr(self.feed, "connected", False)),
+            "reason": RejectReason.STALE_MARKET_DATA.value,
+        }
+        previous = self._stale_books.get(entry.symbol)
+        record["since_ms"] = (previous or {}).get("since_ms", ts_ms)
+        record["passes"] = int((previous or {}).get("passes", 0)) + 1
+        self._stale_books[entry.symbol] = record
+
+        if previous is None:
+            log.warning(
+                "STALE_MARKET_DATA %s tier=%s age=%s budget=%dms subscribed=%s ws=%s",
+                entry.symbol, entry.tier,
+                "never updated" if never_updated else f"{age_ms}ms",
+                budget_ms, record["subscribed"], record["websocket_connected"],
+            )
+        # Ask for a REST re-snapshot. The book manager already runs a resync
+        # loop for gapped books; a stale book is the same problem arriving by a
+        # different route, so it uses the same recovery rather than a new one.
+        if entry.tier in (Tier.HOT.value, Tier.WARM.value):
+            try:
+                # request_resync, NOT mark_desynced: a stale book is old, not
+                # wrong. mark_desynced sets is_valid() false, and the position
+                # monitor skips any symbol whose book is invalid -- so it would
+                # silently disable the stop-loss on an open position at exactly
+                # the moment the feed is struggling.
+                self.books.request_resync(entry.symbol, "stale market data")
+            except Exception:
+                log.debug("resync request failed for %s", entry.symbol, exc_info=True)
+        return record
+
+    def stale_market_data(self) -> list[dict[str, Any]]:
+        """Every symbol currently excluded for staleness, newest problem last."""
+        return sorted(self._stale_books.values(), key=lambda r: r["since_ms"])
+
+    def _freshness_budget_ms(self, entry: UniverseEntry) -> int:
+        """How old a book may be before this symbol stops being evaluated.
+
+        Tier-aware, because the tiers subscribe to different streams and a
+        single number cannot describe both.  HOT takes ``depth@100ms`` and is
+        held to ``risk.max_book_age_ms`` (2.5s) as it always has been.  WARM
+        takes ``depth20@1000ms``, so its book is one-second snapshots by
+        construction and is *routinely* 1-3s old -- judging it by the HOT bar
+        excluded every WARM symbol permanently, which is how SOLUSD came to
+        report STALE_BOOK at 3,530ms on a feed that was working correctly.
+
+        The WARM budget is a multiple of its own snapshot interval rather than
+        a second hand-picked constant: if the stream cadence changes, the bar
+        follows it.
+        """
+        base = int(self.s.risk.max_book_age_ms)
+        if entry.tier == Tier.HOT.value:
+            return base
+        return max(base, WARM_SNAPSHOT_INTERVAL_MS * WARM_STALENESS_SNAPSHOTS)
+
     def _snapshot(self, entry: UniverseEntry, ts_ms: int) -> MarketSnapshot | None:
         book = self.books.get(entry.symbol)
         if book is None:
             return None
         # A stale book must never reach a strategy. The tier machinery is
         # supposed to keep subscribed symbols fresh, but getting that exactly
-        # right has now failed twice -- COLD pairs were evaluated unsubscribed,
-        # and then a WARM-demoted BTCUSD was evaluated on a book ten minutes
-        # old, which the regime classifier reads as ABNORMAL and every strategy
-        # then refuses. Guarding at the point of use is robust to whatever the
+        # right has now failed three times -- COLD pairs evaluated while
+        # unsubscribed, a WARM-demoted BTCUSD evaluated on a book that had
+        # never been populated, and a working WARM feed rejected by a HOT
+        # threshold. Guarding at the point of use is robust to whatever the
         # tiering does next: freshness is a property of the data, so it is
         # checked where the data is consumed.
-        age_ms = max(0, ts_ms - int(getattr(book, "last_update_ms", 0) or 0))
-        if age_ms > self.s.risk.max_book_age_ms:
-            self._stale_skips[entry.symbol] = age_ms
+        if self._check_book_freshness(entry, book, ts_ms) is not None:
             return None
-        self._stale_skips.pop(entry.symbol, None)
         # CLOSED bars only. The feed will happily hand over the in-progress
         # candle, but the feature engine folds each bar into permanent state
         # keyed by close time: a partial bar would be absorbed as if it were
@@ -497,11 +596,17 @@ class TradingWorker:
                         decision=Decision.NO_TRADE.value,
                         # Distinguish "we have no book" from "the book we have is
                         # too old to act on"; they need different fixes.
+                        # "We have no book" and "the book we have is too old to
+                        # act on" need different fixes and must not render alike.
                         reject_reason=(
-                            "STALE_BOOK" if entry.symbol in self._stale_skips
+                            RejectReason.STALE_MARKET_DATA.value
+                            if entry.symbol in self._stale_books
                             else "DATA_FAILURE"
                         ),
-                        book_age_ms=self._stale_skips.get(entry.symbol, 0),
+                        book_age_ms=int(
+                            (self._stale_books.get(entry.symbol) or {}).get(
+                                "book_age_ms") or 0
+                        ),
                     )
                 )
                 continue
@@ -1378,6 +1483,7 @@ class TradingWorker:
             "board": self._opportunity_board(),
             "funnel": self._symbol_funnel(ledger),
             "opportunities": self.recycler.queue.as_dict(),
+            "stale_market_data": self.stale_market_data(),
             "short_side": self._short_side_block(),
             "recycling": self._recycling_block(ledger, ts),
             "missed": _read_json(

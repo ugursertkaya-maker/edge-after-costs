@@ -72,6 +72,11 @@ class OrderType(str, enum.Enum):
 
 class RejectReason(str, enum.Enum):
     STALE_BOOK = "STALE_BOOK"
+    #: The book exists and is being maintained, but its last update is older
+    #: than this tier's freshness budget. Distinct from STALE_BOOK (a gap the
+    #: book manager itself flagged) because this one is measured at the point
+    #: of use and carries the age that caused it.
+    STALE_MARKET_DATA = "STALE_MARKET_DATA"
     WIDE_SPREAD = "WIDE_SPREAD"
     THIN_DEPTH = "THIN_DEPTH"
     NEGATIVE_EDGE = "NEGATIVE_EDGE"
