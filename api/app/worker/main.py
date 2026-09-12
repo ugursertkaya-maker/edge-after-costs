@@ -1042,6 +1042,15 @@ class TradingWorker:
             f.reached("data_healthy")
             f.reached("features")
             f.reached("strategy_evaluated")
+            # The model stage is vacuously passed when there is no champion to
+            # consult -- Phase 4 never promoted one. Marking it unreached would
+            # name it every symbol's bottleneck and hide the real wall, which
+            # is exactly the kind of confidently-wrong diagnosis this funnel
+            # exists to prevent.
+            if self.champion is None or getattr(self, "predictor", None) is None:
+                f.reached("model_evaluated")
+            elif row.strategy:
+                f.reached("model_evaluated")
             if row.strategy:
                 f.reached("candidate")
             if row.reject_reason:
