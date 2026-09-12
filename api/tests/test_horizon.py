@@ -4,6 +4,12 @@ Every test here is about *when* a position is allowed to still exist.  The two
 failure modes being designed against are opposite and equally expensive: giving
 back a profit while waiting for minute 25, and nursing a loser past minute 60
 because realising it would make the number real.
+
+Since Phase 6 the horizon is the *fallback* clock — a strategy with a holding
+profile brings its own, and `momentum_scalp`'s is 40 minutes, not 60.  So the
+positions here carry a strategy that has no profile, which is what leaves the
+horizon in charge and keeps these tests about the horizon.  The interaction
+between the two clocks is tested in ``test_holding.py``.
 """
 
 from __future__ import annotations
@@ -67,7 +73,7 @@ def position(**over: object) -> Position:
         id="p2",
         symbol=SYMBOL,
         side=Side.LONG,
-        strategy="momentum_scalp",
+        strategy="horizon_only",   # no holding profile: the horizon decides
         qty=1.0,
         entry_price=ENTRY,
         entry_ms=BASE_MS,

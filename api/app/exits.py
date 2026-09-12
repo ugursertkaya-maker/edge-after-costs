@@ -30,6 +30,15 @@ V2 adds two things on top, without disturbing either rule:
   the seat (``EXIT_WEAK``).  At 60 minutes the capital comes back.  Extension
   past that is allowed only for a position whose profit is *already protected* —
   **a loser is never extended to avoid realising it.**
+
+Phase 6 adds a third thing, and it is the one that makes the other two
+strategy-aware: the 25/60 minute horizon is a *fallback* clock, not the policy.
+Each strategy's own clock and its own reasons to leave live in
+:mod:`app.holding`, and :meth:`ExitEngine.check` consults them before it
+consults the horizon.  The horizon can only ever tighten — a strategy ceiling of
+180 seconds beats 60 minutes, and 60 minutes still beats a strategy that has no
+ceiling of its own.  A position whose strategy has no profile behaves exactly as
+it did in V2, and a V1-shaped position still never reaches either.
 """
 
 from __future__ import annotations
@@ -37,6 +46,14 @@ from __future__ import annotations
 import enum
 from typing import TYPE_CHECKING
 
+from app.holding import (
+    DEFAULT_PROFILE,
+    HoldingPolicy,
+    HoldingVerdict,
+    arm,
+    profile_for,
+    state_of,
+)
 from app.profit import NetTargetEngine
 from app.types import (
     ExitReason,
@@ -88,6 +105,7 @@ class ExitEngine:
         self.cfg = settings.exits
         self.horizon = settings.horizon
         self.net_targets = NetTargetEngine(settings=settings, fees=fees)
+        self.holding = HoldingPolicy(settings=settings)
 
     # ------------------------------------------------------------------ #
     # Entry-time levels
@@ -301,24 +319,36 @@ class ExitEngine:
         reversal: bool = False,
         best_alternative_edge_bps: float = 0.0,
         signal_strength: float = 0.0,
+        live_score: float | None = None,
+        predicted_ev_bps: float | None = None,
     ) -> ExitReason | None:
         """Return the reason to exit now, or ``None`` to hold.
 
         Priority is fixed and deliberate: losses first (STOP_LOSS), then
         realised targets (TAKE_PROFIT), then giving back an open profit
         (TRAILING_PROFIT), then a changed opinion (SIGNAL_REVERSAL), then the
-        25-minute checkpoint's verdicts, then the clock (TIME_STOP).  Two
-        conditions at once always resolve to the one that costs the least to be
-        wrong about — which is why a stop hit at minute 2 of a 25-minute window
-        is still a stop, not something to review later.
+        holding policy for this strategy, then the 25-minute checkpoint's
+        verdicts, then the clock (TIME_STOP).  Two conditions at once always
+        resolve to the one that costs the least to be wrong about — which is why
+        a stop hit at minute 2 of a 25-minute window is still a stop, not
+        something to review later.
 
-        ``check`` is a pure query with exactly one documented exception: when a
-        *winning*, profit-protected position earns an extension past the time
-        stop it sets ``pos.extended``, because the deadline it just survived has
-        to move with it.
+        The strategy policy sits above the checkpoint and the horizon because it
+        is the more specific instrument: a `flow_impulse` whose impulse is spent
+        at 40 seconds should not wait 24 more minutes for a review written for
+        position sizes and horizons it does not have.  It sits *below* the price
+        levels because a stop is a stop whatever the strategy thinks.
+
+        ``check`` is a pure query with two documented exceptions.  A *winning*,
+        profit-protected position that earns an extension past the time stop
+        sets ``pos.extended``, because the deadline it just survived has to move
+        with it.  And a profiled position that was never armed records its entry
+        snapshot on first sight (see :meth:`holding_verdict`) — decay is a
+        relative measurement and has to be relative to something.
 
         A V1 position — no ``targets``, no ``checkpoint_ms`` — never reaches the
-        checkpoint or the horizon clock and behaves precisely as it did before.
+        holding policy, the checkpoint or the horizon clock and behaves
+        precisely as it did before.
         """
         price = self.exit_price(pos, book)
         if price <= 0:
@@ -348,6 +378,15 @@ class ExitEngine:
                 return ExitReason.TIME_STOP
             return None
 
+        policy_verdict = self.holding_verdict(
+            pos, book, f, ts_ms,
+            price=price,
+            live_score=live_score,
+            predicted_ev_bps=predicted_ev_bps,
+        )
+        if policy_verdict.reason is not None:
+            return policy_verdict.reason
+
         if self._checkpoint_due(pos, ts_ms):
             verdict = self.checkpoint(
                 pos, book, f, ts_ms,
@@ -362,13 +401,54 @@ class ExitEngine:
             # KEEP and TRAIL_PROFIT both hold; arming the trail is the worker's
             # job via update_trailing, so that check() stays side-effect free.
 
-        if ts_ms >= self._horizon_deadline_ms(pos):
-            if self._may_extend(pos, price, signal_strength):
+        ceiling_ms = self._strategy_ceiling_ms(pos, f)
+        if ts_ms >= self._horizon_deadline_ms(pos, ceiling_ms):
+            if self._may_extend(pos, price, signal_strength, ceiling_ms, ts_ms):
                 pos.extended = True
                 return None
             return ExitReason.TIME_STOP
 
         return None
+
+    # ------------------------------------------------------------------ #
+    # Phase 6 — the strategy's own policy
+    # ------------------------------------------------------------------ #
+
+    def holding_verdict(
+        self,
+        pos: Position,
+        book: OrderBook,
+        f: Features | None,
+        ts_ms: int,
+        *,
+        price: float = 0.0,
+        live_score: float | None = None,
+        predicted_ev_bps: float | None = None,
+    ) -> HoldingVerdict:
+        """Ask :mod:`app.holding` what this strategy makes of this position.
+
+        A strategy with no profile is inert here — it keeps the horizon and
+        nothing is written to its ``meta`` — so an unmeasured strategy can never
+        inherit another one's timing.
+
+        The arming is the side effect the class docstring warns about.  The
+        worker arms at entry, where the snapshot is genuinely the entry; when
+        nothing did (a backtest, a restarted worker reloading open positions)
+        the first tick that carries features is the closest baseline that
+        honestly exists, and taking it late can only *under*-report decay.
+        """
+        if profile_for(pos.strategy) is DEFAULT_PROFILE:
+            return HoldingVerdict(held_seconds=pos.holding_seconds(ts_ms))
+        if state_of(pos) is None:
+            arm(pos, f, book=book, ts_ms=ts_ms)
+        return self.holding.evaluate(
+            pos, book, f, ts_ms,
+            net_unrealized_bps=self._net_unrealized_bps(
+                pos, price or self.exit_price(pos, book)
+            ),
+            live_score=live_score,
+            predicted_ev_bps=predicted_ev_bps,
+        )
 
     def take_profit_price(self, pos: Position) -> float:
         """The level a take-profit is measured against.
@@ -454,22 +534,43 @@ class ExitEngine:
         seconds = float(self.horizon.checkpoint_seconds)
         return seconds > 0 and pos.holding_seconds(ts_ms) >= seconds
 
-    def _horizon_deadline_ms(self, pos: Position) -> int:
+    def _strategy_ceiling_ms(self, pos: Position, f: Features | None) -> int:
+        """When this strategy's own clock runs out, or 0 if it has none.
+
+        Volatility moves it: the same thesis is worth waiting longer for in a
+        quiet market than in a violent one, which is why the scaling lives in
+        :meth:`app.holding.HoldingPolicy.hold_scale` and not in a constant.
+        """
+        seconds = self.holding.max_hold_seconds(pos, f)
+        if seconds <= 0.0:
+            return 0
+        return pos.entry_ms + int(seconds * 1000)
+
+    def _horizon_deadline_ms(self, pos: Position, ceiling_ms: int = 0) -> int:
         """When the capital has to come back, in epoch ms.
 
-        The earlier of the 60-minute horizon and whatever explicit
-        ``time_stop_ms`` the position was opened with — a deadline is a ceiling,
-        never a licence to hold longer — plus the extension once, and only once,
-        a winner has earned it.
+        The earliest of the 60-minute horizon, whatever explicit
+        ``time_stop_ms`` the position was opened with, and the strategy's own
+        ceiling — a deadline is a ceiling, never a licence to hold longer — plus
+        the extension once, and only once, a winner has earned it.
         """
         deadline = pos.entry_ms + int(max(0.0, float(self.horizon.time_stop_seconds)) * 1000)
         if pos.time_stop_ms > 0:
             deadline = min(deadline, pos.time_stop_ms)
         if pos.extended:
             deadline += int(max(0.0, float(self.horizon.extension_seconds)) * 1000)
+        if ceiling_ms > 0:
+            deadline = min(deadline, ceiling_ms)
         return deadline
 
-    def _may_extend(self, pos: Position, price: float, signal_strength: float) -> bool:
+    def _may_extend(
+        self,
+        pos: Position,
+        price: float,
+        signal_strength: float,
+        ceiling_ms: int = 0,
+        ts_ms: int = 0,
+    ) -> bool:
         """Extension is for protected winners only.
 
         Every condition here exists to block the same failure: holding a losing
@@ -477,11 +578,18 @@ class ExitEngine:
         must be positive *net* of the round trip, the trail must already be
         armed so that profit cannot evaporate during the extension, the live
         signal must still be exceptional, and a position may extend once.
+
+        A strategy ceiling is not extendable at all: 180 seconds is what the
+        `flow_impulse` edge has been measured to be worth, and a strong signal
+        at second 181 is an argument for a *new* position, not for keeping one
+        whose shelf life has expired.
         """
         h = self.horizon
         if not h.allow_extension or h.extension_seconds <= 0:
             return False
         if pos.extended:
+            return False
+        if ceiling_ms > 0 and ts_ms >= ceiling_ms:
             return False
         if not (self.cfg.trailing_enabled and pos.trailing_armed):
             return False
@@ -502,6 +610,12 @@ class ExitEngine:
         if targets is not None:
             return gross - targets.costs.total_usd
         return gross - 2.0 * max(0.0, pos.entry_fees_usd)
+
+    def _net_unrealized_bps(self, pos: Position, price: float) -> float:
+        """The same number as a rate, which is how the profiles express it."""
+        if pos.notional_usd <= 0 or price <= 0:
+            return 0.0
+        return self._net_unrealized_usd(pos, price) / pos.notional_usd * _BPS
 
     @staticmethod
     def _target_bps(pos: Position) -> float:
@@ -572,6 +686,12 @@ class ExitEngine:
         free of side effects.  The trail arms at ``trailing_arm_frac`` of the
         distance to the TP — early enough to protect a move that stalls, late
         enough that ordinary noise does not scratch the trade.
+
+        A profiled position arms on a second condition as well: once it is up
+        ``trail_after_net_bps`` **net**, there is something real to protect and
+        the fraction of a distant TP is no longer the only thing that matters.
+        That is how a 30-second trade keeps its 12 bps — it will never travel
+        60% of an ATR-sized target before the impulse is over.
         """
         if not self.cfg.trailing_enabled or price <= 0:
             return
@@ -587,4 +707,8 @@ class ExitEngine:
             span = pos.entry_price - pos.take_profit
         if not pos.trailing_armed and span > 0:
             if progress >= self.cfg.trailing_arm_frac * span:
+                pos.trailing_armed = True
+        if not pos.trailing_armed and self._horizon_applies(pos):
+            floor = self.holding.trail_after_net_bps(pos)
+            if floor > 0.0 and self._net_unrealized_bps(pos, price) >= floor:
                 pos.trailing_armed = True

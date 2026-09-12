@@ -57,6 +57,12 @@ class ExitReason(str, enum.Enum):
     # V2 — the 25-minute checkpoint's two active verdicts.
     EXIT_WEAK = "EXIT_WEAK"            # going nowhere; stop paying for the seat
     ROTATE_CAPITAL = "ROTATE_CAPITAL"  # a materially better idea wants this cash
+    # Phase 6 — strategy-specific holding.  Each is a distinct answer to "why
+    # did this position end", and merging any of them into TIME_STOP or
+    # RISK_EXIT would erase the measurement the phase exists to produce.
+    SIGNAL_DECAY = "SIGNAL_DECAY"              # the trigger gave itself back
+    EXEC_DETERIORATED = "EXEC_DETERIORATED"    # getting out is now too expensive
+    NEGATIVE_EV = "NEGATIVE_EV"                # the model now expects a loss
 
 
 class OrderType(str, enum.Enum):

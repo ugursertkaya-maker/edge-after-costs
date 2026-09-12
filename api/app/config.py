@@ -371,6 +371,48 @@ class PortfolioConfig:
 
 
 @dataclass(frozen=True)
+class RecycleConfig:
+    """Capital recycling: the close → release → rescan → redeploy path (§11–§15).
+
+    The defaults encode two decisions the phase spec makes explicitly.
+
+    **A close triggers a rescan.**  Waiting for the next scheduler tick leaves
+    freed capital idle for a whole interval for no reason other than loop
+    shape, and the idle attribution would charge that to ``SCANNER_DELAY``
+    rather than to the market — a real cost, invisible in the P&L.
+
+    **There is no global cooldown after a close.**  Closing SOL must not block
+    opening ETH, so ``symbol_cooldown_seconds`` is per *symbol* and defaults to
+    **0 — off**.  It exists because churning the same coin on the same idea is
+    a real failure mode worth being able to switch on, not because anything
+    measured says it should be on.  Anything broader than one symbol would be a
+    global cooldown by another name and is not configurable here at all.
+    """
+
+    rescan_on_close: bool = _eb("RECYCLE_RESCAN_ON_CLOSE", True)
+    queue_enabled: bool = _eb("RECYCLE_QUEUE_ENABLED", True)
+    #: Board size.  Bounded because a queue that keeps everything is a log, and
+    #: the worst entry on a 500-deep board will never be deployed anyway.
+    queue_max_size: int = _ei("RECYCLE_QUEUE_MAX", 50)
+    #: How long a ranked candidate stays on the board.  Two minutes is roughly
+    #: the horizon over which the features it was ranked on are still recognisable;
+    #: past that, revalidation would reject it anyway and it is only taking a slot.
+    queue_ttl_seconds: float = _ef("RECYCLE_QUEUE_TTL_SECONDS", 120.0)
+    #: Extra decay guard on revalidation, as a percentage of the queued edge.
+    #: 100 means "only the live gate binds" — the recomputed edge still has to
+    #: clear ``risk.min_net_edge_bps`` on its own, which is the real protection.
+    max_ev_decay_pct: float = _ef("RECYCLE_MAX_EV_DECAY_PCT", 100.0)
+    #: Quantisation of the triggering feature inside ``episode_id``.  Coarse on
+    #: purpose: the bucket exists so the *same* impulse cannot mint a new
+    #: episode by drifting a fraction of a basis point.
+    signal_bucket_bps: float = _ef("RECYCLE_SIGNAL_BUCKET_BPS", 5.0)
+    #: Anti-churn, one symbol at a time.  **Off by default** (§15).
+    symbol_cooldown_seconds: float = _ef("RECYCLE_SYMBOL_COOLDOWN_SECONDS", 0.0)
+    #: How many recycle events are kept for the latency report.
+    event_history: int = _ei("RECYCLE_EVENT_HISTORY", 500)
+
+
+@dataclass(frozen=True)
 class HorizonConfig:
     """The 25-60 minute development window.
 
@@ -385,6 +427,51 @@ class HorizonConfig:
     # At the checkpoint, a position doing nothing yields to a better idea.
     rotate_if_edge_ratio: float = _ef("HORIZON_ROTATE_IF_EDGE_RATIO", 1.75)
     rotate_min_progress_frac: float = _ef("HORIZON_ROTATE_MIN_PROGRESS", 0.25)
+
+
+@dataclass(frozen=True)
+class HoldingConfig:
+    """Thresholds for strategy-specific position management (Phase 6, §7-§10).
+
+    The per-strategy numbers — min/typical/max hold, decay halflife, whether the
+    entry score may be re-read at all — live in ``app.holding.PROFILES``, because
+    they are *measurements of a strategy* and belong next to the strategies they
+    describe.  What is configurable here is the machinery those profiles are fed
+    through: how much retracement counts as a reversal, what a deteriorated book
+    looks like, how hard volatility is allowed to stretch a clock.
+    """
+
+    enabled: bool = _eb("HOLDING_POLICY_ENABLED", True)
+
+    # A trigger that has flipped this far *against* the position is no longer a
+    # decayed signal, it is the opposite signal.
+    reversal_frac: float = _ef("HOLDING_REVERSAL_FRAC", 0.5)
+
+    # Only consulted for profiles with ``reeval_entry_score``; for the slow
+    # strategies the live score is ignored entirely, whatever this says.
+    entry_score_exit_frac: float = _ef("HOLDING_ENTRY_SCORE_EXIT_FRAC", 0.6)
+
+    # Execution state.  Relative *and* absolute, both: a spread that doubles
+    # from 0.3 bps has doubled and still costs nothing.  The absolute floor is
+    # the risk engine's entry gate — above it we would not have opened.
+    exec_spread_mult: float = _ef("HOLDING_EXEC_SPREAD_MULT", 3.0)
+    exec_min_spread_bps: float = _ef("HOLDING_EXEC_MIN_SPREAD_BPS", 6.0)
+    exec_depth_collapse_frac: float = _ef("HOLDING_EXEC_DEPTH_FRAC", 0.25)
+    exec_depth_notional_mult: float = _ef("HOLDING_EXEC_DEPTH_NOTIONAL_MULT", 2.0)
+
+    # A model that now expects the position to lose money is not a hold.
+    # Slightly negative is noise around the gate; this is materially negative.
+    negative_ev_bps: float = _ef("HOLDING_NEGATIVE_EV_BPS", -2.0)
+
+    # mean_reversion's own horizon: value reached, and structure invalidated.
+    reversion_target_frac: float = _ef("HOLDING_REVERSION_TARGET_FRAC", 0.25)
+    reversion_invalidate_mult: float = _ef("HOLDING_REVERSION_INVALIDATE_MULT", 1.6)
+
+    # Volatility stretches the strategy clock: quiet markets need longer to
+    # deliver the same move, violent ones deliver it or kill it sooner.
+    vol_scale: float = _ef("HOLDING_VOL_SCALE", 1.0)
+    vol_scale_min: float = _ef("HOLDING_VOL_SCALE_MIN", 0.5)
+    vol_scale_max: float = _ef("HOLDING_VOL_SCALE_MAX", 1.5)
 
 
 @dataclass(frozen=True)
@@ -454,7 +541,9 @@ class Settings:
     profit: ProfitConfig = field(default_factory=ProfitConfig)
     execution_style: ExecutionStyleConfig = field(default_factory=ExecutionStyleConfig)
     portfolio: PortfolioConfig = field(default_factory=PortfolioConfig)
+    recycle: RecycleConfig = field(default_factory=RecycleConfig)
     horizon: HorizonConfig = field(default_factory=HorizonConfig)
+    holding: HoldingConfig = field(default_factory=HoldingConfig)
     recorder: RecorderConfig = field(default_factory=RecorderConfig)
     research: ResearchConfig = field(default_factory=ResearchConfig)
 

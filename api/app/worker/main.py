@@ -32,6 +32,7 @@ from app.exchange.rest import BinanceUSRest
 from app.exchange.ws import MarketDataFeed
 from app.exits import CheckpointVerdict, ExitEngine
 from app.features import FeatureEngine
+from app import holding
 from app.portfolio import PortfolioEngine
 from app.profit import NetTargetEngine
 from app.ranker import OpportunityRanker
@@ -678,6 +679,18 @@ class TradingWorker:
             checkpoint_ms=ts_ms + self.s.horizon.checkpoint_seconds * 1000,
             time_stop_ms=ts_ms + self.s.horizon.time_stop_seconds * 1000,
         )
+        # Snapshot the trigger BEFORE the position is persisted.  ``check()``
+        # self-arms on the first monitored tick, but that is ~500ms late and
+        # after ``open_position`` has already written ``meta``, so the baseline
+        # would not survive a restart -- and a decay baseline taken half a
+        # second into the trade is a baseline of a slightly different market.
+        holding.arm(
+            pos,
+            self._features_cache.get(opp.symbol),
+            book=book,
+            entry_score=float(getattr(opp.signal, "score", 0.0) or 0.0),
+            ts_ms=ts_ms,
+        )
         ledger.open(pos, result)
         self.stats.entries += 1
         log.info(
@@ -799,6 +812,53 @@ class TradingWorker:
     # Position monitoring / exits
     # ------------------------------------------------------------------ #
 
+    def _live_score(self, pos: Position, feats: Features | None) -> float | None:
+        """What the originating strategy scores this symbol *now*.
+
+        Only consulted for strategies whose profile re-evaluates the entry
+        score; for the slow ones entry scoring and position management are
+        separate concerns and a drifting score is not a reason to exit.
+        """
+        if feats is None:
+            return None
+        profile = holding.profile_for(pos.strategy)
+        if not profile.reeval_entry_score:
+            return None
+        regime = self.regime.classify(feats)
+        for strat in self.strategies:
+            if strat.name != pos.strategy:
+                continue
+            try:
+                sig = strat.evaluate(feats, regime)
+            except Exception:
+                return None
+            if sig is None or sig.side is not pos.side:
+                # No signal, or a signal the other way, is a score of zero for
+                # *this* position rather than an absence of information.
+                return 0.0
+            return float(getattr(sig, "score", 0.0) or 0.0)
+        return None
+
+    def _predicted_ev_bps(self, pos: Position, feats: Features | None) -> float | None:
+        """The predictive engine's current EV for holding this position.
+
+        ``None`` when there is no champion model or it declines to score, which
+        is the common case: the engine fails closed by design and Phase 4 never
+        promoted a champion.
+        """
+        engine = getattr(self, "predictor", None)
+        if engine is None or feats is None:
+            return None
+        regime = self.regime.classify(feats)
+        try:
+            verdict = engine.evaluate(feats, regime, side=pos.side)
+        except Exception:
+            return None
+        if verdict is None:
+            return None
+        ev = getattr(verdict, "ev_bps", None)
+        return None if ev is None else float(ev)
+
     def monitor_once(self, ts_ms: int | None = None) -> int:
         """Mark, trail, checkpoint and exit every open position.
 
@@ -820,7 +880,16 @@ class TradingWorker:
                 self.exits.update_trailing(pos, exit_price)
 
                 feats = self._features_cache.get(pos.symbol)
-                reason = self.exits.check(pos, book, feats, ts_ms)
+                # The live entry score and the model's current EV, so the
+                # holding policy can tell "the setup is gone" from "the clock
+                # ran out".  Both are None when unavailable rather than 0.0:
+                # a missing measurement must not read as a maximally bearish
+                # one and close the position.
+                reason = self.exits.check(
+                    pos, book, feats, ts_ms,
+                    live_score=self._live_score(pos, feats),
+                    predicted_ev_bps=self._predicted_ev_bps(pos, feats),
+                )
 
                 if reason is None and self._checkpoint_due(pos, ts_ms):
                     reason = self._run_checkpoint(pos, book, feats, ts_ms)
