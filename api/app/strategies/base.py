@@ -19,6 +19,11 @@ from ..types import Features, Regime, RegimeState, Side, Signal
 
 # Absolute floors.  ATR drives the real numbers; these stop a pathological
 # reading (a frozen market, a cold-start ATR) producing a nonsensical order.
+#
+# MIN_STOP_BPS is a clamp: a stop that is too tight is a stop we widen.
+# MIN_TARGET_BPS is a REJECTION: a target below it means the move this strategy
+# needs is not on offer, and clamping it up invents the move instead of
+# declining the trade.  The two floors are deliberately not symmetric.
 MIN_STOP_BPS = 3.0
 MIN_TARGET_BPS = 4.0
 
@@ -109,7 +114,23 @@ class Strategy:
         score = clamp(score)
         if score < self.min_score:
             return None
-        target_bps = max(float(target_bps), MIN_TARGET_BPS)
+        # A target below the floor means the market is not offering a move this
+        # strategy can aim at. Clamping it UP does not make the move exist -- it
+        # fabricates one, and every downstream number inherits the fiction.
+        #
+        # Measured 2026-09-12: ETHUSD 1m ATR was 0.131 bps, so book_imbalance's
+        # own target was 0.079 bps. The floor rewrote it to 4.0 -- a 51x
+        # inflation -- which produced a gross edge of 2.28 bps against a real
+        # one of 0.045, and put 198 candidates within an apparent 0.26 bps of a
+        # gate they were truly 2.5 bps away from. The floor was written to stop
+        # "a pathological reading (a frozen market, a cold-start ATR)" producing
+        # a nonsensical order; refusing the setup does that, inventing a target
+        # does not.
+        #
+        # This makes the system trade LESS, not more. That is the point.
+        target_bps = float(target_bps)
+        if target_bps < MIN_TARGET_BPS:
+            return None
         stop_bps = max(float(stop_bps), MIN_STOP_BPS)
         if f.spread_bps > MAX_SPREAD_FRACTION_OF_TARGET * target_bps:
             return None
