@@ -4442,3 +4442,690 @@ table.tbl-pred tbody tr:hover td.stick {
     display: none;
   }
 }
+
+/* ==========================================================================
+   PHASE 6 — multi-asset selection, capital recycling, holding buckets
+   --------------------------------------------------------------------------
+   Two rules govern everything below and both are about what an ABSENCE looks
+   like.
+
+   First: a resting diagnostic must look finished, not broken. BTC is 41.7% of
+   139 trades today, so BTC_CONCENTRATION renders inactive — and an inactive
+   flag is drawn with the same frame, the same eyebrow and the same threshold
+   track as an active one. Only the tone changes. A warning that looks like an
+   empty box when it is quiet is a warning nobody believes when it fires.
+
+   Second: an empty bucket cell is drawn as a mark, not as a number. "This
+   strategy never held for 2–5 minutes" gets a dim mid-dot; "$0.00" would be a
+   performance reading, and one that was never measured.
+   ========================================================================== */
+
+/* ------------------------------------------------- §17 opportunity board */
+.obar {
+  display: flex;
+  align-items: baseline;
+  gap: 16px;
+  flex-wrap: wrap;
+  padding: 8px 12px;
+  border-bottom: 1px solid var(--line);
+  background: var(--bg-2);
+}
+
+.obar-k {
+  font-family: var(--font-mono);
+  font-size: 9px;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+  color: var(--fg-4);
+}
+
+.obar-i {
+  font-family: var(--font-mono);
+  font-size: 10.5px;
+  color: var(--fg-3);
+  display: inline-flex;
+  align-items: baseline;
+  gap: 5px;
+}
+
+.obar-i b {
+  font-variant-numeric: tabular-nums slashed-zero;
+  font-size: 13px;
+  color: var(--fg-1);
+}
+
+.obar-i.is-selected b {
+  color: var(--pos);
+}
+.obar-i.is-queued b {
+  color: var(--info);
+}
+.obar-i.is-reject b {
+  color: var(--fg-2);
+}
+
+.obar-n {
+  margin-left: auto;
+  font-family: var(--font-mono);
+  font-size: 10px;
+  color: var(--fg-4);
+}
+
+/* The rank column is the allocator's ordering, so it is set apart from the
+   ordinary numeric columns — an empty rank has to read as "not in the queue",
+   not as a missing number. */
+td.rank {
+  color: var(--fg-2);
+  font-weight: 600;
+}
+
+td.ep {
+  color: var(--fg-4);
+  letter-spacing: 0.04em;
+}
+
+.ostat {
+  display: inline-block;
+  min-width: 78px;
+  padding: 0 6px;
+  font-size: 9.5px;
+  font-weight: 600;
+  letter-spacing: 0.08em;
+  text-align: center;
+  border: 1px solid transparent;
+}
+
+.ostat.is-selected {
+  color: var(--pos);
+  border-color: rgba(53, 210, 154, 0.34);
+  background: var(--pos-wash);
+}
+
+.ostat.is-queued {
+  color: var(--info);
+  border-color: rgba(90, 169, 230, 0.3);
+  background: var(--info-wash);
+}
+
+.ostat.is-expired {
+  color: var(--fg-3);
+  border-color: var(--line);
+}
+
+.ostat.is-reject,
+.ostat.is-unknown {
+  color: var(--fg-3);
+  border-color: var(--line);
+  background: var(--bg-2);
+}
+
+/* -------------------------------------------------- §18 concentration */
+.conc {
+  display: flex;
+  flex-direction: column;
+  gap: var(--gap);
+}
+
+.conc-heads {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(280px, 1fr));
+  gap: var(--gap);
+}
+
+.cshare {
+  border: 1px solid var(--line);
+  background: var(--bg-1);
+  padding: 10px 12px 11px;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.cshare-head {
+  display: flex;
+  align-items: baseline;
+  gap: 9px;
+}
+
+.cshare-k {
+  font-family: var(--font-mono);
+  font-size: 9px;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+  color: var(--fg-4);
+}
+
+.cshare-v {
+  margin-left: auto;
+  font-family: var(--font-mono);
+  font-variant-numeric: tabular-nums slashed-zero;
+  font-size: 22px;
+  font-weight: 600;
+  line-height: 1;
+  color: var(--fg-0);
+}
+
+.cshare-v.is-empty {
+  color: var(--fg-3);
+}
+
+.cshare.is-flagged .cshare-v {
+  color: var(--warn);
+}
+
+.cshare-sym {
+  font-family: var(--font-mono);
+  font-size: 11px;
+  font-weight: 600;
+  letter-spacing: 0.06em;
+  color: var(--fg-2);
+}
+
+.cshare-track {
+  position: relative;
+  height: 9px;
+  background: var(--bg-3);
+  border: 1px solid var(--line-soft);
+}
+
+.cshare-fill {
+  position: absolute;
+  inset: 0 auto 0 0;
+  background: var(--info);
+  opacity: 0.8;
+}
+
+.cshare.is-flagged .cshare-fill {
+  background: var(--warn);
+}
+
+.cshare.is-thin .cshare-fill,
+.cshare-fill.is-unknown {
+  background: repeating-linear-gradient(
+    135deg,
+    var(--fg-4) 0 3px,
+    transparent 3px 6px
+  );
+}
+
+/* The threshold, drawn on the track. A limit that lives in a caption is a
+   limit the eye never compares against. */
+.cshare-limit {
+  position: absolute;
+  top: -3px;
+  bottom: -3px;
+  width: 1px;
+  background: var(--neg);
+}
+
+.cshare-limit::after {
+  content: "";
+  position: absolute;
+  top: -2px;
+  left: -2px;
+  width: 5px;
+  height: 5px;
+  background: var(--neg);
+}
+
+.cshare-foot {
+  display: flex;
+  justify-content: space-between;
+  font-family: var(--font-mono);
+  font-size: 9.5px;
+  color: var(--fg-4);
+}
+
+.cshare-x {
+  font-size: 10.5px;
+  color: var(--fg-3);
+  line-height: 1.5;
+}
+
+/* The flag itself. Inactive is a finished reading and is framed like one. */
+.cflag {
+  border: 1px solid var(--line);
+  border-left: 2px solid var(--fg-4);
+  background: var(--bg-2);
+  padding: 10px 12px 11px;
+  display: flex;
+  flex-direction: column;
+  gap: 7px;
+}
+
+.cflag.is-flagged {
+  border-left-color: var(--warn);
+  background: var(--warn-wash);
+}
+
+.cflag.is-clear {
+  border-left-color: var(--pos-dim);
+}
+
+.cflag.is-thin,
+.cflag.is-unmeasured {
+  border-left-color: var(--fg-4);
+}
+
+.cflag-head {
+  display: flex;
+  align-items: baseline;
+  gap: 12px;
+  flex-wrap: wrap;
+}
+
+.cflag-badge {
+  font-family: var(--font-mono);
+  font-size: 10px;
+  font-weight: 600;
+  letter-spacing: 0.1em;
+  padding: 2px 7px;
+  border: 1px solid var(--line);
+  color: var(--fg-2);
+  background: var(--bg-1);
+}
+
+.cflag.is-flagged .cflag-badge {
+  color: var(--warn);
+  border-color: rgba(240, 180, 41, 0.4);
+}
+
+.cflag.is-clear .cflag-badge {
+  color: var(--pos);
+  border-color: rgba(53, 210, 154, 0.28);
+}
+
+.cflag-read {
+  margin-left: auto;
+  font-family: var(--font-mono);
+  font-variant-numeric: tabular-nums slashed-zero;
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--fg-0);
+}
+
+.cflag-vs {
+  font-size: 10px;
+  font-weight: 400;
+  color: var(--fg-4);
+}
+
+.cflag-x {
+  font-size: 11px;
+  color: var(--fg-2);
+  line-height: 1.55;
+}
+
+.cflag-cause {
+  display: flex;
+  gap: 10px;
+  padding: 7px 9px;
+  border: 1px solid var(--line-soft);
+  background: var(--bg-1);
+}
+
+.cflag-cause-k {
+  flex: none;
+  font-family: var(--font-mono);
+  font-size: 9px;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+  color: var(--fg-4);
+  padding-top: 2px;
+}
+
+.cflag-cause-v {
+  font-size: 11px;
+  color: var(--fg-1);
+  line-height: 1.5;
+}
+
+.cflag-cause-v.is-empty {
+  color: var(--fg-3);
+}
+
+/* The line that keeps the flag honest. It is part of the component, never a
+   footnote, because the guarantee has to travel with the warning. */
+.cflag-guard {
+  font-size: 10.5px;
+  color: var(--fg-3);
+  line-height: 1.5;
+  border-top: 1px solid var(--line-soft);
+  padding-top: 6px;
+}
+
+.cbn {
+  color: var(--fg-4);
+}
+
+/* -------------------------------------------------- §19 capital recycling */
+.rcy {
+  display: flex;
+  flex-direction: column;
+  gap: var(--gap);
+}
+
+.rcy-ints {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(190px, 1fr));
+  gap: 1px;
+  background: var(--line);
+  border: 1px solid var(--line);
+}
+
+.rcy-int {
+  background: var(--bg-1);
+  padding: 9px 11px 10px;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  min-width: 0;
+  border-left: 2px solid transparent;
+}
+
+.rcy-int-k {
+  font-family: var(--font-mono);
+  font-size: 9px;
+  letter-spacing: 0.09em;
+  text-transform: uppercase;
+  color: var(--fg-4);
+}
+
+.rcy-int-v {
+  font-family: var(--font-mono);
+  font-variant-numeric: tabular-nums slashed-zero;
+  font-size: 17px;
+  font-weight: 600;
+  color: var(--fg-0);
+  line-height: 1.2;
+}
+
+.rcy-int-v.is-empty {
+  color: var(--fg-3);
+}
+
+.rcy-int-n {
+  font-size: 9.5px;
+  color: var(--fg-4);
+  min-height: 12px;
+}
+
+.rcy-int.is-fast {
+  border-left-color: var(--pos);
+}
+.rcy-int.is-fast .rcy-int-v {
+  color: var(--pos);
+}
+.rcy-int.is-ok {
+  border-left-color: var(--pos-dim);
+}
+.rcy-int.is-slow {
+  border-left-color: var(--warn);
+}
+.rcy-int.is-slow .rcy-int-v {
+  color: var(--warn);
+}
+.rcy-int.is-bad {
+  border-left-color: var(--neg);
+}
+.rcy-int.is-bad .rcy-int-v {
+  color: var(--neg);
+}
+.rcy-int.is-empty {
+  border-left-color: var(--line);
+}
+
+/* The chain, drawn as a chain: four marks in time order with the interval
+   between each pair on the row that follows it. */
+.rcy-chain {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  border: 1px solid var(--line);
+  background: var(--bg-1);
+}
+
+.rcy-step {
+  display: grid;
+  grid-template-columns: 14px minmax(120px, 1fr) 90px 110px minmax(0, 2fr);
+  align-items: baseline;
+  gap: 8px;
+  padding: 7px 12px;
+  border-bottom: 1px solid var(--line-soft);
+  font-family: var(--font-mono);
+  font-size: 11px;
+}
+
+.rcy-step:last-child {
+  border-bottom: 0;
+}
+
+.rcy-dot {
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: var(--info);
+  justify-self: center;
+}
+
+.rcy-step.is-pending .rcy-dot {
+  background: transparent;
+  border: 1px solid var(--fg-4);
+}
+
+.rcy-k {
+  color: var(--fg-1);
+}
+
+.rcy-v {
+  font-variant-numeric: tabular-nums slashed-zero;
+  color: var(--fg-0);
+  text-align: right;
+}
+
+.rcy-v.is-empty {
+  color: var(--fg-3);
+}
+
+.rcy-d {
+  font-variant-numeric: tabular-nums slashed-zero;
+  color: var(--info);
+  text-align: right;
+}
+
+.rcy-n {
+  font-family: var(--font-sans);
+  font-size: 10px;
+  color: var(--fg-4);
+}
+
+.rcy-open {
+  padding: 8px 12px;
+  border-top: 1px solid var(--line);
+  background: var(--bg-2);
+  font-size: 11px;
+  color: var(--fg-2);
+  line-height: 1.55;
+}
+
+.rcy-open b {
+  font-family: var(--font-mono);
+  font-variant-numeric: tabular-nums slashed-zero;
+  color: var(--warn);
+}
+
+/* ------------------------------------------ §02 unexplained idle capital */
+/* The one gap this screen is not allowed to round away. It is a block, not a
+   sentence in a paragraph, because an unattributed dollar is a defect report
+   and it has to survive being skimmed. */
+.idle-gap {
+  display: grid;
+  grid-template-columns: auto auto minmax(0, 1fr);
+  align-items: baseline;
+  gap: 10px;
+  padding: 9px 11px 10px;
+  border: 1px solid rgba(255, 95, 109, 0.34);
+  background: var(--neg-wash);
+}
+
+.idle-gap-tag {
+  font-family: var(--font-mono);
+  font-size: 9.5px;
+  font-weight: 600;
+  letter-spacing: 0.1em;
+  color: var(--neg);
+}
+
+.idle-gap-v {
+  font-family: var(--font-mono);
+  font-variant-numeric: tabular-nums slashed-zero;
+  font-size: 17px;
+  font-weight: 600;
+  color: var(--neg);
+}
+
+.idle-gap-x {
+  grid-column: 1 / -1;
+  font-size: 10.5px;
+  color: var(--fg-2);
+  line-height: 1.55;
+}
+
+.idle-gap-x b {
+  font-family: var(--font-mono);
+  font-variant-numeric: tabular-nums slashed-zero;
+  color: var(--fg-0);
+}
+
+/* The fourth idle group: money idle because WE are broken. It borrows the
+   loss tone rather than the warning tone — a measurement defect is not a
+   market condition and must not read as one. */
+.idle-seg.is-defect,
+.idle-fill.is-defect {
+  background: var(--neg-dim);
+}
+
+.idle-row.is-defect .idle-k,
+.iref.is-defect {
+  color: var(--neg);
+}
+
+.igrp.is-defect {
+  border-left-color: var(--neg);
+}
+
+.igrp.is-defect .igrp-head i,
+.idom.is-defect .idom-eye {
+  background: var(--neg);
+  color: inherit;
+}
+
+.idom.is-defect {
+  border-left-color: var(--neg);
+}
+
+/* ------------------------------------------------- §20 holding buckets */
+table.tbl.hb td.hb-cell {
+  text-align: center;
+  padding: 4px 8px;
+  border-left: 1px solid var(--line-soft);
+}
+
+table.tbl.hb th.c {
+  border-left: 1px solid var(--line-soft);
+}
+
+.hb-net {
+  display: block;
+  font-variant-numeric: tabular-nums slashed-zero;
+  font-size: 11.5px;
+  font-weight: 600;
+}
+
+.hb-n {
+  display: block;
+  font-size: 9px;
+  color: var(--fg-4);
+}
+
+/* An empty cell is a MARK, never a zero. See the block comment at the top of
+   this section: "$0.00" here would be a measurement nobody took. */
+.hb-cell.is-none {
+  background: repeating-linear-gradient(
+    135deg,
+    rgba(148, 163, 184, 0.05) 0 4px,
+    transparent 4px 8px
+  );
+}
+
+.hb-empty {
+  color: var(--fg-4);
+  font-size: 14px;
+  line-height: 1;
+}
+
+.hb-cell.is-thin {
+  opacity: 0.62;
+}
+
+.hb-foot {
+  display: flex;
+  gap: 18px;
+  flex-wrap: wrap;
+  padding: 7px 12px;
+  border-top: 1px solid var(--line-soft);
+  background: var(--bg-1);
+}
+
+.hb-legend {
+  font-size: 10px;
+  color: var(--fg-4);
+}
+
+.hb-legend.is-warn {
+  color: var(--warn);
+}
+
+/* --------------------------------------------------------------- narrow */
+/* No panel may push the page sideways: every wide table already scrolls
+   inside its own .tbl-wrap, and these grids collapse to one column rather
+   than forcing a horizontal page scroll. */
+@media (max-width: 860px) {
+  .conc-heads,
+  .rcy-ints {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .rcy-step {
+    grid-template-columns: 14px minmax(0, 1fr) auto;
+    row-gap: 2px;
+  }
+
+  .rcy-step .rcy-d {
+    grid-column: 3;
+  }
+
+  .rcy-step .rcy-n {
+    grid-column: 2 / -1;
+  }
+
+  .idle-gap {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .obar-n {
+    margin-left: 0;
+  }
+}
+
+/* Why entries left the board. "Dropped" is not "rejected" — a candidate also
+   leaves because it expired or lost to a better one — so the line is set as a
+   note rather than as a refusal tally. */
+.obar-drop {
+  padding: 7px 12px;
+  border-bottom: 1px solid var(--line-soft);
+  background: var(--bg-1);
+  font-size: 10.5px;
+  color: var(--fg-4);
+  line-height: 1.5;
+}

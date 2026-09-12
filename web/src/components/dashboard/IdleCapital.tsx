@@ -6,7 +6,7 @@ import {
   IDLE_GROUP_NOTES,
   IDLE_GROUP_ORDER,
   IDLE_GROUP_VERDICTS,
-  IDLE_REASONS,
+  IDLE_REASONS_ALL,
   IDLE_REASON_NOTES,
   formatMoney,
   formatPct,
@@ -16,14 +16,24 @@ import {
   toNum,
 } from "@/lib/format";
 import type { IdleGroup } from "@/lib/format";
+import { reconcileIdle } from "@/lib/phase6";
 import type { CapitalState, IdleByReason } from "@/lib/types";
 
 /**
  * NEDEN SERMAYE BOŞTA — the panel the phase is actually decided on.
  *
  * The requirement is one sentence: *if $350 is idle, say exactly why.* So the
- * six reasons are reported in DOLLARS, never as percentages of a percentage —
+ * reasons are reported in DOLLARS, never as percentages of a percentage —
  * "%14 of the idle 95%" is a number nobody can act on, and $47.20 is.
+ *
+ * Phase 6 EXTENDS this panel rather than adding a second one beside it. The
+ * six Phase 5 reasons became nine — COOLDOWN, SCANNER_DELAY, CAPITAL_STATE_BUG
+ * and OTHER — and the fourth group they brought with them is a defect report:
+ * `SCANNER_DELAY` and `CAPITAL_STATE_BUG` say the money is idle because WE are
+ * broken, which is neither a market reading nor a portfolio decision. There is
+ * exactly one idle attribution on this screen, because the same idle dollar
+ * explained twice in two panels is how a dashboard starts disagreeing with
+ * itself.
  *
  * The reasons do not mean the same kind of thing, and the layout says so
  * before the reader has looked at a legend. A tall NO_QUALIFIED_SIGNAL bar
@@ -100,7 +110,8 @@ function Attribution({
     .filter((r): r is Row => r.usd !== null)
     .sort((a, b) => b.usd - a.usd);
 
-  const missing = IDLE_REASONS.filter((k) => toNum(byReason[k]) === null);
+  const recon = reconcileIdle(byReason, idleUsd, IDLE_REASONS_ALL);
+  const missing = recon.missing;
 
   if (rows.length === 0) {
     return (
@@ -114,11 +125,13 @@ function Attribution({
   // The bars are drawn against what the reasons actually add up to. The
   // reported idle balance is printed next to it, and when the two disagree the
   // strip below says by how much.
-  const sum = rows.reduce((a, r) => a + r.usd, 0);
+  const sum = recon.sum;
   const positive = rows.reduce((a, r) => a + Math.max(0, r.usd), 0);
   const basis = positive > 0 ? positive : 0;
-  const gap = idleUsd === null ? null : sum - idleUsd;
-  const mismatch = gap !== null && Math.abs(gap) > 0.005;
+  // Signed so the direction survives: POSITIVE means idle cash that nobody
+  // attributed to anything, which is the defect §22 exists to catch.
+  const unexplained = recon.unexplained;
+  const mismatch = recon.mismatch;
 
   const groups = IDLE_GROUP_ORDER.map((g) => ({
     group: g,
@@ -158,14 +171,35 @@ function Attribution({
         )}
       </div>
 
-      {mismatch && (
-        <p className="idle-mismatch" role="status">
-          Sözleşme sebeplerin boşta bakiyeye eşit olmasını garanti eder, bu veride
-          etmiyor: sebepler toplamı <b>{formatMoney(sum)}</b>, bildirilen boşta bakiye{" "}
-          <b>{formatMoney(idleUsd)}</b>, fark <b>{formatMoney(gap)}</b>. Aşağıdaki
-          çubuklar sebeplerin kendi toplamına göre çizilmiştir; fark yuvarlanarak
-          gizlenmemiştir çünkü bu bir görüntü sorunu değil, ölçüm kusurudur.
-        </p>
+      {mismatch && unexplained !== null && (
+        <div className="idle-gap" role="alert">
+          <span className="idle-gap-tag">
+            {unexplained > 0 ? "AÇIKLANAMAYAN NAKİT" : "FAZLA YAZILMIŞ NAKİT"}
+          </span>
+          <span className="idle-gap-v">{formatMoney(Math.abs(unexplained))}</span>
+          <p className="idle-gap-x">
+            Sözleşme sebeplerin boşta bakiyeye eşit olmasını garanti eder, bu veride
+            etmiyor: sebepler toplamı <b>{formatMoney(sum)}</b>, bildirilen boşta bakiye{" "}
+            <b>{formatMoney(idleUsd)}</b>.{" "}
+            {unexplained > 0 ? (
+              <>
+                Yani <b>{formatMoney(unexplained)}</b> boşta duruyor ve hiçbir sebebe
+                yazılmamış. Bu para bir yerde çalışmıyor ve neden çalışmadığını kimse
+                söylemiyor — §22'nin kovaladığı tek kusur tam olarak budur.
+              </>
+            ) : (
+              <>
+                Sebepler, bildirilen boşta bakiyeden <b>{formatMoney(-unexplained)}</b>{" "}
+                fazlasını açıklıyor. Bir dolar iki sebebe birden yazılmış ya da bakiye
+                eksik bildirilmiş olmalı; her iki hâlde de aşağıdaki paylar olduğundan
+                küçüktür.
+              </>
+            )}{" "}
+            Aşağıdaki çubuklar sebeplerin kendi toplamına göre çizilmiştir; fark
+            yuvarlanarak gizlenmemiştir çünkü bu bir görüntü sorunu değil, ölçüm
+            kusurudur.
+          </p>
+        </div>
       )}
 
       <Dominant rows={rows} basis={basis} />
@@ -294,7 +328,7 @@ export function IdleCapital({
             Portföy katmanı bu ekrana bir ayrıştırma bildirmiyor. Bu, sermayenin sebepsiz
             boşta durduğu anlamına gelmez — henüz hiçbir doların bir sebebe yazılmadığı
             anlamına gelir, ve bu iki ifade burada birbirinin yerine kullanılmaz.
-            Ayrıştırma geldiğinde her boşta dolar aşağıdaki altı sebepten birine
+            Ayrıştırma geldiğinde her boşta dolar aşağıdaki dokuz sebepten birine
             yazılacak ve hangisinin baskın olduğu bu fazın cevabı olacak.
           </p>
           <ReasonReference />
@@ -329,9 +363,9 @@ export function IdleCapital({
 function ReasonReference() {
   return (
     <div className="gateref">
-      <p className="gateref-t">Her boşta dolar bu altı sebepten birine yazılır</p>
+      <p className="gateref-t">Her boşta dolar bu dokuz sebepten birine yazılır</p>
       <ol className="gateref-l">
-        {IDLE_REASONS.map((code, i) => (
+        {IDLE_REASONS_ALL.map((code, i) => (
           <li key={code}>
             <span className="gateref-n">{String(i + 1).padStart(2, "0")}</span>
             <span>
@@ -342,10 +376,12 @@ function ReasonReference() {
         ))}
       </ol>
       <p className="gateref-f">
-        Altısı da &ldquo;para çalışmıyor&rdquo; der, ama üçü farklı şey ister:
+        Dokuzu da &ldquo;para çalışmıyor&rdquo; der, ama farklı şeyler ister:
         NİTELİKLİ SİNYAL YOK daha geniş bir evren ister, İCRA MALİYETİ ve LİKİDİTE
-        SINIRI daha ucuz bir borsa ister, korelasyon/risk/rezerv ise hiçbir şey
-        istemez — onlar zaten verilmiş kararlardır.
+        SINIRI daha ucuz bir borsa ister, korelasyon/risk/rezerv/soğuma ise hiçbir şey
+        istemez — onlar zaten verilmiş kararlardır. TARAYICI GECİKMESİ ve SERMAYE
+        DURUMU KUSURU ise piyasa hakkında hiçbir şey söylemez; onlar bizim hatamızdır
+        ve sıfırlanana kadar diğerlerinin okumasını da kirletirler.
       </p>
     </div>
   );

@@ -6,6 +6,10 @@
     "skipLibCheck": true,
     "strict": true,
     "noEmit": true,
+    // The Phase 6 test suite runs on Node's own runner (`npm test`), which
+    // resolves ESM specifiers literally and therefore needs the `.ts`
+    // extension. Safe here because nothing is emitted.
+    "allowImportingTsExtensions": true,
     "esModuleInterop": true,
     "module": "esnext",
     "moduleResolution": "bundler",

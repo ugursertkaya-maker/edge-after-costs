@@ -949,7 +949,7 @@ export const IDLE_REASON_NOTES: Record<string, string> = {
  *   policy — there were candidates and the portfolio deliberately refused
  *            them. Says nothing about the venue at all.
  */
-export type IdleGroup = "supply" | "venue" | "policy";
+export type IdleGroup = "supply" | "venue" | "policy" | "defect";
 
 export const IDLE_REASON_GROUP: Record<string, IdleGroup> = {
   NO_QUALIFIED_SIGNAL: "supply",
@@ -960,16 +960,21 @@ export const IDLE_REASON_GROUP: Record<string, IdleGroup> = {
   CASH_RESERVE: "policy",
 };
 
-export const IDLE_GROUP_ORDER: readonly IdleGroup[] = ["supply", "venue", "policy"];
+export const IDLE_GROUP_ORDER: readonly IdleGroup[] = ["supply", "venue", "policy", "defect"];
 
 export const IDLE_GROUP_LABELS: Record<IdleGroup, string> = {
   supply: "ALINACAK BİR ŞEY YOKTU",
   venue: "ADAY VARDI, KENDİ MALİYETİNE DEĞMEDİ",
   policy: "ADAY VARDI, BİLEREK ALINMADI",
+  // Phase 6. The first three are readings about the market or about a
+  // decision; this one is a defect report and must not be mistaken for either.
+  defect: "PARA BİZİM KUSURUMUZDAN BOŞTA",
 };
 
 /** The one-line conclusion each group licenses about widening the universe. */
 export const IDLE_GROUP_VERDICTS: Record<IdleGroup, string> = {
+  defect:
+    "Evreni genişletmek bunu düzeltmez; bu satır sıfırlanana kadar diğer sebeplerin okuması da güvenilmezdir.",
   supply:
     "Daha fazla piyasa taramak bu parayı çalıştırır: kısıt evrenin darlığıdır.",
   venue:
@@ -979,6 +984,8 @@ export const IDLE_GROUP_VERDICTS: Record<IdleGroup, string> = {
 };
 
 export const IDLE_GROUP_NOTES: Record<IdleGroup, string> = {
+  defect:
+    "Sermaye, piyasa ya da portföy kararı yüzünden değil, sistemin kendi gecikmesi veya muhasebe hatası yüzünden çalışmıyor. Bu grup bir piyasa okuması değildir.",
   supply:
     "Tarayıcı çalıştı ve kapıları geçen aday üretemedi — kenarın yokluğu değil, arzın yokluğu.",
   venue:
@@ -1091,4 +1098,205 @@ export function formatPoints(value: Numeric, digits = 1): string {
     minimumFractionDigits: digits,
     maximumFractionDigits: digits,
   })} puan`;
+}
+
+// --------------------------------------------------------------------------
+// Phase 6 vocabulary — the funnel, the concentration diagnostic, capital
+// recycling and the strategy-specific holding buckets.
+//
+// The block opens by EXTENDING the Phase 5 idle vocabulary rather than
+// starting a second one. There is exactly one idle-capital attribution on this
+// screen and it now has nine reasons instead of six; a second panel with its
+// own four reasons would let the same idle dollar be counted twice and
+// explained differently in two places.
+// --------------------------------------------------------------------------
+
+/** `IdleReason` additions frozen in PHASE6_SPEC (`app/portfolio.py`). */
+export const IDLE_REASONS_V6: readonly string[] = [
+  "COOLDOWN",
+  "SCANNER_DELAY",
+  "CAPITAL_STATE_BUG",
+  "OTHER",
+];
+
+Object.assign(IDLE_REASON_LABELS, {
+  COOLDOWN: "Soğuma penceresi",
+  SCANNER_DELAY: "Tarayıcı gecikmesi",
+  CAPITAL_STATE_BUG: "Sermaye durumu kusuru",
+  OTHER: "Diğer",
+});
+
+Object.assign(IDLE_REASON_NOTES, {
+  COOLDOWN:
+    "Zarar serisi veya bir risk olayı sonrası giriş kasıtlı olarak duraklatıldı. Bu para bir karar yüzünden boşta, bir eksiklik yüzünden değil.",
+  SCANNER_DELAY:
+    "Sermaye serbest kaldı ama tarama turu henüz dönmedi. Aday var mıydı bilinmiyor — bilinen tek şey, sorulmadığıdır. Bu bir altyapı gecikmesidir, bir piyasa okuması değil.",
+  CAPITAL_STATE_BUG:
+    "Muhasebe, serbest olması gereken parayı serbest görmedi. Bu bir kusurdur: piyasa hakkında hiçbir şey söylemez ve düzeltilene kadar diğer sekiz sebebin tamamını kirletir.",
+  OTHER:
+    "Worker bu doları sınıflandıramadı. Sınıflandırılamamış bir dolar, açıklanmış bir dolar değildir; bu satırın büyümesi ayrıştırmanın kendisinin eksildiği anlamına gelir.",
+});
+
+/**
+ * The fourth group: money that is idle because WE are broken.
+ *
+ * Phase 5 had three groups and each of them was a statement about the market
+ * or about a portfolio decision. `SCANNER_DELAY` and `CAPITAL_STATE_BUG` are
+ * neither — they say the measurement apparatus lost the money, which is a
+ * defect report and demands a different response from "the universe is too
+ * narrow". Folding them into `policy` would let a bug read as a decision.
+ */
+Object.assign(IDLE_REASON_GROUP, {
+  COOLDOWN: "policy",
+  SCANNER_DELAY: "defect",
+  CAPITAL_STATE_BUG: "defect",
+  // OTHER stays deliberately UNGROUPED. It is the residue bucket and grouping
+  // it would claim a diagnosis the worker explicitly declined to make.
+});
+
+/** The nine reasons, Phase 5's six first so the existing order is preserved. */
+export const IDLE_REASONS_ALL: readonly string[] = [
+  ...IDLE_REASONS,
+  ...IDLE_REASONS_V6,
+];
+
+// ------------------------------------------------------------------ funnel
+
+/** `STAGES` from `app/research/funnel.py` — frozen, in ladder order. */
+export const FUNNEL_STAGE_LABELS: Record<string, string> = {
+  discovered: "Borsada listeli",
+  subscribed: "Veri aboneliği",
+  data_healthy: "Veri sağlıklı",
+  features: "Özellik üretildi",
+  strategy_evaluated: "Strateji değerlendirdi",
+  model_evaluated: "Model değerlendirdi",
+  candidate: "Aday oldu",
+  cost_gate: "Maliyet kapısı",
+  liquidity_gate: "Likidite kapısı",
+  risk_gate: "Risk kapısı",
+  correlation_gate: "Korelasyon kapısı",
+  ranked: "Sıralandı",
+  selected: "Seçildi",
+  traded: "İşlem gördü",
+};
+
+export function funnelStageLabel(v: string | null | undefined): string {
+  if (!v) return DASH;
+  return FUNNEL_STAGE_LABELS[v] ?? v;
+}
+
+// --------------------------------------------------------- concentration
+
+/**
+ * The diagnostic's vocabulary.
+ *
+ * "İZLENİYOR" is the resting state and it is a measurement, not a blank: it
+ * means the share was computed over a real sample and came in under the
+ * threshold. It is worded and toned as a finished reading for exactly that
+ * reason — today BTC is 41.7% of 139 trades and this flag should look
+ * deliberately quiet, not broken.
+ */
+export const CONCENTRATION_VERDICT_LABELS: Record<string, string> = {
+  flagged: "BTC_CONCENTRATION · ETKİN",
+  clear: "BTC_CONCENTRATION · ETKİN DEĞİL",
+  thin: "BTC_CONCENTRATION · ÖRNEKLEM YETERSİZ",
+  unmeasured: "BTC_CONCENTRATION · ÖLÇÜLMEDİ",
+};
+
+export const CONCENTRATION_VERDICT_NOTES: Record<string, string> = {
+  flagged:
+    "Tek bir coin işlemlerin %70'inden fazlasını aldı. Bu bir teşhistir: bayrak hiçbir şeyi bastırmaz, hiçbir coini cezalandırmaz ve sıralamayı değiştirmez. Net EV'de BTC kazanıyorsa BTC işlem görür. Bayrağın istediği tek şey, sebebin huniden okunmasıdır.",
+  clear:
+    "Lider coinin payı eşiğin altında — ölçüldü ve geçti. Yoğunlaşma varsa sıralamada değil, neyin aday olmasına izin verildiğindedir: onu bu panelin huni sütunları söyler.",
+  thin:
+    "Pay hesaplandı ama örneklem bir sonuç çıkarmaya yetmiyor. Az sayıda işlemde %100 pay, yoğunlaşma değil az sayıda işlemdir; bu ikisi burada birbirinin yerine geçmez.",
+  unmeasured:
+    "Pay hesaplanmadı: ne işlem sayısı ne de huni bu ekrana ulaştı. Ölçülmemiş bir yoğunlaşma, olmayan bir yoğunlaşma değildir.",
+};
+
+export function concentrationTone(kind: string): string {
+  switch (kind) {
+    case "flagged":
+      return "is-flagged";
+    case "clear":
+      return "is-clear";
+    case "thin":
+      return "is-thin";
+    default:
+      return "is-unmeasured";
+  }
+}
+
+// ------------------------------------------------------------- recycling
+
+/**
+ * How fast capital has to come back to work before the delay is the strategy.
+ *
+ * A scalper whose median hold is ~32 s and which then leaves the freed cash
+ * idle for 40 s has halved its own turnover without taking a single extra
+ * risk. So the bands are set against the hold, not against a round number:
+ * under 2 s is instant, under 10 s is acceptable, past a minute the recycling
+ * delay is costing more than most of the trades earn.
+ */
+export const RECYCLE_FAST_MS = 2_000;
+export const RECYCLE_SLOW_MS = 10_000;
+export const RECYCLE_BAD_MS = 60_000;
+
+export function recycleTone(ms: Numeric): string {
+  const n = toNum(ms);
+  if (n === null) return "is-empty";
+  if (n <= RECYCLE_FAST_MS) return "is-fast";
+  if (n <= RECYCLE_SLOW_MS) return "is-ok";
+  if (n <= RECYCLE_BAD_MS) return "is-slow";
+  return "is-bad";
+}
+
+/** Milliseconds, at millisecond precision — this is the one place on the
+    screen where a sub-second figure is the measurement and not noise. */
+export function formatExactMs(value: Numeric): string {
+  const n = toNum(value);
+  if (n === null) return DASH;
+  if (Math.abs(n) < 10_000) {
+    return `${Math.round(n).toLocaleString("en-US")} ms`;
+  }
+  return formatMs(n);
+}
+
+/** Seconds, to one decimal — the close→entry figure the brief asks for. */
+export function formatSeconds(value: Numeric, digits = 1): string {
+  const n = toNum(value);
+  if (n === null) return DASH;
+  return `${n.toLocaleString("en-US", {
+    minimumFractionDigits: digits,
+    maximumFractionDigits: digits,
+  })} sn`;
+}
+
+// -------------------------------------------------------- opportunity board
+
+export const OPPORTUNITY_STATUS_LABELS: Record<string, string> = {
+  QUEUED: "SIRADA",
+  SELECTED: "SEÇİLDİ",
+  EXPIRED: "SÜRESİ DOLDU",
+  REJECT: "REDDEDİLDİ",
+};
+
+export function opportunityStatusLabel(v: string | null | undefined): string {
+  if (!v) return DASH;
+  return OPPORTUNITY_STATUS_LABELS[String(v).toUpperCase()] ?? v;
+}
+
+export function opportunityStatusTone(v: string | null | undefined): string {
+  switch (String(v ?? "").toUpperCase()) {
+    case "SELECTED":
+      return "is-selected";
+    case "QUEUED":
+      return "is-queued";
+    case "EXPIRED":
+      return "is-expired";
+    case "REJECT":
+      return "is-reject";
+    default:
+      return "is-unknown";
+  }
 }

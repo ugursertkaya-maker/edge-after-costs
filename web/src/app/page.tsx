@@ -20,6 +20,10 @@ import { PredictiveEngine } from "@/components/dashboard/PredictiveEngine";
 import { ModelQuality } from "@/components/dashboard/ModelQuality";
 import { Explanations } from "@/components/dashboard/Explanations";
 import { MissedOpportunities } from "@/components/dashboard/MissedOpportunities";
+import { OpportunityBoard } from "@/components/dashboard/OpportunityBoard";
+import { Recycling } from "@/components/dashboard/Recycling";
+import { Concentration } from "@/components/dashboard/Concentration";
+import { HoldingBuckets } from "@/components/dashboard/HoldingBuckets";
 import { Banner } from "@/components/ui/DataState";
 import { useApiHealth, useDashboard } from "@/lib/useDashboard";
 
@@ -106,6 +110,27 @@ export default function DashboardPage() {
 
         <IdleCapital capital={data?.capital ?? null} loading={loading} />
 
+        {/* Phase 6 — §22, then §4. The order is the capital's own: §19 says how
+            fast a closed position's money comes back to work, and the board
+            immediately below it is what that money is choosing between. The
+            board sits above the scanner because it is the decision in front of
+            the engine, while the scanner is the raw reading behind it. */}
+        <Recycling
+          recycling={data?.recycling ?? null}
+          capital={data?.capital ?? null}
+          portfolio={data?.portfolio ?? null}
+          loading={loading}
+          now={now}
+        />
+
+        <OpportunityBoard
+          board={data?.opportunities ?? null}
+          scanner={data?.scanner ?? null}
+          loading={loading}
+          connected={data?.header.data_connected ?? false}
+          now={now}
+        />
+
         <Scanner
           rows={data?.scanner ?? null}
           loading={loading}
@@ -136,6 +161,24 @@ export default function DashboardPage() {
         </div>
 
         <Strategies rows={data?.strategies ?? null} loading={loading} />
+
+        {/* Phase 6 — §21 and §20, directly under the per-strategy table they
+            decompose. Both read the same closed trades from two directions:
+            which COIN the account's turns and money went to, and how each
+            strategy performed at each holding length. Neither is ever pooled
+            with the other. */}
+        <Concentration
+          concentration={data?.concentration ?? null}
+          funnel={data?.funnel ?? null}
+          trades={data?.trades ?? null}
+          loading={loading}
+        />
+
+        <HoldingBuckets
+          buckets={data?.holding_buckets ?? null}
+          trades={data?.trades ?? null}
+          loading={loading}
+        />
 
         <Trades rows={data?.trades ?? null} loading={loading} />
 

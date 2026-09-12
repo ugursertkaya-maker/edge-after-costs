@@ -219,6 +219,12 @@ export interface TradeCore {
   risk_usd?: Num;
   /** The stop the trade actually carried. */
   stop_loss?: Num;
+  /**
+   * How long the round trip was held. The worker reports it directly; when it
+   * does not, the `exit_ms − entry_ms` span is the fallback. Phase 6 reads
+   * this per strategy and never pools it — see `lib/phase6.ts`.
+   */
+  holding_seconds?: Num;
 }
 
 /**
@@ -368,6 +374,24 @@ export interface DashboardPayload {
   capital?: CapitalState | null;
   /** The post-hoc missed-opportunity audit. Never a live signal. */
   missed?: MissedAudit | null;
+
+  // ---- Phase 6 -------------------------------------------------------------
+  /**
+   * Multi-asset selection and capital recycling. All four are absent until the
+   * worker is extended; each panel derives what it honestly can from the keys
+   * above and says, in its own footer, which figures were derived and which
+   * were measured. See `lib/phase6.ts`.
+   */
+  /** Per-symbol funnel counts — the only evidence for WHY a coin never trades. */
+  funnel?: FunnelReport | null;
+  /** Per-coin trades, P&L, signals and capital, plus the diagnostic flag. */
+  concentration?: ConcentrationState | null;
+  /** Close → capital released → rescan → next entry, in milliseconds. */
+  recycling?: RecyclingState | null;
+  /** Net performance by holding bucket, BY STRATEGY, never pooled. */
+  holding_buckets?: HoldingBucketState | null;
+  /** The live opportunity board the allocator actually chooses from. */
+  opportunities?: OpportunityBoard | null;
 }
 
 export interface HealthResponse {
@@ -762,4 +786,253 @@ export interface MissedAudit {
   missed_net_bps?: Num;
   /** `{RejectReason: [missed, correct]}`. Open record, like `IdleByReason`. */
   by_reason?: Record<string, MissedPair | null | undefined> | null;
+}
+
+// ===========================================================================
+// PHASE 6 — multi-asset selection, strategy-specific holding, capital recycling
+// ---------------------------------------------------------------------------
+// Every field below is OPTIONAL and the whole Phase 6 group is expected to be
+// absent: the worker that fills it is being extended by other owners while
+// these panels are written. The rule does not change — an absent measurement
+// is an em dash and an absent block is a panel that says it has not been
+// measured, never an empty table that reads as a zero.
+//
+// Two distinctions this section exists to protect:
+//
+//   * `BTC_CONCENTRATION` is a DIAGNOSTIC. Nothing suppresses, penalises or
+//     re-ranks BTC because it fired. The spec is explicit: if BTC wins on net
+//     EV, BTC trades. The flag says "look at the funnel", nothing more.
+//
+//   * A holding bucket is read PER STRATEGY. `flow_impulse` holds ~32 s by
+//     design and `momentum_scalp` ~71 s by design; a pooled "30–60 s" row
+//     averages a strategy that is working with one that is not and calls the
+//     result a finding.
+// ===========================================================================
+
+/** One stage of `app/research/funnel.py:STAGES`, frozen in PHASE6_SPEC. */
+export type FunnelStage =
+  | "discovered"
+  | "subscribed"
+  | "data_healthy"
+  | "features"
+  | "strategy_evaluated"
+  | "model_evaluated"
+  | "candidate"
+  | "cost_gate"
+  | "liquidity_gate"
+  | "risk_gate"
+  | "correlation_gate"
+  | "ranked"
+  | "selected"
+  | "traded";
+
+/** `SymbolFunnel.as_dict()`. */
+export interface SymbolFunnel {
+  symbol?: string | null;
+  /** Every key in STAGES, monotone non-increasing. */
+  stages?: Record<string, number | null | undefined> | null;
+  /** `stage -> reason -> count`. */
+  drop_reasons?: Record<string, Record<string, number | null | undefined>> | null;
+  deepest_stage?: FunnelStage | string | null;
+  /** The stage that stopped this symbol — the wall, not the last thing that
+      happened. This is the CAUSE the concentration flag has to print. */
+  bottleneck_stage?: FunnelStage | string | null;
+  bottleneck_reason?: string | null;
+}
+
+/** `FunnelReport.as_dict()`. */
+export interface FunnelReport {
+  symbols?: Record<string, SymbolFunnel> | null;
+  /** How many SYMBOLS (not events) reached each stage. */
+  stage_totals?: Record<string, number | null | undefined> | null;
+  /** Symbols per bottleneck stage — the venue's biggest losses, in order. */
+  wall?: Record<string, number | null | undefined> | null;
+  /** Share of trades per symbol as a FRACTION in [0, 1], not points. */
+  concentration?: Record<string, number | null | undefined> | null;
+  /** Monotonicity violations. A non-empty list means the instrumentation, not
+      the trader, is what is being measured. */
+  violations?: string[] | null;
+}
+
+/** One coin's line in the concentration monitor. */
+export interface ConcentrationRow {
+  symbol: string;
+  trades?: Num;
+  /** NET P&L, USD — after fees, spread and slippage. */
+  net_pnl_usd?: Num;
+  /** Signals this coin produced (funnel stage `strategy_evaluated`). */
+  signals?: Num;
+  /** Signals that cleared every gate (funnel stage `ranked`). */
+  qualified_signals?: Num;
+  /** Signals refused. `signals − qualified_signals` when both are known. */
+  rejected_signals?: Num;
+  /** CUMULATIVE traded notional, USD — not capital currently deployed. */
+  capital_allocated_usd?: Num;
+  /** Share of the trade count, in POINTS (41.7 === 41.7%). */
+  trade_share_pct?: Num;
+  /** Share of allocated capital, in POINTS. */
+  capital_share_pct?: Num;
+  /** Where this coin dies, when it never reaches `traded`. */
+  bottleneck_stage?: FunnelStage | string | null;
+  bottleneck_reason?: string | null;
+}
+
+export interface ConcentrationState {
+  rows?: ConcentrationRow[] | null;
+  /** Closed trades the shares were computed over — the denominator. */
+  sample_trades?: Num;
+  /** Summed traded notional, USD — the capital shares' denominator. */
+  sample_notional_usd?: Num;
+  /** The leading symbol and its share, when the worker computes them itself. */
+  top_symbol?: string | null;
+  top_trade_share_pct?: Num;
+  top_capital_share_pct?: Num;
+  /** The threshold the flag uses, in points. Defaults to 70 on this screen. */
+  threshold_pct?: Num;
+  /** Trades required before the flag may speak at all. */
+  min_sample?: Num;
+  /** Whether the worker itself raised BTC_CONCENTRATION. Diagnostic only. */
+  flag?: boolean | null;
+  /** The worker's own one-line cause, when it has one. */
+  cause?: string | null;
+}
+
+/** `RecycleEvent` from `app/portfolio.py`, plus the derived properties. */
+export interface RecycleEvent {
+  closed_trade_id?: string | null;
+  /** The coin that closed. `RecycleEvent.as_dict()` calls it `symbol`;
+      `closed_symbol` is accepted as an alias. */
+  symbol?: string | null;
+  closed_symbol?: string | null;
+  closed_ms?: Num;
+  capital_released_ms?: Num;
+  rescan_triggered_ms?: Num;
+  next_entry_ms?: Num;
+  /** Whether a qualified candidate existed at the moment capital came free.
+      `false` with a long gap is NO_QUALIFIED_SIGNAL; `true` with a long gap is
+      a recycling defect, and the two must not be read as one delay. */
+  qualified_candidate_existed?: boolean | null;
+  /** The candidate the rescan found, when it found one. `next_entry_symbol`
+      is the name `RecycleEvent.as_dict()` actually uses; `next_symbol` is
+      accepted as an alias so either spelling renders. */
+  next_entry_symbol?: string | null;
+  next_symbol?: string | null;
+  next_strategy?: string | null;
+  /** `close_to_rescan_ms` — milliseconds. Ours: loop shape, nothing else. */
+  close_to_rescan_ms?: Num;
+  /** `close_to_entry_ms` — milliseconds. Null when no entry followed, and that
+      null IS the measurement: `qualified_candidate_existed` says whether it
+      was the market's doing or ours. */
+  close_to_entry_ms?: Num;
+  /** How long the capital itself took to come back. Should be ~0. */
+  release_ms?: Num;
+  released_usd?: Num;
+  risk_released_usd?: Num;
+  available_usd_after?: Num;
+  /** Deployment after the close, in POINTS. */
+  deployed_pct_after?: Num;
+  rescan_handled?: boolean | null;
+  /** Cash that did not reconcile — the CAPITAL_STATE_BUG dollars. */
+  state_bug_usd?: Num;
+  notes?: string[] | null;
+}
+
+export interface RecyclingState {
+  /** The most recent close. */
+  last?: RecycleEvent | null;
+  /** The recent history, newest first. */
+  events?: RecycleEvent[] | null;
+  /** Medians over `events`, in milliseconds. */
+  median_close_to_rescan_ms?: Num;
+  median_close_to_entry_ms?: Num;
+  /** Cash free to deploy right now, USD. */
+  available_cash_usd?: Num;
+  /** How long that cash has been sitting, in SECONDS. */
+  idle_seconds?: Num;
+  /** Candidates that cleared every gate on the latest cycle. */
+  qualified_opportunities?: Num;
+  /** Closes the medians were computed over — the denominator. `closes` is the
+      name `CapitalRecycler.latency()` uses; `sample` is accepted as an alias. */
+  closes?: Num;
+  sample?: Num;
+  /** Closes that were followed by an entry. */
+  redeployed?: Num;
+  max_close_to_rescan_ms?: Num;
+  /** Closes where a qualified candidate existed and capital still sat. This
+      is the count that separates a market reading from a recycling defect. */
+  qualified_but_not_taken?: Num;
+  queue_size?: Num;
+}
+
+/** One strategy × bucket cell of the §20 grid. */
+export interface HoldingBucketRow {
+  strategy?: string | null;
+  /** A key from `HOLDING_BUCKETS` in `lib/phase6.ts`. */
+  bucket?: string | null;
+  trades?: Num;
+  net_pnl_usd?: Num;
+  gross_pnl_usd?: Num;
+  total_cost_usd?: Num;
+  /** Rate in [0, 1]. */
+  win_rate?: Num;
+  /** USD per trade. */
+  expectancy_usd?: Num;
+}
+
+export interface HoldingBucketState {
+  rows?: HoldingBucketRow[] | null;
+  /** Closed trades the grid was built from. */
+  sample?: Num;
+  /** `strategy -> median hold in SECONDS`. The proof the rows differ. */
+  median_hold_seconds?: Record<string, number | null | undefined> | null;
+}
+
+/** Where a candidate stands on the allocator's board. */
+export type OpportunityStatus = "QUEUED" | "SELECTED" | "EXPIRED" | "REJECT";
+
+/** One line of the live opportunity board — `QueuedOpportunity` plus verdict. */
+export interface OpportunityRow {
+  /** The allocator's ordering. Null for a candidate that never entered it. */
+  rank?: Num;
+  symbol?: string | null;
+  strategy?: string | null;
+  episode_id?: string | null;
+  /** Expected NET EV in BASIS POINTS — after fees, spread and slippage. */
+  net_ev_bps?: Num;
+  /** The same expectation in USD, when the worker sizes it. */
+  net_ev_usd?: Num;
+  /** The notional the EV above was computed against. Without it a USD EV has
+      no denominator and cannot be compared across candidates. */
+  notional_usd?: Num;
+  ranked_at_ms?: Num;
+  expires_ms?: Num;
+  status?: OpportunityStatus | string | null;
+  reject_reason?: RejectReasonCode | string | null;
+  /** The ranker's raw score behind the ordering. */
+  rank_score?: Num;
+  side?: Side | string | null;
+  regime?: RegimeCode | string | null;
+  /** How many times this entry was revalidated while it waited. */
+  refreshed?: Num;
+  notes?: string[] | null;
+}
+
+export interface OpportunityBoard {
+  /** `OpportunityQueue.as_dict()` names this `entries`; `candidates` is
+      accepted as an alias so either spelling renders. */
+  entries?: OpportunityRow[] | null;
+  candidates?: OpportunityRow[] | null;
+  generated_ms?: Num;
+  /** Entries currently on the board. */
+  size?: Num;
+  max_size?: Num;
+  /** How long a queued opportunity stays valid. */
+  ttl_seconds?: Num;
+  ttl_ms?: Num;
+  /** `{reason: count}` — why entries left the board. Open record. */
+  dropped?: Record<string, number | null | undefined> | null;
+  /** Symbols evaluated this cycle — the board's denominator. */
+  evaluated?: Num;
+  qualified?: Num;
+  rejected?: Num;
 }
