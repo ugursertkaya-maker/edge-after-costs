@@ -93,14 +93,20 @@ class SymbolFunnel:
             return ("traded", "")
         reasons = self.drop_reasons.get(wall) or {}
         # A stage can be blocked without recording a reason there: the symbol
-        # never arrived to be judged. Name the previous stage's reason instead
-        # of inventing one.
+        # never arrived to be judged. Borrow the nearest recorded reason rather
+        # than invent one -- nearest in either direction, because a reason can
+        # legitimately be filed at a later stage than the one it blocks. A pair
+        # whose flow cannot absorb the minimum order is recorded at
+        # ``candidate`` (that is the stage it can never clear) while the wall
+        # sits earlier, at the first stage it never reached.
         if not reasons:
             idx = _STAGE_INDEX[wall]
-            for prev in reversed(STAGES[:idx]):
-                if self.drop_reasons.get(prev):
-                    reasons = self.drop_reasons[prev]
-                    break
+            by_distance = sorted(
+                (s for s in self.drop_reasons if self.drop_reasons[s]),
+                key=lambda s: (abs(_STAGE_INDEX[s] - idx), _STAGE_INDEX[s]),
+            )
+            if by_distance:
+                reasons = self.drop_reasons[by_distance[0]]
         top = max(reasons.items(), key=lambda kv: kv[1])[0] if reasons else "never reached"
         return (wall, top)
 

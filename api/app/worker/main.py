@@ -868,6 +868,115 @@ class TradingWorker:
             CheckpointVerdict.ROTATE_CAPITAL: ExitReason.ROTATE_CAPITAL,
         }.get(verdict)
 
+    def _opportunity_board(self) -> list[dict[str, Any]]:
+        """The ranked candidate table the allocator actually chooses from.
+
+        Phase 6 §4.  Two things make this more than a prettier scanner:
+
+        * **rejections are rows, not absences.**  A symbol that was evaluated
+          and refused appears with its reason, so "why did we not trade XRP"
+          is answered on the screen instead of inferred from silence.
+        * **rank is over the whole board**, so BTC holding rank 3 is visible as
+          rank 3.  Nothing here gives any symbol priority; the order is
+          ``net_edge_bps`` and nothing else.
+        """
+        board: list[dict[str, Any]] = []
+        ranked_symbols: set[str] = set()
+        for i, opp in enumerate(self._ranked, start=1):
+            ranked_symbols.add(opp.symbol)
+            board.append({
+                "rank": i,
+                "symbol": opp.symbol,
+                "strategy": opp.signal.strategy,
+                "side": opp.signal.side.value,
+                "net_edge_bps": round(opp.net_edge_bps, 3),
+                "net_ev_pct": round(opp.net_edge_bps / 100.0, 4),
+                "gross_edge_bps": round(opp.gross_edge_bps, 3),
+                "cost_bps": round(
+                    opp.fee_bps + opp.spread_cost_bps + opp.slippage_bps, 3
+                ),
+                "expected_hold_seconds": opp.expected_hold_seconds,
+                "sample_size": opp.sample_size,
+                # A ranked candidate is a BUY or a SELL; the scanner's own
+                # vocabulary, so the board and the scanner agree.
+                "decision": (Decision.BUY.value if opp.signal.side is Side.LONG
+                             else Decision.SELL.value),
+                "reject_reason": None,
+            })
+        # Everything the scanner saw and refused, in the same table.  Ranked
+        # candidates are skipped rather than deduped by symbol: the same symbol
+        # can legitimately have a qualifying long and a refused short.
+        for row in self.scanner:
+            if row.symbol in ranked_symbols:
+                continue
+            board.append({
+                "rank": None,
+                "symbol": row.symbol,
+                "strategy": row.strategy,
+                "side": None,
+                "net_edge_bps": round(row.net_edge_bps, 3),
+                "net_ev_pct": round(row.net_edge_bps / 100.0, 4),
+                "gross_edge_bps": None,
+                "cost_bps": None,
+                "expected_hold_seconds": None,
+                "sample_size": 0,
+                "decision": row.decision,
+                "reject_reason": row.reject_reason,
+            })
+        return board
+
+    def _symbol_funnel(self, ledger: Ledger) -> dict[str, Any]:
+        """Per-symbol counts from discovery to trade, plus the BTC share.
+
+        Phase 6 §21 asks for a concentration flag *and* its cause.  The flag on
+        its own would be a number without an explanation, which is the failure
+        mode this project keeps finding in its own reports.  Never used to
+        suppress a symbol -- if BTC earns the rank, BTC trades.
+        """
+        from app.research.funnel import FunnelReport
+
+        report = FunnelReport()
+        for entry in self.universe:
+            f = report.for_symbol(entry.symbol)
+            f.reached("discovered")
+            f.reached("subscribed")
+            if not entry.capacity_ok:
+                f.dropped(
+                    "candidate",
+                    f"absorbs ${entry.capacity_max_usd:,.2f}/min, below the "
+                    f"${entry.min_tradable_usd:,.2f} minimum order",
+                )
+        for row in self.scanner:
+            f = report.for_symbol(row.symbol)
+            if row.reject_reason == "DATA_FAILURE":
+                f.dropped("data_healthy", "no market snapshot")
+                continue
+            f.reached("data_healthy")
+            f.reached("features")
+            f.reached("strategy_evaluated")
+            if row.strategy:
+                f.reached("candidate")
+            if row.reject_reason:
+                f.dropped("ranked", row.reject_reason)
+        for opp in self._ranked:
+            report.for_symbol(opp.symbol).reached("ranked")
+        for trade in ledger.closed_trades:
+            report.for_symbol(trade.symbol).reached("traded")
+        for pos in ledger.open_positions.values():
+            report.for_symbol(pos.symbol).reached("traded")
+
+        data = report.as_dict()
+        share = data["concentration"]
+        btc = sum(v for k, v in share.items() if k.startswith("BTC"))
+        traded = sum(f.stages.get("traded", 0) for f in report.symbols.values())
+        data["btc_trade_share"] = round(btc, 4)
+        data["sample_size"] = traded
+        # A share computed from a handful of trades is noise; say so rather than
+        # flagging on it.  60 is roughly where a 70% reading stops being luck.
+        data["btc_concentration_flag"] = bool(btc > 0.70 and traded >= 60)
+        data["distinct_symbols_traded"] = len(share)
+        return data
+
     def _best_alternative_edge(self, held_symbol: str) -> float:
         """Edge of the best idea we are *not* already in — what rotation costs."""
         return max(
@@ -1042,6 +1151,8 @@ class TradingWorker:
             },
             "portfolio": self._portfolio_block(ledger, ts),
             "capital": self._capital_block(ledger, ts),
+            "board": self._opportunity_board(),
+            "funnel": self._symbol_funnel(ledger),
             "missed": _read_json(
                 Path(self.s.research.directory) / "missed.json"
             ),
