@@ -11,7 +11,7 @@ fade you.
 from __future__ import annotations
 
 from ..types import Features, Regime, RegimeState, Side, Signal
-from .base import Strategy, clamp, scale
+from .base import Strategy, clamp, scale, horizon_move_bps
 
 COMPRESSION_MIN = 0.65
 VOLUME_RATIO_MIN = 1.8
@@ -64,7 +64,8 @@ class BreakoutScalp(Strategy):
             f,
             side,
             score=score,
-            target_bps=atr * TARGET_ATR_MULT,
+            target_bps=horizon_move_bps(f, self.default_horizon_seconds)
+            * TARGET_ATR_MULT,
             stop_bps=atr * STOP_ATR_MULT,
             reasons=[
                 f"squeeze {compression:.2f} released",

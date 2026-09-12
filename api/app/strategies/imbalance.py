@@ -14,7 +14,7 @@ not a directional view, which is why it is allowed in quiet regimes.
 from __future__ import annotations
 
 from ..types import Features, Regime, RegimeState, Side, Signal
-from .base import Strategy, clamp, scale
+from .base import Strategy, clamp, scale, horizon_move_bps
 
 IMBALANCE_MIN = 0.35
 MICRO_OFFSET_FRAC_OF_SPREAD = 0.12
@@ -64,7 +64,8 @@ class BookImbalance(Strategy):
             f,
             side,
             score=score,
-            target_bps=atr * TARGET_ATR_MULT,
+            target_bps=horizon_move_bps(f, self.default_horizon_seconds)
+            * TARGET_ATR_MULT,
             stop_bps=atr * STOP_ATR_MULT,
             reasons=[
                 f"depth imbalance {f.imbalance:+.2f}",

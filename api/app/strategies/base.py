@@ -14,6 +14,8 @@ below exist only so a degenerate ATR can never produce ``stop_bps <= 0``.
 
 from __future__ import annotations
 
+import math
+
 from ..config import Settings, get_settings
 from ..types import Features, Regime, RegimeState, Side, Signal
 
@@ -26,6 +28,47 @@ from ..types import Features, Regime, RegimeState, Side, Signal
 # declining the trade.  The two floors are deliberately not symmetric.
 MIN_STOP_BPS = 3.0
 MIN_TARGET_BPS = 4.0
+
+#: Bars behind ``Features.range_window_bps`` (``features.RANGE_WINDOW``).
+RANGE_WINDOW_MINUTES = 20.0
+#: A realized high-low span overstates the move a trade can expect to capture:
+#: the span is the extreme-to-extreme travel, and an entry does not begin at
+#: the low. Half of it is the conservative reading.
+RANGE_CAPTURE_FRACTION = 0.5
+
+
+def horizon_move_bps(f: "Features", horizon_seconds: float) -> float:
+    """The move this symbol actually offers over ``horizon_seconds``, in bps.
+
+    ``atr_bps`` is a one-minute measure, and on Binance.US that is the wrong
+    instrument: 80.4% of ETHUSD's one-minute bars have ``high == low`` because
+    the venue does not trade in most minutes. The ATR collapses toward zero and
+    a target derived from it falls under ``MIN_TARGET_BPS``, so no strategy can
+    fire -- while the same tape moves a median of 4.45 bps over 5 minutes and
+    10.20 over 15.
+
+    Two estimates, and the larger wins:
+
+    * the one-minute ATR scaled by sqrt(time), which is right when minutes are
+      full and understates badly when they are empty;
+    * the realized range over the engine's window, rescaled to the horizon by
+      the same sqrt law and halved, which sees the moves the ATR misses.
+
+    Taking the larger is deliberate. Both are lower bounds on the available
+    move for different reasons, and a target that is too small is what stopped
+    the trader from ever firing.
+    """
+    horizon_minutes = max(1.0 / 60.0, float(horizon_seconds) / 60.0)
+    scale = math.sqrt(horizon_minutes)
+    from_atr = max(0.0, float(f.atr_bps)) * scale
+    span = max(0.0, float(getattr(f, "range_window_bps", 0.0)))
+    from_range = 0.0
+    if span > 0:
+        from_range = (
+            span * RANGE_CAPTURE_FRACTION
+            * math.sqrt(horizon_minutes / RANGE_WINDOW_MINUTES)
+        )
+    return max(from_atr, from_range)
 
 # A setup whose entry/exit spread eats this much of the target is not a setup.
 # Expressed against the target rather than an absolute cap so the test scales

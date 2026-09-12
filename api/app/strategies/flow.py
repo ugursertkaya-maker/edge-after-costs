@@ -13,7 +13,7 @@ a couple of minutes or not at all.
 from __future__ import annotations
 
 from ..types import Features, Regime, RegimeState, Side, Signal
-from .base import Strategy, clamp, scale
+from .base import Strategy, clamp, scale, horizon_move_bps
 
 FLOW_MIN = 0.35
 ACCEL_MIN = 0.08
@@ -62,7 +62,8 @@ class FlowImpulse(Strategy):
             f,
             side,
             score=score,
-            target_bps=atr * TARGET_ATR_MULT,
+            target_bps=horizon_move_bps(f, self.default_horizon_seconds)
+            * TARGET_ATR_MULT,
             stop_bps=atr * STOP_ATR_MULT,
             reasons=[
                 f"flow {f.trade_flow_imbalance:+.2f} accelerating "

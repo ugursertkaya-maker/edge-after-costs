@@ -314,6 +314,7 @@ class Features:
     ema_slope_bps: float             # per bar
     trend_strength: float            # 0..1
     range_pos: float                 # 0..1, where price sits in recent range
+
     bb_width_bps: float
     compression: float               # 0..1, 1 = maximally compressed
     volume_ratio: float              # last 1m quote vol / trailing mean
@@ -324,6 +325,16 @@ class Features:
     quote_volume_24h: float
     trades_24h: int
     bars_available: int
+    #: Realized high-low span over the feature engine's range window, in bps.
+    #:
+    #: The engine already computed this span to derive ``range_pos`` and then
+    #: discarded it, which cost more than it looks. On Binance.US 80.4% of
+    #: ETHUSD's one-minute bars have high == low -- the venue simply does not
+    #: trade in most minutes -- so ``atr_bps`` collapses toward zero and stops
+    #: describing the move a multi-minute strategy is aiming at. The same tape
+    #: moves a median of 4.45 bps over 5 minutes and 10.20 over 15. A target
+    #: derived from the one-minute ATR cannot see those; this can.
+    range_window_bps: float = 0.0
     extras: dict[str, float] = field(default_factory=dict)
 
 

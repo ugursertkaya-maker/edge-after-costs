@@ -10,7 +10,7 @@ of an exhaustion tick, not a continuation.
 from __future__ import annotations
 
 from ..types import Features, Regime, RegimeState, Side, Signal
-from .base import Strategy, clamp, scale
+from .base import Strategy, clamp, scale, horizon_move_bps
 
 SLOPE_TO_ATR_MIN = 0.06        # EMA slope per bar, as a fraction of ATR
 RET_TO_ATR_MIN = 0.15          # last-minute move, as a fraction of ATR
@@ -65,7 +65,8 @@ class MomentumScalp(Strategy):
             f,
             side,
             score=score,
-            target_bps=atr * TARGET_ATR_MULT,
+            target_bps=horizon_move_bps(f, self.default_horizon_seconds)
+            * TARGET_ATR_MULT,
             stop_bps=atr * STOP_ATR_MULT,
             reasons=[
                 f"EMA {'up' if direction > 0 else 'down'}, slope {f.ema_slope_bps:+.1f} bps",

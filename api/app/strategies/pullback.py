@@ -14,7 +14,7 @@ tick in (3) is what makes this a pullback trade rather than a falling-knife.
 from __future__ import annotations
 
 from ..types import Features, Regime, RegimeState, Side, Signal
-from .base import Strategy, clamp, scale
+from .base import Strategy, clamp, scale, horizon_move_bps
 
 TREND_STRENGTH_MIN = 0.45
 # Pullback depth, measured from the slow EMA in ATR units.
@@ -78,7 +78,8 @@ class TrendPullback(Strategy):
             f,
             side,
             score=score,
-            target_bps=atr * TARGET_ATR_MULT,
+            target_bps=horizon_move_bps(f, self.default_horizon_seconds)
+            * TARGET_ATR_MULT,
             stop_bps=atr * STOP_ATR_MULT,
             reasons=[
                 f"trend {f.trend_strength:.2f} {'up' if direction > 0 else 'down'}",
