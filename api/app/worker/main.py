@@ -1021,7 +1021,7 @@ class TradingWorker:
         mode this project keeps finding in its own reports.  Never used to
         suppress a symbol -- if BTC earns the rank, BTC trades.
         """
-        from app.research.funnel import FunnelReport
+        from app.research.funnel import STAGES as FUNNEL_STAGES, FunnelReport
 
         report = FunnelReport()
         for entry in self.universe:
@@ -1061,7 +1061,15 @@ class TradingWorker:
             if row.reject_reason:
                 f.dropped("ranked", row.reject_reason)
         for opp in self._ranked:
-            report.for_symbol(opp.symbol).reached("ranked")
+            # Every stage up to ``ranked`` precedes ranking in the pipeline, so
+            # reaching it implies reaching them.  Marking only ``ranked`` left
+            # cost_gate..correlation_gate at zero behind a non-zero, which is
+            # precisely the monotonicity violation ``check()`` exists to catch
+            # -- it fired intermittently, on exactly the symbols that ranked.
+            f = report.for_symbol(opp.symbol)
+            for stage in FUNNEL_STAGES[: FUNNEL_STAGES.index("ranked") + 1]:
+                if f.stages.get(stage, 0) == 0:
+                    f.reached(stage)
         for trade in ledger.closed_trades:
             report.for_symbol(trade.symbol).reached("traded")
         for pos in ledger.open_positions.values():

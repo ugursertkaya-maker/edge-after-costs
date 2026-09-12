@@ -84,3 +84,32 @@ class TestDashboardPayload:
         """Without it, SCANNER_DELAY and CAPITAL_STATE_BUG can never fire."""
         src = _source(worker_main.TradingWorker._capital_block)
         assert "context=self.recycler.idle_context(" in src
+
+
+class TestFunnelLadderStaysMonotone:
+    """A ranked symbol must not leave earlier stages at zero.
+
+    This failed intermittently in production: only the symbols that actually
+    ranked tripped it, so an empty `violations` list meant "nothing ranked this
+    second" rather than "the instrumentation is sound".
+    """
+
+    def test_ranking_marks_every_preceding_stage(self):
+        from app.research.funnel import STAGES, FunnelReport
+
+        report = FunnelReport()
+        f = report.for_symbol("SOLUSD")
+        for stage in ("discovered", "subscribed", "data_healthy", "features",
+                      "strategy_evaluated", "model_evaluated"):
+            f.reached(stage)
+        # What the worker now does for a ranked opportunity.
+        for stage in STAGES[: STAGES.index("ranked") + 1]:
+            if f.stages.get(stage, 0) == 0:
+                f.reached(stage)
+
+        assert report.check() == []
+        assert f.bottleneck()[0] == "selected"
+
+    def test_the_worker_marks_the_whole_prefix(self):
+        src = _source(worker_main.TradingWorker._symbol_funnel)
+        assert 'FUNNEL_STAGES[: FUNNEL_STAGES.index("ranked") + 1]' in src
