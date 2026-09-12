@@ -44,7 +44,7 @@ from app.regime import RegimeClassifier
 from app.risk import RiskEngine, RiskState
 from app.runtime import RuntimeStore
 from app.safety import PAPER_ONLY_BANNER, assert_paper_mode
-from app.sim.ledger import Ledger
+from app.sim.ledger import Ledger, ledger_label
 from app.sim.simulator import PaperSimulator
 from app.strategies import get_strategies
 from app.types import (
@@ -83,8 +83,6 @@ WARM_SNAPSHOT_INTERVAL_MS = int(os.getenv("WARM_SNAPSHOT_INTERVAL_MS", "1000"))
 WARM_STALENESS_SNAPSHOTS = int(os.getenv("WARM_STALENESS_SNAPSHOTS", "5"))
 
 log = logging.getLogger("cryptobot.worker")
-
-LEDGER_LABELS = {"base": "$500", "l1000": "$1.000", "l5000": "$5.000"}
 
 
 @dataclass
@@ -1523,7 +1521,7 @@ class TradingWorker:
             "champion": self._champion_payload(ledger),
             "ledgers": [
                 {
-                    "name": n, "label": LEDGER_LABELS.get(n, n),
+                    "name": n, "label": ledger_label(n, lg.starting_equity),
                     "starting_equity": lg.starting_equity, "equity": round(lg.equity, 2),
                 }
                 for n, lg in self.ledgers.items()

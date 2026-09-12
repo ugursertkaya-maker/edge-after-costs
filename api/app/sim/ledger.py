@@ -281,3 +281,15 @@ class Ledger:
         if days <= 0:
             return traded
         return traded / days
+
+def ledger_label(name: str, starting_equity: float) -> str:
+    """Label a ledger from the equity it actually holds.
+
+    This replaces a hardcoded map -- {"base": "$500", ...} -- written when the
+    primary book WAS $500. After the primary moved to $5,000 the selector still
+    read "$500" while the screen showed $5,000 of capital, which is exactly the
+    kind of contradiction that makes an operator distrust every other number on
+    the page. Derived now, so the label cannot drift from the book again.
+    """
+    marker = " · ANA" if name == "base" else ""
+    return f"${starting_equity:,.0f}".replace(",", ".") + marker

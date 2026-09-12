@@ -16,7 +16,9 @@ from app.types import now_ms
 
 router = APIRouter(tags=["dashboard"])
 
-LEDGER_LABELS = {"base": "$500", "l1000": "$1.000", "l5000": "$5.000"}
+# Labels are derived from the equity each ledger holds; the hardcoded map this
+# replaces still said "$500" for the primary book after it became $5,000.
+from app.sim.ledger import ledger_label  # noqa: E402
 
 
 def _empty_payload(ledger: str) -> dict:
@@ -50,7 +52,7 @@ def _empty_payload(ledger: str) -> dict:
             "last_evaluation_ms": None, "mode": s.mode,
         },
         "ledgers": [
-            {"name": n, "label": LEDGER_LABELS.get(n, n), "starting_equity": v, "equity": v}
+            {"name": n, "label": ledger_label(n, v), "starting_equity": v, "equity": v}
             for n, v in (
                 ("base", s.risk.starting_equity),
                 *((f"l{int(e)}", e) for e in s.risk.comparison_ledgers),
