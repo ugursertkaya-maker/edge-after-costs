@@ -374,9 +374,15 @@ class TradingWorker:
         self.universe = [e for e in entries if e.tier != "cold"]
         await self._seed_bars([e.symbol for e in self.universe])
         self._universe_refreshed_ms = now_ms()
+        # Log the ACTUAL subscription, not the pre-promotion variables: a line
+        # reading "2 evaluated (hot= warm=)" names no symbols at all, which is
+        # the kind of output that made the earlier staleness misdiagnosis easy.
         log.info(
-            "universe: %d evaluated (hot=%s warm=%s) + %d cold watchlist",
-            len(self.universe), ",".join(hot), ",".join(warm), len(self.watchlist),
+            "universe: %d evaluated (full-depth=%s snapshot=%s) + %d cold watchlist",
+            len(self.universe),
+            ",".join(subscribe_hot) or "-",
+            ",".join(warm) or "-",
+            len(self.watchlist),
         )
         self._persist(lambda session, repo: repo.upsert_markets(session, entries))
         if not self.universe:
