@@ -234,3 +234,102 @@ This is the second independent reason the maker thesis is finished. The P&L
 audit killed it for the bar-driven strategies because they lose at the mid;
 this kills it for `flow_impulse` because you cannot rest a quote for long enough
 to be filled without outliving the alpha you are trying to capture.
+
+---
+
+## 7. Capital recycling
+
+`Ledger.close` already credited cash synchronously, so that was never the gap.
+The gap was one layer up: the **portfolio view** — correlated risk, directional
+exposure, the cash reserve, `DUPLICATE_SYMBOL` — refreshed only on the next
+state build, so a symbol stayed unavailable for a tick after its position
+closed.
+
+`PortfolioEngine.release()` is now the exact inverse of `_commit` and runs in
+the same call as the close; `CapitalRecycler.on_close` then runs the rescan
+**inside that call**, with `rescan=evaluate_once` itself. `close→rescan` is
+therefore a handful of milliseconds rather than an evaluation interval. Only the
+base ledger triggers it — the comparison ledgers mirror the same decisions, and
+three rescans per close would be three times the work for one decision.
+
+**Episode identity** (§14): `sha1(symbol | strategy | regime | bucket |
+counter)`, with the bucket and regime **frozen at the instant the episode
+opens**. Recomputing them per observation would let a drifting feature cross a
+bucket boundary mid-impulse and mint a second id for the same idea — a re-entry
+with a clean record. The counter advances only on a false→true transition of the
+strategy's own trigger. A genuinely new impulse on the same coin trades freely,
+**BTC included**.
+
+**No global cooldown.** The only account-wide cooldown fires on a loss streak
+and never on a profitable close, so closing SOL cannot block opening ETH.
+
+**Idle attribution** gained `COOLDOWN`, `SCANNER_DELAY`, `CAPITAL_STATE_BUG` and
+`OTHER`, and still sums **exactly** to the idle balance with no residual bucket.
+Every new bucket takes dollars from *inside* the idle total rather than adding
+to it, and `CAPITAL_STATE_BUG` is charged ahead of the reserve so that an
+accounting defect cannot be laundered as policy.
+
+## 8. Is flow_impulse ready for promotion? **No.**
+
+| Gate | Value | |
+|---|---|---|
+| sample ≥ 100 trades | **48** | **FAIL** |
+| net profit factor > 1.30 | 6.649 | PASS |
+| net expectancy > 0 | +$0.0884 | PASS |
+| alpha CI clear of zero | +5.43 bps | PASS |
+| coin concentration < 60% | 37.5% (ETH) | PASS |
+| **day concentration < 60%** | **100.0%** | **FAIL** |
+| regime concentration < 80% | 75.0% | PASS |
+| max drawdown < 25% of net | $0.75 | PASS |
+
+**Every trade happened on one calendar day.** The win rate is **93.8%** — 45 of
+48 — which is not a number a real edge produces; it is a number one rally
+produces. Six of eight gates pass and the two that fail are the two that decide
+whether the other six mean anything.
+
+The strategy stays in PAPER, collecting. Reports at 100, 200 and 500 trades.
+
+## 9. The deliverables, answered
+
+| # | | |
+|---|---|---|
+| 1 | BTC dominance root cause | **BTC was not dominating (41.7%).** The universe was 4 pairs because 94.5% of the venue is halted or illiquid; two real defects, below |
+| 2 | Bugs fixed | tier path never wired; no capacity measurement; `bottleneck()` reason inheritance; hybrid study missing `expected_net_edge_bps` |
+| 3 | HOT symbols | BTCUSD, ETHUSD, SOLUSD |
+| 4 | WARM symbols | ZECUSDT, XRPUSDT, DOGEUSDT (+ HYPEUSD COLD) |
+| 5 | Symbols actively scored | **7** of 416 eligible, 629 listed |
+| 6–7 | Candidates / qualifying by symbol | live on the opportunity board and `payload.funnel` |
+| 8 | Trades by symbol | BTCUSD 58, ETHUSD 51, SOLUSD 30 |
+| 9 | P&L by symbol | BTCUSD −$3.80, ETHUSD −$0.02, SOLUSD **+$2.53** |
+| 10 | **BTC trade share** | **41.7%** — flag does not fire |
+| 11 | Avg simultaneous distinct assets | 0.01 (Phase 5 measurement unchanged; the constraint is supply, not policy) |
+| 12 | Holding time by strategy | flow 24 s · momentum 27 s · imbalance 89 s · breakout 53 s (medians) |
+| 13 | <1 min trades by strategy | flow 42/48 · momentum 43/67 · imbalance 8/21 · breakout 3/3 |
+| 14–15 | 10–25 min / 25–60 min | **zero, in every strategy** |
+| 16 | close→rescan | inside the close call; instrumented in `payload.recycling` |
+| 17 | close→next entry | instrumented, needs live sample |
+| 18 | Idle-capital reasons | ten codes, summing exactly to the idle balance |
+| 19 | flow_impulse trades | **48** |
+| 20 | flow_impulse net PF | **6.649** |
+| 21 | flow_impulse expectancy | **+$0.0884/trade** |
+| 22 | flow_impulse P&L | **+$4.24** |
+| 23 | flow_impulse by coin | ETH 18 · SOL 15 · BTC 15 — alpha +9.21 / +18.47 / +8.64 bps |
+| 24 | TAKER | **$4.2410** net, the baseline |
+| 25 | MAKER | **$0.17** earned, **−$3.49** after the $3.65 it never filled |
+| 26 | HYBRID | **$3.88–$4.52** across every wait window — inside one standard error of TAKER |
+| 27 | **Ready for promotion?** | **NO** — 48 trades, one calendar day |
+| 28 | Tests | **1,927 passing**, 1 skipped (+159 this phase) |
+| 29 | CPU / RAM | worker 0.8 CPU / 640 MB, unchanged |
+| 30 | **PAPER** | **YES** |
+| 31 | **Real orders** | **0** |
+
+## 10. What I would not claim
+
+* **`flow_impulse` is not proven.** One day, one regime, 48 trades, a 93.8% win
+  rate. It is the best thing measured in this project and it is still a sample.
+* **The 100 ms hybrid row is not a 6.6% improvement.** It is inside the noise.
+* **Removing the Tier-0 restriction is not expected to help.** The evidence says
+  the four WARM pairs lose by 5–9× on edge ratio at our horizons. They are
+  scanned so that the claim stays falsifiable, not because it is doubted.
+* **Nothing here says the account will make money.** Phases 3–5 said it will
+  not, and the one strategy that disagrees has traded for twelve hours.
