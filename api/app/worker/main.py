@@ -267,11 +267,27 @@ class TradingWorker:
         self._refresh_expectancy()
 
     async def refresh_universe(self) -> None:
+        # The tier path, not ``refresh()``.  Phase 5 built HOT/WARM/COLD tiering
+        # over the whole venue, tested it, and never connected it: the worker
+        # kept calling ``refresh()``, which ranks on raw ``score`` (liquidity
+        # first), truncates at ``max_symbols`` and applies no capacity gate.
+        # That is why ADAUSD sat in HOT for a whole phase and never traded --
+        # its flow absorbs $5.61 a minute against a $10 minimum order, and
+        # nothing in the old path could say so.  ``refresh_tiers`` ranks on
+        # ``net_score`` (cost first) and drops pairs we cannot trade at any size.
         try:
-            entries = await self.universe_selector.refresh(self.rest)
+            entries = await self.universe_selector.refresh_tiers(self.rest)
         except Exception as exc:
-            log.warning("universe refresh failed: %s", exc)
-            return
+            log.warning("tiered universe refresh failed: %s", exc)
+            entries = []
+        if not entries:
+            # Degrade to the old path rather than going blind: a venue hiccup
+            # during a depth probe must not empty the universe.
+            try:
+                entries = await self.universe_selector.refresh(self.rest)
+            except Exception as exc:
+                log.warning("universe refresh failed: %s", exc)
+                return
         if not entries:
             log.warning("universe refresh returned nothing; keeping previous set")
             return

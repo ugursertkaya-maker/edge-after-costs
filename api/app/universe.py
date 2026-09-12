@@ -56,6 +56,15 @@ W_NET_LIQUIDITY = 0.30
 W_NET_VOLATILITY = 0.20
 W_NET_TIGHTNESS = 0.10
 
+#: Minutes of the pair's own quote volume used as the capacity denominator.
+#: One minute, because a scalp that holds for 32-120 seconds competes with the
+#: flow arriving in roughly that window, not with the 24h total.
+CAPACITY_WINDOW_MINUTES = 1.0
+#: Order share of one minute's volume at or below which capacity is a
+#: non-issue.  Above it the simulator's book-walk stops modelling a market we
+#: are a small part of and starts modelling one we ARE -- measured on the venue
+#: 2026-09-12, a $25 order is 2.0% of a minute on ETHUSD and 64% on BNBUSD.
+CAPACITY_COMFORTABLE = 0.05
 #: An edge ratio (expected move / round trip) at or above this scores a full
 #: cost point.  ~8 is roughly where BTC/USD sits at Tier-0 fees on a 60-minute
 #: horizon, so the best pair the venue actually offers tops the scale.
@@ -176,6 +185,41 @@ class UniverseEntry:
     #: model (``FEE_MODEL=standard`` prices every pair at 10 bps but does not
     #: change which pairs are on the list).
     fee_tier0: bool = False
+    #: The intended order notional as a share of ONE MINUTE of the pair's own
+    #: quote volume.  This is the "enough liquidity, not maximum liquidity"
+    #: measure the Phase 6 brief asks for: it is relative to the size we
+    #: actually trade, so a deep pair and a thin one are compared on whether
+    #: they can absorb *us*, not on whose 24h number is larger.  0.0 means not
+    #: computed (no order size supplied).
+    capacity_share: float = 0.0
+
+    #: The largest order this pair's own flow can absorb comfortably, in USD:
+    #: ``CAPACITY_COMFORTABLE`` x one minute of quote volume.  0.0 when not
+    #: computed.
+    capacity_max_usd: float = 0.0
+    #: The smallest order we are willing and able to send: the venue's own
+    #: minimum notional, or our configured floor, whichever binds.  Recorded on
+    #: the entry so ``capacity_ok`` needs no settings lookup and the dashboard
+    #: can show both ends of the range.
+    min_tradable_usd: float = 0.0
+
+    @property
+    def capacity_ok(self) -> bool:
+        """True when the pair can absorb at least the exchange minimum.
+
+        Capacity is a **sizing** input, not a delisting one.  Measured on the
+        venue 2026-09-12, a $50 order is 4% of a minute on ETHUSD and 24% on
+        SOLUSD -- and the right response to that is a $10 order in SOL, not the
+        removal of SOL.  A pair fails only when even the venue's own minimum
+        notional would make us the market, which is the honest "we cannot trade
+        this at any size" condition.
+
+        Unmeasured (``0.0``) counts as OK: a missing measurement must not
+        silently delist a pair that has always been fine.
+        """
+        if self.capacity_max_usd <= 0.0:
+            return True
+        return self.capacity_max_usd >= self.min_tradable_usd
 
     def as_dict(self) -> dict:
         """Flat, JSON-safe view — the dashboard and the reports both want this."""
@@ -196,7 +240,45 @@ class UniverseEntry:
             "edge_ratio": None if math.isinf(self.edge_ratio) else self.edge_ratio,
             "score": self.score,
             "net_score": self.net_score,
+            "capacity_share": self.capacity_share,
+            "capacity_max_usd": self.capacity_max_usd,
+            "min_tradable_usd": self.min_tradable_usd,
+            "capacity_ok": self.capacity_ok,
         }
+
+
+def capacity_share(
+    quote_volume_24h: float,
+    order_usd: float,
+    *,
+    window_minutes: float = CAPACITY_WINDOW_MINUTES,
+) -> float:
+    """Our order as a fraction of ``window_minutes`` of the pair's own volume.
+
+    Returns ``inf`` for a pair that trades nothing, which is the honest answer:
+    any order is infinite relative to no flow.  A zero or negative order size
+    returns 0.0 -- nothing to absorb.
+    """
+    if order_usd <= 0:
+        return 0.0
+    per_window = quote_volume_24h / (1_440.0 / max(window_minutes, 1e-9))
+    if per_window <= 0:
+        return math.inf
+    return order_usd / per_window
+
+
+def capacity_max_usd(
+    quote_volume_24h: float, *, window_minutes: float = CAPACITY_WINDOW_MINUTES
+) -> float:
+    """The largest order this pair's flow absorbs comfortably, in USD.
+
+    The inverse of :func:`capacity_share`: instead of asking "is our size too
+    big", it answers "how big may we be".  That is the form the allocator wants,
+    because the useful response to a thin pair is a smaller position rather than
+    no position.
+    """
+    per_window = quote_volume_24h / (1_440.0 / max(window_minutes, 1e-9))
+    return max(0.0, per_window * CAPACITY_COMFORTABLE)
 
 
 def expected_move_bps(
@@ -388,6 +470,15 @@ class UniverseSelector:
         counts: dict[Tier, int] = {t: 0 for t in Tier}
         out: list[UniverseEntry] = []
         for entry in ranked:
+            if not entry.capacity_ok:
+                # Only fires when the pair cannot absorb even the venue's own
+                # minimum notional -- i.e. untradable at any size, not merely
+                # thin.  Thin pairs are handled by sizing, not by delisting.
+                self.rejections[entry.symbol] = (
+                    f"capacity: absorbs ${entry.capacity_max_usd:,.2f} a minute, "
+                    f"below the ${entry.min_tradable_usd:,.2f} minimum order"
+                )
+                continue
             if entry.edge_ratio < policy.exclude_below_edge_ratio:
                 self.rejections[entry.symbol] = (
                     f"edge ratio {entry.edge_ratio:.2f} below "
@@ -539,6 +630,13 @@ class UniverseSelector:
         cost_spread = spread_bps if book is not None else _quoted_spread_bps(raw, u.max_spread_bps)
         trip = round_trip_bps(symbol, cost_spread, fees)
         move = expected_move_bps(volatility_bps, DEFAULT_HORIZON_MINUTES)
+        # Capacity is measured against the largest position the allocator is
+        # allowed to open, not the average one: the binding case is the biggest
+        # order we could send, and a pair that cannot absorb that is a pair we
+        # would have to special-case at allocation time instead.
+        share = capacity_share(quote_volume, self.settings.portfolio.max_position_usd)
+        cap_usd = capacity_max_usd(quote_volume)
+        floor_usd = max(info.min_notional, self.settings.risk.min_notional_usd)
 
         return UniverseEntry(
             symbol=symbol,
@@ -558,6 +656,9 @@ class UniverseSelector:
                 quote_volume, volatility_bps, cost_spread, round_trip_bps=trip
             ),
             fee_tier0=symbol in fees.tier0_symbols,
+            capacity_share=share,
+            capacity_max_usd=cap_usd,
+            min_tradable_usd=floor_usd,
         )
 
     def score(
