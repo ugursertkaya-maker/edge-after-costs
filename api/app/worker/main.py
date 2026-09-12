@@ -1039,7 +1039,13 @@ class TradingWorker:
         """
         key = opp.signal.strategy
         row = self._unexecutable_shorts.setdefault(
-            key, {"signals": 0.0, "sum_net_edge_bps": 0.0, "best_net_edge_bps": 0.0}
+            key,
+            # ``best`` starts at -inf, not 0.0: seeding it at zero reports a
+            # best of 0.0 for a strategy whose every short had negative edge,
+            # which is a number nothing observed. Caught on the first live
+            # sample -- four shorts averaging -19.6 bps, "best" reading 0.0.
+            {"signals": 0.0, "sum_net_edge_bps": 0.0,
+             "best_net_edge_bps": float("-inf")},
         )
         row["signals"] += 1.0
         row["sum_net_edge_bps"] += float(opp.net_edge_bps)
@@ -1055,7 +1061,10 @@ class TradingWorker:
             out["by_strategy"][strategy] = {
                 "signals": n,
                 "mean_net_edge_bps": round(row["sum_net_edge_bps"] / n, 3) if n else 0.0,
-                "best_net_edge_bps": round(row["best_net_edge_bps"], 3),
+                "best_net_edge_bps": (
+                    round(row["best_net_edge_bps"], 3)
+                    if row["best_net_edge_bps"] > float("-inf") else None
+                ),
                 "executable": False,
                 "note": "spot is long-only; recorded, never traded, never faked",
             }

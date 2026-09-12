@@ -11,6 +11,8 @@ from __future__ import annotations
 
 import inspect
 
+import pytest
+
 from app.worker import main as worker_main
 
 
@@ -158,3 +160,39 @@ class TestShortSideIsRecordedNotDiscarded:
     def test_payload_carries_the_short_side_block(self):
         src = inspect.getsource(worker_main.TradingWorker)
         assert '"short_side"' in src
+
+
+class TestShortSideBestEdgeIsObserved:
+    """A 'best' of 0.0 for a strategy whose every short had negative edge is a
+    number nothing observed. Caught on the first live sample."""
+
+    def _worker(self):
+        w = worker_main.TradingWorker.__new__(worker_main.TradingWorker)
+        w._unexecutable_shorts = {}
+        return w
+
+    def _opp(self, edge: float, strategy: str = "book_imbalance"):
+        class _Sig:
+            pass
+        sig = _Sig()
+        sig.strategy = strategy
+        class _Opp:
+            pass
+        o = _Opp()
+        o.signal = sig
+        o.net_edge_bps = edge
+        return o
+
+    def test_best_reflects_the_least_bad_observation_not_zero(self):
+        w = self._worker()
+        for edge in (-25.0, -19.5, -12.0):
+            worker_main.TradingWorker._note_unexecutable_short(w, self._opp(edge))
+        block = worker_main.TradingWorker._short_side_block(w)
+        row = block["by_strategy"]["book_imbalance"]
+        assert row["best_net_edge_bps"] == -12.0
+        assert row["mean_net_edge_bps"] == pytest.approx(-18.833, abs=1e-3)
+        assert row["signals"] == 3
+
+    def test_no_signals_means_no_row(self):
+        block = worker_main.TradingWorker._short_side_block(self._worker())
+        assert block == {"by_strategy": {}, "total_signals": 0}
