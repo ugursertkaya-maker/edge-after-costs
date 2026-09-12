@@ -1053,6 +1053,11 @@ class TradingWorker:
                 f.reached("model_evaluated")
             if row.strategy:
                 f.reached("candidate")
+            else:
+                # "We looked and nothing fired" is a different fact from "we
+                # never looked", and the funnel is worthless if it renders them
+                # with the same words.
+                f.dropped("candidate", "no strategy produced a signal")
             if row.reject_reason:
                 f.dropped("ranked", row.reject_reason)
         for opp in self._ranked:
