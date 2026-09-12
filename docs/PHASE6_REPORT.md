@@ -391,3 +391,49 @@ not this one's, and nothing in it rescues the current book.
 is exercised and correct; the sample is one hour short of its own gate, and the
 gate exists precisely so that a number like SOL's −5.68 bps is not promoted to a
 conclusion on 3 fills.
+
+---
+
+## 12. Stale market data — the guard, and what the flapping actually was
+
+`_snapshot` is the only path into features, so freshness is checked there and
+nowhere else. A stale symbol produces no snapshot, so it cannot reach a
+strategy, generate a candidate, or open a PAPER trade.
+
+**600,000 ms was never a measurement.** It is `features.NO_BOOK_AGE_MS`, the
+sentinel for "this book has never been populated". Reading it as a real age is
+what made this misdiagnosable twice. An unpopulated book now reports
+`book_age_ms: None`.
+
+**The budget is tier-aware.** HOT takes `depth@100ms` (2.5 s bar); WARM takes
+`depth20@1000ms` and is routinely 1–3 s old by construction. A single bar
+rejected SOLUSD at 3,530 ms on a feed that was working perfectly.
+
+**Recovery uses `request_resync`, never `mark_desynced`.** `mark_desynced` sets
+`is_valid()` false, and `monitor_once` skips any position whose book is invalid
+— so marking a *stale* book desynced would silently disable its stop-loss at
+exactly the moment the feed is struggling. A stale book is old, not wrong.
+
+### The flapping, measured
+
+Once deployed, both evaluated symbols entered and left the stale state
+repeatedly. A single snapshot showed ETHUSD at 4,461 ms and SOLUSD at 251 ms,
+which looked like an ETHUSD-specific fault. Counting whole episodes over 15
+minutes says otherwise:
+
+| Symbol | Stale episodes | Recoveries |
+|---|---|---|
+| ETHUSD | 7 | **7** |
+| SOLUSD | 5 | **5** |
+
+Both symbols, similar rate, **every episode recovered**. The snapshot had simply
+caught one mid-gap and the other not — two symbols cannot be compared from one
+frame.
+
+**Cause: a quiet market, not a broken feed.** `depth@100ms` sends only on
+change; when nothing happens the book ages without becoming wrong. That has a
+consequence worth stating plainly: tying the freshness budget to the
+*subscription* rather than the tier label would exclude these symbols **more**
+often, and since the cause is market silence, that would be the wrong
+correction. The looser WARM budget is closer to right than the stricter one
+would be.
