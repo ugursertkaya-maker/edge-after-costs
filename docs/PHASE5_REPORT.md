@@ -90,9 +90,19 @@ differs by two trades. This is Phase 3's allocation-mode finding reproduced by a
 different route: when there is nothing to allocate across, every allocation
 policy is the same policy.
 
-Cost breakdown on the representative arm: gross **−$34.41**, fees **$8.00**,
-slippage **$25.03**, net **−$42.40**. Slippage is **3.1× fees** — the same ratio
-every phase of this project has measured.
+Cost breakdown on the representative arm — **corrected labelling**, see
+`docs/PNL_AUDIT.md`: what was reported as "gross" (−$34.41) is P&L at the **fill
+prices**, so the spread and slippage are already inside it; net is
+`gross − fees` = −$42.40, and slippage is a memo, not a third deduction.
+Nothing was counted twice, but calling it "gross" was a reporting defect.
+
+The honest decomposition of the same arm: **RAW market P&L (at the mid)
+−$9.38**, spread+slippage $25.03, fees $8.00, **net −$42.40**. Slippage is
+**3.1× fees** — the same ratio every phase has measured.
+
+**The raw number is negative**, which is the finding that matters and is
+developed in `docs/PNL_AUDIT.md`: the signal loses money before any execution
+cost is charged.
 
 Out-of-sample (30% holdout by entry time, 122 trades): expectancy
 **−$0.1477/trade**.
@@ -172,19 +182,23 @@ the missed-opportunity audit grades the gate's judgement. What the phase could
 not do is make those mechanisms bite, because the constraint they were built to
 relieve was never the one holding the account back.
 
-**Three things would change the answer, in order of how much they would change
-it:**
+**This section previously recommended maker execution as the first lever. The
+P&L audit removed its premise — see `docs/PNL_AUDIT.md`.** Over 120 days and 366
+trades the raw profit factor is **0.791**, with every strategy below 1.0
+separately: the signal loses at the mid, before any cost. Maker execution would
+recover roughly $49.53 of the $61.95 of cost and land back at the raw number,
+which is still a loss. You cannot remove costs from a strategy that does not
+make money at the mid.
 
-1. **Maker execution.** It does not out-predict the cost wall, it removes it. At
-   0% maker with the spread earned rather than paid, the HOT pairs' break-even
-   hit rate falls from 52–58% to roughly a coin flip — and Phase 4's model
-   already reaches 67.5%. The tape is at ~19 of the 24 hours the study needs,
-   and the live engine's 0% fill rate over 1,789 post-only attempts says the
-   current quoting parameters are wrong, not that the idea is.
-2. **A venue with both.** Binance.US has the fees and not the flow; Coinbase and
-   Kraken have the flow and fees 80–120× higher. That is a fork with no good
-   branch on US spot, and it is the finding from Phase 1 that every phase since
-   has re-confirmed from a new angle.
+**The revised order:**
+
+1. **Entry-model research.** Phase 4's classifier adds ~5 points of hit rate out
+   of sample with leakage controlled — the only thing in this project that has
+   demonstrably beaten a coin flip on unseen data. It reached 67.5% against a
+   70.0% requirement, and that 2.5-point gap is a modelling problem on a
+   measured quantity.
+2. **Maker execution, later.** Still the right move *once there is a signal
+   worth executing*. Tape collection costs nothing and continues.
 3. **Accepting that this account works slowly or not at all.** A $500 account on
    a venue where a typical trade must clear 1.5 one-minute ATRs to break even is
    not a high-turnover account. Wanting it to be does not make the arithmetic
