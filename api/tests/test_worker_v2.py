@@ -446,18 +446,31 @@ def test_cold_tier_symbols_are_not_subscribed_to_the_feed(worker, monkeypatch):
                       trades_24h=3000, spread_bps=25.0, volatility_bps=900.0,
                       depth_usd=10_000.0, score=0.5, tier="cold"),
     ]
-    monkeypatch.setattr(
-        worker.universe_selector, "refresh",
-        lambda *a, **k: (_ for _ in ()).throw(AssertionError("should not be called")),
-    )
     import asyncio
 
-    async def fake_refresh(rest, *a, **k):
+    async def fake_refresh_tiers(rest, *a, **k):
         return entries
 
-    monkeypatch.setattr(worker.universe_selector, "refresh", fake_refresh)
+    # Patch the TIER path, which is what production calls. Patching only
+    # ``refresh`` left ``refresh_tiers`` to reach the live venue: the test
+    # passed inside the suite (where something else had already broken the
+    # network) and failed on its own, which is the least useful way for a
+    # test to be wrong.
+    monkeypatch.setattr(worker.universe_selector, "refresh_tiers", fake_refresh_tiers)
+    monkeypatch.setattr(
+        worker.universe_selector, "refresh",
+        lambda *a, **k: (_ for _ in ()).throw(
+            AssertionError("fallback must not run when the tier path succeeds")
+        ),
+    )
     monkeypatch.setattr(worker, "_seed_bars", lambda syms: asyncio.sleep(0))
     asyncio.run(worker.refresh_universe())
 
     assert "ZECUSDT" not in seen.get("hot", []) + seen.get("warm", [])
     assert "BTCUSD" in seen["hot"]
+    assert "ETHUSD" in seen["warm"]
+    # COLD is ranked and reported but never evaluated: a symbol that is not
+    # subscribed must not reach a strategy on a book nobody is updating.
+    assert [e.symbol for e in worker.watchlist] == ["ZECUSDT"]
+    assert "ZECUSDT" not in [e.symbol for e in worker.universe]
+    assert {e.symbol for e in worker.universe} == {"BTCUSD", "ETHUSD"}

@@ -193,6 +193,8 @@ class TradingWorker:
         self._cooldown_until_ms = 0
         self._universe_refreshed_ms = 0
         self._features_cache: dict[str, Features] = {}
+        #: symbol -> book age when it was last skipped for staleness.
+        self._stale_skips: dict[str, int] = {}
         # The funnel accumulates across evaluations rather than describing the
         # current instant. "Candidate counts by symbol" is a count over time;
         # a snapshot of one 1-second pass answers a different question and
@@ -399,6 +401,19 @@ class TradingWorker:
         book = self.books.get(entry.symbol)
         if book is None:
             return None
+        # A stale book must never reach a strategy. The tier machinery is
+        # supposed to keep subscribed symbols fresh, but getting that exactly
+        # right has now failed twice -- COLD pairs were evaluated unsubscribed,
+        # and then a WARM-demoted BTCUSD was evaluated on a book ten minutes
+        # old, which the regime classifier reads as ABNORMAL and every strategy
+        # then refuses. Guarding at the point of use is robust to whatever the
+        # tiering does next: freshness is a property of the data, so it is
+        # checked where the data is consumed.
+        age_ms = max(0, ts_ms - int(getattr(book, "last_update_ms", 0) or 0))
+        if age_ms > self.s.risk.max_book_age_ms:
+            self._stale_skips[entry.symbol] = age_ms
+            return None
+        self._stale_skips.pop(entry.symbol, None)
         # CLOSED bars only. The feed will happily hand over the in-progress
         # candle, but the feature engine folds each bar into permanent state
         # keyed by close time: a partial bar would be absorbed as if it were
@@ -479,7 +494,14 @@ class TradingWorker:
                         symbol=entry.symbol, price=0.0, long_score=0.0, short_score=0.0,
                         regime=Regime.UNKNOWN.value, momentum=0.0, volume_ratio=0.0,
                         spread_bps=0.0, imbalance=0.0, net_edge_bps=0.0, strategy=None,
-                        decision=Decision.NO_TRADE.value, reject_reason="DATA_FAILURE",
+                        decision=Decision.NO_TRADE.value,
+                        # Distinguish "we have no book" from "the book we have is
+                        # too old to act on"; they need different fixes.
+                        reject_reason=(
+                            "STALE_BOOK" if entry.symbol in self._stale_skips
+                            else "DATA_FAILURE"
+                        ),
+                        book_age_ms=self._stale_skips.get(entry.symbol, 0),
                     )
                 )
                 continue

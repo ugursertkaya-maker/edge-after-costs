@@ -196,3 +196,34 @@ class TestShortSideBestEdgeIsObserved:
     def test_no_signals_means_no_row(self):
         block = worker_main.TradingWorker._short_side_block(self._worker())
         assert block == {"by_strategy": {}, "total_signals": 0}
+
+
+class TestStaleBooksNeverReachAStrategy:
+    """Freshness is checked where the data is consumed, not where it is routed.
+
+    Getting tier/subscription logic exactly right has now failed twice in
+    production: COLD pairs were evaluated while unsubscribed, and then a
+    WARM-demoted BTCUSD was evaluated on a book ten minutes old, which the
+    regime classifier reads as ABNORMAL and every strategy then refuses. A
+    guard at the point of use is robust to whatever the tiering does next.
+    """
+
+    def test_snapshot_checks_book_age(self):
+        src = _source(worker_main.TradingWorker._snapshot)
+        assert "max_book_age_ms" in src
+        assert "last_update_ms" in src
+
+    def test_a_stale_book_produces_no_snapshot(self):
+        src = _source(worker_main.TradingWorker._snapshot)
+        guard = src[src.index("max_book_age_ms"):]
+        assert "return None" in guard.split("\n", 3)[1:][0] or "return None" in guard[:200]
+
+    def test_stale_is_reported_separately_from_missing(self):
+        """'No book' and 'a book too old to act on' need different fixes."""
+        src = _source(worker_main.TradingWorker.evaluate_once)
+        assert "STALE_BOOK" in src
+        assert "DATA_FAILURE" in src
+
+    def test_the_skip_is_remembered_with_its_age(self):
+        src = _source(worker_main.TradingWorker._snapshot)
+        assert "_stale_skips" in src
