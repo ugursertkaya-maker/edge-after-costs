@@ -71,12 +71,16 @@ from app.types import (
 from app.universe import Tier, UniverseEntry, UniverseSelector
 
 #: WARM subscribes to ``depth20@1000ms``, so its book is one-second snapshots.
-WARM_SNAPSHOT_INTERVAL_MS = 1_000
+WARM_SNAPSHOT_INTERVAL_MS = int(os.getenv("WARM_SNAPSHOT_INTERVAL_MS", "1000"))
 #: How many WARM snapshot intervals a book may lag before it is too old to act
 #: on. Measured on the live combined stream, a healthy WARM book reaches ~3.5s
 #: between applied snapshots, so three intervals rejected a working feed. Five
 #: covers the observed jitter and still catches a feed that has actually died.
-WARM_STALENESS_SNAPSHOTS = 5
+#: Env-configurable so the guard can be exercised against a live feed without
+#: waiting for one to break: setting it to 0 makes every WARM book stale on the
+#: next pass, which is the only way to prove in production that the check runs
+#: rather than merely exists.
+WARM_STALENESS_SNAPSHOTS = int(os.getenv("WARM_STALENESS_SNAPSHOTS", "5"))
 
 log = logging.getLogger("cryptobot.worker")
 
