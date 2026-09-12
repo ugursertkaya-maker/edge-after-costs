@@ -56,6 +56,10 @@ W_NET_LIQUIDITY = 0.30
 W_NET_VOLATILITY = 0.20
 W_NET_TIGHTNESS = 0.10
 
+#: Relative score difference below which two legs of the same base asset are
+#: treated as tied, so the cheaper round trip decides instead of tick noise.
+#: 5% is wide enough to cover the observed 1.4% SOLUSD/SOLUSDT gap with room.
+DEDUPE_DEAD_BAND = 0.05
 #: Minutes of the pair's own quote volume used as the capacity denominator.
 #: One minute, because a scalp that holds for 32-120 seconds competes with the
 #: flow arriving in roughly that window, not with the 24h total.
@@ -210,12 +214,33 @@ class UniverseEntry:
         Capacity is a **sizing** input, not a delisting one.  Measured on the
         venue 2026-09-12, a $50 order is 4% of a minute on ETHUSD and 24% on
         SOLUSD -- and the right response to that is a $10 order in SOL, not the
-        removal of SOL.  A pair fails only when even the venue's own minimum
-        notional would make us the market, which is the honest "we cannot trade
-        this at any size" condition.
+        removal of SOL.
+
+        The bar is the **venue's** own minimum notional, deliberately not our
+        configured floor.  Judging against our floor delists a pair the instant
+        a quiet session drops its volume below the threshold: on 2026-09-12 a
+        weekend lull took SOLUSD from $10.46 to $6.54 a minute and it vanished
+        from the universe entirely -- unsubscribed, unmeasured, and flapping
+        back on the next refresh.  That is the opposite of what this measure
+        was written to do.  A pair we cannot size today is refused at
+        allocation, with a reason, while its data keeps flowing.
 
         Unmeasured (``0.0``) counts as OK: a missing measurement must not
         silently delist a pair that has always been fine.
+        """
+        if self.capacity_max_usd <= 0.0:
+            return True
+        return self.capacity_max_usd >= max(self.info.min_notional, 0.0)
+
+    @property
+    def sizable(self) -> bool:
+        """Whether the pair can absorb the smallest order *we* are willing to send.
+
+        Separate from :attr:`capacity_ok` on purpose: ``capacity_ok`` decides
+        whether the pair exists for us at all, this decides whether we can take
+        a position in it right now.  A pair that is listed, subscribed and
+        measured but momentarily too thin for our floor is a normal state, not
+        a delisting.
         """
         if self.capacity_max_usd <= 0.0:
             return True
@@ -244,6 +269,7 @@ class UniverseEntry:
             "capacity_max_usd": self.capacity_max_usd,
             "min_tradable_usd": self.min_tradable_usd,
             "capacity_ok": self.capacity_ok,
+            "sizable": self.sizable,
         }
 
 
@@ -731,9 +757,30 @@ class UniverseSelector:
         return list(best.values())
 
     def _prefer(self, a: UniverseEntry, b: UniverseEntry, *, key: str = "score") -> bool:
-        """True if ``a`` should replace ``b``: score, then quote order, then name."""
-        if getattr(a, key) != getattr(b, key):
-            return getattr(a, key) > getattr(b, key)
+        """True if ``a`` should replace ``b``: score, then cost, then quote, then name.
+
+        The score comparison has a **dead band**, and it is load-bearing rather
+        than cosmetic.  The two legs of one base asset routinely score within a
+        fraction of a percent of each other -- measured 2026-09-12, SOLUSD
+        0.2982 against SOLUSDT 0.2941 -- so a strict ``>`` lets ordinary tick
+        noise flip which leg is chosen on every refresh.  Each flip changes the
+        subscribed symbol set, which drops the book we had been maintaining and
+        leaves the newcomer with a stale one until it warms; that showed up
+        live as a universe oscillating 4 -> 5 -> 4 symbols every fifteen
+        minutes with ABNORMAL regimes behind it.
+
+        Inside the dead band the **cheaper round trip** wins, which is also the
+        answer we want on the merits: a 4.9 bps leg and a 21.0 bps leg of the
+        same asset are not the same opportunity, and preferring the cheap one
+        is both stable and correct.
+        """
+        a_score, b_score = getattr(a, key), getattr(b, key)
+        if abs(a_score - b_score) > DEDUPE_DEAD_BAND * max(abs(b_score), 1e-9):
+            return a_score > b_score
+        if a.round_trip_bps != b.round_trip_bps:
+            return a.round_trip_bps < b.round_trip_bps
+        if a.fee_tier0 != b.fee_tier0:
+            return a.fee_tier0
         quotes = self.settings.exchange.quote_assets
         rank_a = _index_or_last(quotes, a.info.quote_asset)
         rank_b = _index_or_last(quotes, b.info.quote_asset)

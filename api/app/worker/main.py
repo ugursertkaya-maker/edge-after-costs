@@ -184,6 +184,8 @@ class TradingWorker:
 
         self.symbol_info: dict[str, SymbolInfo] = {}
         self.universe: list[UniverseEntry] = []
+        #: COLD tier: ranked and reported, never subscribed, never evaluated.
+        self.watchlist: list[UniverseEntry] = []
         self.scanner: list[ScannerRow] = []
         self.stats = WorkerStats()
         self._expectancy_cache: dict[tuple[str, str, str], tuple[float, int]] = {}
@@ -316,7 +318,6 @@ class TradingWorker:
         if not entries:
             log.warning("universe refresh returned nothing; keeping previous set")
             return
-        self.universe = entries
         # COLD is a watchlist, not a subscription. The old `tier != "hot"` put
         # every cold pair on the websocket, which is exactly the CPU the tiering
         # exists to avoid on a 2-vCPU host.
@@ -329,10 +330,30 @@ class TradingWorker:
             hot = [e.symbol for e in entries if e.tier == "hot"]
             warm = [e.symbol for e in entries if e.tier == "warm"]
         self.feed.set_universe(hot, warm)
-        await self._seed_bars([e.symbol for e in entries])
+        # COLD is ranked and reported but NEVER evaluated, because it is never
+        # subscribed. Leaving it in ``self.universe`` put unsubscribed symbols
+        # through the strategy loop with books ten minutes old, which produced
+        # nonsense features, an ABNORMAL regime, and a stream of meaningless
+        # ABNORMAL_VOLATILITY rejections that polluted the scanner, the funnel
+        # and every reject counter downstream.
+        self.watchlist = [e for e in entries if e.tier == "cold"]
+        self.universe = [e for e in entries if e.tier != "cold"]
+        await self._seed_bars([e.symbol for e in self.universe])
         self._universe_refreshed_ms = now_ms()
-        log.info("universe: %d symbols (hot=%s)", len(entries), ",".join(hot))
+        log.info(
+            "universe: %d evaluated (hot=%s warm=%s) + %d cold watchlist",
+            len(self.universe), ",".join(hot), ",".join(warm), len(self.watchlist),
+        )
         self._persist(lambda session, repo: repo.upsert_markets(session, entries))
+        if not self.universe:
+            # Every pair demoted to COLD means nothing is subscribed and the
+            # scanner has nothing to do. Loud, because it looks identical to a
+            # stopped bot from outside.
+            log.error(
+                "NO EVALUABLE SYMBOLS: %d pairs ranked, all COLD. "
+                "Scanning continues but no candidate can be produced.",
+                len(self.watchlist),
+            )
 
     async def _seed_bars(self, symbols: list[str]) -> None:
         """Warm the feature engine from REST history.

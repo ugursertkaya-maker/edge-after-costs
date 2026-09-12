@@ -83,15 +83,33 @@ class TestCapacityOk:
     def test_passes_when_the_pair_absorbs_the_minimum_order(self):
         e = _entry(capacity_max_usd=41.32, min_tradable_usd=10.0)
         assert e.capacity_ok is True
+        assert e.sizable is True
 
     def test_fails_only_when_untradable_at_any_size(self):
-        """ADAUSD: absorbs $5.61 a minute against a $10 minimum order.
+        """Delisting is judged against the VENUE minimum, not our floor.
 
-        This is the explanation for a real observation -- ADAUSD sat in the HOT
-        tier for the whole of Phase 5 and never once traded.
+        ADAUSD absorbs $5.61 a minute against our $10 floor -- too thin to
+        size, but the venue's own minimum is $1 and the pair trades fine. It
+        stays listed, subscribed and measured; the allocator refuses it.
         """
-        e = _entry(symbol="ADAUSD", capacity_max_usd=5.61, min_tradable_usd=10.0)
+        e = _entry(symbol="ADAUSD", info=_info("ADAUSD", min_notional=1.0),
+                   capacity_max_usd=5.61, min_tradable_usd=10.0)
+        assert e.capacity_ok is True
+        assert e.sizable is False
+
+    def test_delists_only_when_the_venue_minimum_cannot_fit(self):
+        """AVAXUSD: $0.33 a minute against a $1.00 venue minimum."""
+        e = _entry(symbol="AVAXUSD", info=_info("AVAXUSD", min_notional=1.0),
+                   capacity_max_usd=0.33, min_tradable_usd=10.0)
         assert e.capacity_ok is False
+
+    def test_a_weekend_lull_does_not_delist_a_pair(self):
+        """The 2026-09-12 incident: SOLUSD fell $10.46 -> $6.54 a minute and
+        vanished from the universe entirely, unsubscribed and unmeasured."""
+        e = _entry(symbol="SOLUSD", info=_info("SOLUSD", min_notional=1.0),
+                   capacity_max_usd=6.54, min_tradable_usd=10.0)
+        assert e.capacity_ok is True, "a quiet session must not delist a pair"
+        assert e.sizable is False, "but we still cannot size it right now"
 
     def test_exactly_at_the_floor_is_tradable(self):
         assert _entry(capacity_max_usd=10.0, min_tradable_usd=10.0).capacity_ok is True
@@ -131,3 +149,50 @@ class TestSelectorPopulatesCapacity:
         assert entry.capacity_share == pytest.approx(expected)
         assert entry.capacity_max_usd == pytest.approx(capacity_max_usd(1_190_091.0))
         assert entry.min_tradable_usd >= settings.risk.min_notional_usd
+
+
+class TestDedupeIsStableAndPrefersTheCheapLeg:
+    """The 2026-09-12 incident: the universe oscillated every fifteen minutes.
+
+    SOLUSD scored 0.2982 and SOLUSDT 0.2941 -- a 1.4% gap. A strict `>` let
+    tick noise decide which leg was subscribed on each refresh, and every flip
+    dropped a warm book and installed a stale one.
+    """
+
+    def _leg(self, symbol: str, quote: str, *, net_score: float,
+             trip: float, tier0: bool) -> UniverseEntry:
+        return _entry(
+            symbol=symbol,
+            info=SymbolInfo(symbol=symbol, base_asset="SOL", quote_asset=quote,
+                            status="TRADING", step_size=1e-3, tick_size=0.01,
+                            min_qty=1e-3, min_notional=1.0),
+            net_score=net_score, round_trip_bps=trip, fee_tier0=tier0,
+        )
+
+    def test_a_near_tie_is_broken_by_cost_not_by_noise(self):
+        from app.config import get_settings
+        from app.universe import UniverseSelector
+
+        sel = UniverseSelector(settings=get_settings())
+        usd = self._leg("SOLUSD", "USD", net_score=0.2982, trip=4.9, tier0=True)
+        usdt = self._leg("SOLUSDT", "USDT", net_score=0.2941, trip=21.0, tier0=False)
+
+        assert sel._prefer(usd, usdt, key="net_score") is True
+        # And the decisive part: even when noise puts the expensive leg ahead,
+        # the cheap one still wins, so the choice does not oscillate.
+        usdt_ahead = self._leg("SOLUSDT", "USDT", net_score=0.3010,
+                               trip=21.0, tier0=False)
+        assert sel._prefer(usdt_ahead, usd, key="net_score") is False
+        assert sel._prefer(usd, usdt_ahead, key="net_score") is True
+
+    def test_a_genuinely_better_pair_still_wins(self):
+        """The dead band must not freeze a real difference out."""
+        from app.config import get_settings
+        from app.universe import UniverseSelector
+
+        sel = UniverseSelector(settings=get_settings())
+        cheap_but_dead = self._leg("SOLUSD", "USD", net_score=0.10,
+                                   trip=4.9, tier0=True)
+        clearly_better = self._leg("SOLUSDT", "USDT", net_score=0.40,
+                                   trip=21.0, tier0=False)
+        assert sel._prefer(clearly_better, cheap_but_dead, key="net_score") is True
