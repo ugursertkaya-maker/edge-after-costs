@@ -3432,3 +3432,1013 @@ table.tbl-pred tbody tr:hover td.stick {
   line-height: 1.5;
   color: var(--fg-4);
 }
+
+/* ==========================================================================
+   PHASE 5 — capital utilisation
+   --------------------------------------------------------------------------
+   Two panels at the very top of the terminal and one audit at the bottom.
+   The rule that shapes all three: deployed-vs-idle has to read as a single
+   proportion against its target, and the six idle reasons have to read as
+   three different KINDS of finding rather than as six slices of one pie.
+
+   Colour follows the diagnosis, not the reason list:
+     info  (blue)  — supply: there was nothing to buy, more markets help
+     amber (warn)  — venue: there were candidates, costs ate them, more
+                     markets do not help
+     slate         — policy: a decision, not a failure
+   ========================================================================== */
+
+.cap {
+  display: flex;
+  flex-direction: column;
+  gap: 13px;
+}
+
+/* ------------------------------------------------------ the three figures */
+.cap-heads {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 1px;
+  background: var(--line);
+  border: 1px solid var(--line);
+}
+
+.cap-cell {
+  background: var(--bg-1);
+  padding: 11px 13px 12px;
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+  min-width: 0;
+}
+
+.cap-cell.is-dep {
+  background: linear-gradient(180deg, rgba(53, 210, 154, 0.06), var(--bg-1));
+}
+
+.cap-cell.is-idle {
+  background: linear-gradient(180deg, var(--bg-2), var(--bg-1));
+}
+
+/* The idle figure is the one allowed to shout, and only when the book is
+   actually under-deployed — an idle balance inside the target band is not a
+   finding and is not coloured like one. */
+.cap-cell.is-idle.is-under {
+  background: linear-gradient(180deg, var(--warn-wash), var(--bg-1));
+}
+
+.cap-cell.is-idle.is-under .cap-v {
+  color: var(--warn);
+}
+
+.cap-k {
+  font-family: var(--font-mono);
+  font-size: 9px;
+  letter-spacing: 0.11em;
+  text-transform: uppercase;
+  color: var(--fg-4);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.cap-v {
+  font-family: var(--font-mono);
+  font-variant-numeric: tabular-nums slashed-zero;
+  font-size: 27px;
+  font-weight: 600;
+  line-height: 1.08;
+  color: var(--fg-0);
+}
+
+.cap-v.pos {
+  color: var(--pos);
+}
+
+.cap-v.is-empty {
+  color: var(--fg-4);
+}
+
+.cap-n {
+  font-size: 10px;
+  color: var(--fg-3);
+  min-height: 13px;
+}
+
+/* ---------------------------------------------------- the deployment meter */
+/* One track, one fill, one band. The distance between the fill and the band
+   is the finding, so both live on the same line and neither is in a caption. */
+.cap-meter {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  border: 1px solid var(--line);
+  background: linear-gradient(180deg, var(--bg-2), var(--bg-1));
+  padding: 11px 13px 14px;
+}
+
+.cap-legend {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px 16px;
+  font-size: 10.5px;
+  color: var(--fg-3);
+}
+
+.cap-leg {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.cap-leg i {
+  width: 8px;
+  height: 8px;
+  flex: none;
+  background: var(--fg-4);
+}
+
+.cap-leg b {
+  font-family: var(--font-mono);
+  font-variant-numeric: tabular-nums slashed-zero;
+  color: var(--fg-1);
+  font-weight: 600;
+}
+
+.cap-leg.is-dep i {
+  background: var(--pos);
+}
+
+.cap-leg.is-idle i {
+  background: var(--bg-4);
+  border: 1px solid var(--line-strong);
+}
+
+.cap-leg.is-band i {
+  background: repeating-linear-gradient(
+    135deg,
+    rgba(90, 169, 230, 0.5) 0 2px,
+    transparent 2px 4px
+  );
+  border: 1px solid rgba(90, 169, 230, 0.5);
+}
+
+.cap-leg.is-target i {
+  width: 2px;
+  height: 11px;
+  background: var(--fg-0);
+}
+
+.cap-track {
+  position: relative;
+  height: 30px;
+  background: var(--bg-0);
+  border: 1px solid var(--line);
+}
+
+/* The Phase 5 target band, drawn on the track itself. */
+.cap-band {
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  background: repeating-linear-gradient(
+    135deg,
+    rgba(90, 169, 230, 0.16) 0 3px,
+    transparent 3px 7px
+  );
+  border-left: 1px solid rgba(90, 169, 230, 0.45);
+  border-right: 1px solid rgba(90, 169, 230, 0.45);
+}
+
+.cap-fill {
+  position: absolute;
+  left: 0;
+  top: 0;
+  bottom: 0;
+  background: var(--fg-3);
+  min-width: 1px;
+}
+
+.cap-fill.is-unknown {
+  background: transparent;
+}
+
+.cap-meter.is-under .cap-fill {
+  background: linear-gradient(180deg, #f0b429, #c08c12);
+}
+
+.cap-meter.is-in .cap-fill {
+  background: linear-gradient(180deg, var(--pos), var(--pos-dim));
+}
+
+.cap-meter.is-over .cap-fill {
+  background: linear-gradient(180deg, #f0b429, #c08c12);
+}
+
+.cap-meter.is-full .cap-fill {
+  background: linear-gradient(180deg, var(--neg), var(--neg-dim));
+}
+
+/* The reported target, if there is one. Drawn over the fill because it is the
+   thing the fill is being compared to. */
+.cap-target {
+  position: absolute;
+  top: -2px;
+  bottom: -2px;
+  width: 2px;
+  margin-left: -1px;
+  background: var(--fg-0);
+  box-shadow: 0 0 0 1px var(--bg-0);
+}
+
+.cap-scale {
+  position: relative;
+  height: 12px;
+}
+
+.cap-tick {
+  position: absolute;
+  top: 0;
+  transform: translateX(-50%);
+  font-family: var(--font-mono);
+  font-variant-numeric: tabular-nums slashed-zero;
+  font-size: 9px;
+  color: var(--fg-4);
+  white-space: nowrap;
+}
+
+.cap-tick.is-first {
+  transform: none;
+}
+
+.cap-tick.is-last {
+  transform: translateX(-100%);
+}
+
+/* ------------------------------------------------------------ the reading */
+.cap-read {
+  border: 1px solid var(--line);
+  border-left-width: 2px;
+  background: var(--bg-2);
+  padding: 8px 11px 9px;
+  font-size: 11.5px;
+  line-height: 1.6;
+  color: var(--fg-2);
+}
+
+.cap-read.is-under {
+  border-left-color: var(--warn);
+}
+
+.cap-read.is-in {
+  border-left-color: var(--pos);
+}
+
+.cap-read.is-over {
+  border-left-color: var(--warn);
+}
+
+.cap-read.is-full {
+  border-left-color: var(--neg);
+}
+
+.cap-warn {
+  border: 1px solid rgba(255, 95, 109, 0.4);
+  background: var(--neg-wash);
+  padding: 7px 10px 8px;
+  font-size: 10.5px;
+  line-height: 1.55;
+  color: var(--fg-1);
+}
+
+.cap-note {
+  font-size: 10px;
+  line-height: 1.5;
+  color: var(--fg-4);
+  padding-top: 6px;
+  border-top: 1px solid var(--line-soft);
+}
+
+/* ==================================================== §02 — why it is idle */
+.idle {
+  display: flex;
+  flex-direction: column;
+  gap: 11px;
+}
+
+.idle-head {
+  display: flex;
+  align-items: baseline;
+  flex-wrap: wrap;
+  gap: 4px 9px;
+}
+
+.idle-total {
+  font-family: var(--font-mono);
+  font-variant-numeric: tabular-nums slashed-zero;
+  font-size: 30px;
+  font-weight: 600;
+  line-height: 1.05;
+  color: var(--fg-0);
+}
+
+.idle-total-k {
+  font-family: var(--font-mono);
+  font-size: 9.5px;
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+  color: var(--fg-4);
+}
+
+.idle-total-n {
+  font-size: 10px;
+  color: var(--warn);
+}
+
+.idle-mismatch {
+  border: 1px solid rgba(240, 180, 41, 0.42);
+  background: var(--warn-wash);
+  padding: 8px 11px 9px;
+  font-size: 10.5px;
+  line-height: 1.6;
+  color: var(--fg-1);
+}
+
+.idle-mismatch b {
+  font-family: var(--font-mono);
+  font-variant-numeric: tabular-nums slashed-zero;
+  color: var(--fg-0);
+}
+
+/* ------------------------------------------------------- dominant reason */
+/* The whole point of the panel in one block: which reason holds the most
+   dollars, and what that particular reason licenses you to conclude. */
+.idom {
+  border: 1px solid var(--line);
+  border-left-width: 3px;
+  background: linear-gradient(180deg, var(--bg-2), var(--bg-1));
+  padding: 11px 13px 12px;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.idom.is-supply {
+  border-left-color: var(--info);
+  background: linear-gradient(180deg, var(--info-wash), var(--bg-1));
+}
+
+.idom.is-venue {
+  border-left-color: var(--warn);
+  background: linear-gradient(180deg, var(--warn-wash), var(--bg-1));
+}
+
+.idom.is-policy {
+  border-left-color: var(--fg-3);
+}
+
+.idom.is-other {
+  border-left-color: var(--fg-4);
+}
+
+.idom-eye {
+  font-family: var(--font-mono);
+  font-size: 9px;
+  letter-spacing: 0.13em;
+  text-transform: uppercase;
+  color: var(--fg-4);
+}
+
+.idom-head {
+  display: flex;
+  align-items: baseline;
+  flex-wrap: wrap;
+  gap: 4px 12px;
+}
+
+.idom-name {
+  font-family: var(--font-mono);
+  font-size: 17px;
+  font-weight: 600;
+  letter-spacing: 0.02em;
+  text-transform: uppercase;
+  color: var(--fg-0);
+}
+
+.idom-v {
+  margin-left: auto;
+  font-family: var(--font-mono);
+  font-variant-numeric: tabular-nums slashed-zero;
+  font-size: 22px;
+  font-weight: 600;
+  line-height: 1;
+  color: var(--fg-0);
+}
+
+.idom-p {
+  font-family: var(--font-mono);
+  font-variant-numeric: tabular-nums slashed-zero;
+  font-size: 12px;
+  color: var(--fg-3);
+}
+
+.idom-x {
+  font-size: 11px;
+  line-height: 1.55;
+  color: var(--fg-2);
+}
+
+.idom-verdict {
+  font-size: 11.5px;
+  line-height: 1.55;
+  font-weight: 600;
+  color: var(--fg-0);
+  padding-top: 6px;
+  border-top: 1px solid var(--line-soft);
+}
+
+.idom.is-supply .idom-verdict {
+  color: var(--info);
+}
+
+.idom.is-venue .idom-verdict {
+  color: var(--warn);
+}
+
+.idom-tie {
+  font-size: 10.5px;
+  line-height: 1.55;
+  color: var(--fg-3);
+}
+
+.idom-tie b {
+  color: var(--fg-1);
+}
+
+/* ------------------------------------------------------------ group stack */
+.idle-stack {
+  display: flex;
+  height: 20px;
+  gap: 1px;
+  background: var(--bg-0);
+  border: 1px solid var(--line);
+}
+
+.idle-seg {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 0;
+  overflow: hidden;
+  font-family: var(--font-mono);
+  font-size: 9px;
+  font-weight: 600;
+  color: var(--bg-0);
+  cursor: help;
+}
+
+.idle-seg.is-supply {
+  background: var(--info);
+}
+
+.idle-seg.is-venue {
+  background: var(--warn);
+}
+
+.idle-seg.is-policy {
+  background: var(--fg-3);
+}
+
+.idle-seg.is-other {
+  background: var(--fg-4);
+}
+
+.idle-groups {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(210px, 1fr));
+  gap: 1px;
+  background: var(--line);
+  border: 1px solid var(--line);
+}
+
+.igrp {
+  background: var(--bg-1);
+  padding: 9px 11px 10px;
+  display: flex;
+  flex-direction: column;
+  gap: 5px;
+  min-width: 0;
+}
+
+.igrp-head {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+}
+
+.igrp-head i {
+  width: 8px;
+  height: 8px;
+  flex: none;
+  background: var(--fg-4);
+}
+
+.igrp.is-supply .igrp-head i {
+  background: var(--info);
+}
+
+.igrp.is-venue .igrp-head i {
+  background: var(--warn);
+}
+
+.igrp.is-policy .igrp-head i {
+  background: var(--fg-3);
+}
+
+.igrp-k {
+  font-family: var(--font-mono);
+  font-size: 9px;
+  letter-spacing: 0.08em;
+  color: var(--fg-2);
+  min-width: 0;
+}
+
+.igrp-v {
+  margin-left: auto;
+  font-family: var(--font-mono);
+  font-variant-numeric: tabular-nums slashed-zero;
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--fg-0);
+}
+
+.igrp-x {
+  font-size: 10px;
+  line-height: 1.5;
+  color: var(--fg-3);
+}
+
+.igrp-verdict {
+  font-size: 10px;
+  line-height: 1.5;
+  color: var(--fg-2);
+  padding-top: 5px;
+  border-top: 1px solid var(--line-soft);
+}
+
+/* --------------------------------------------------------- reason by reason */
+.idle-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.idle-row {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) 96px 84px 44px;
+  align-items: center;
+  gap: 9px;
+}
+
+.idle-k {
+  font-size: 11px;
+  color: var(--fg-1);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  cursor: help;
+  padding-left: 8px;
+  border-left: 2px solid var(--fg-4);
+}
+
+.idle-row.is-supply .idle-k {
+  border-left-color: var(--info);
+}
+
+.idle-row.is-venue .idle-k {
+  border-left-color: var(--warn);
+}
+
+.idle-row.is-policy .idle-k {
+  border-left-color: var(--fg-3);
+}
+
+.idle-bar {
+  height: 9px;
+  background: var(--bg-3);
+  border: 1px solid var(--line-soft);
+}
+
+.idle-fill {
+  display: block;
+  height: 100%;
+  background: var(--fg-4);
+}
+
+.idle-fill.is-supply {
+  background: var(--info);
+}
+
+.idle-fill.is-venue {
+  background: var(--warn);
+}
+
+.idle-fill.is-policy {
+  background: var(--fg-3);
+}
+
+.idle-n {
+  font-family: var(--font-mono);
+  font-variant-numeric: tabular-nums slashed-zero;
+  font-size: 11.5px;
+  text-align: right;
+  color: var(--fg-0);
+}
+
+.idle-p {
+  font-family: var(--font-mono);
+  font-variant-numeric: tabular-nums slashed-zero;
+  font-size: 10px;
+  text-align: right;
+  color: var(--fg-4);
+}
+
+.idle-missing {
+  padding-top: 7px;
+  border-top: 1px solid var(--line-soft);
+  font-size: 10px;
+  line-height: 1.5;
+  color: var(--fg-4);
+}
+
+/* The six-reason reference, used in both empty states. */
+.iref {
+  font-weight: 600;
+  color: var(--fg-1);
+  border-bottom: 1px solid var(--fg-4);
+}
+
+.iref.is-supply {
+  border-bottom-color: var(--info);
+}
+
+.iref.is-venue {
+  border-bottom-color: var(--warn);
+}
+
+.iref.is-policy {
+  border-bottom-color: var(--fg-3);
+}
+
+/* ================================================ §16 — missed opportunity */
+/* Post-hoc analysis using future data. The strip is not decoration: it is the
+   only thing standing between an audit and someone reading it as a signal. */
+.phoc {
+  display: flex;
+  align-items: flex-start;
+  gap: 9px;
+  border: 1px dashed rgba(148, 163, 184, 0.32);
+  background: var(--bg-2);
+  padding: 7px 10px 8px;
+}
+
+.phoc-tag {
+  flex: none;
+  font-family: var(--font-mono);
+  font-size: 9px;
+  font-weight: 700;
+  letter-spacing: 0.12em;
+  color: var(--bg-0);
+  background: var(--fg-3);
+  padding: 2px 6px;
+}
+
+.phoc-x {
+  font-size: 10.5px;
+  line-height: 1.55;
+  color: var(--fg-3);
+}
+
+.mo {
+  display: flex;
+  flex-direction: column;
+  gap: 11px;
+}
+
+.mo-head {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: stretch;
+  gap: 1px;
+  background: var(--line);
+  border: 1px solid var(--line);
+  border-left-width: 3px;
+  border-left-color: var(--fg-4);
+}
+
+.mo-head.is-saved {
+  border-left-color: var(--pos);
+}
+
+.mo-head.is-noise {
+  border-left-color: var(--fg-3);
+}
+
+.mo-head.is-leaking,
+.mo-head.is-bleeding {
+  border-left-color: var(--warn);
+}
+
+.mo-figure {
+  flex: 1 1 220px;
+  min-width: 0;
+  background: var(--bg-1);
+  padding: 10px 13px 11px;
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+}
+
+.mo-k {
+  font-family: var(--font-mono);
+  font-size: 9px;
+  letter-spacing: 0.11em;
+  text-transform: uppercase;
+  color: var(--fg-4);
+}
+
+.mo-v {
+  font-family: var(--font-mono);
+  font-variant-numeric: tabular-nums slashed-zero;
+  font-size: 26px;
+  font-weight: 600;
+  line-height: 1.08;
+  color: var(--fg-0);
+}
+
+.mo-v.is-empty {
+  color: var(--fg-4);
+}
+
+.mo-head.is-saved .mo-v {
+  color: var(--pos);
+}
+
+.mo-head.is-leaking .mo-v,
+.mo-head.is-bleeding .mo-v {
+  color: var(--warn);
+}
+
+.mo-n {
+  font-size: 10px;
+  color: var(--fg-3);
+}
+
+.mo-verdict {
+  flex: 2 1 300px;
+  min-width: 0;
+  background: var(--bg-1);
+  padding: 10px 13px 11px;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.mo-badge {
+  align-self: flex-start;
+  font-family: var(--font-mono);
+  font-size: 10px;
+  font-weight: 700;
+  letter-spacing: 0.1em;
+  padding: 3px 8px;
+  color: var(--bg-0);
+  background: var(--fg-3);
+}
+
+.mo-badge.is-saved {
+  background: var(--pos);
+}
+
+.mo-badge.is-leaking,
+.mo-badge.is-bleeding {
+  background: var(--warn);
+}
+
+.mo-badge.is-absent {
+  background: var(--fg-4);
+}
+
+.mo-note {
+  font-size: 11px;
+  line-height: 1.6;
+  color: var(--fg-2);
+}
+
+.mo-split {
+  display: flex;
+  height: 18px;
+  gap: 1px;
+  background: var(--bg-0);
+  border: 1px solid var(--line);
+}
+
+.mo-seg {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 0;
+  overflow: hidden;
+  font-family: var(--font-mono);
+  font-size: 9px;
+  font-weight: 600;
+  color: var(--bg-0);
+  cursor: help;
+}
+
+.mo-seg.is-correct {
+  background: var(--pos);
+}
+
+.mo-seg.is-missed {
+  background: var(--warn);
+}
+
+.mo-seg.is-other {
+  background: var(--fg-4);
+}
+
+.mo-legend {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px 18px;
+}
+
+.mo-dot {
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  font-size: 10.5px;
+  color: var(--fg-3);
+}
+
+.mo-dot i {
+  width: 8px;
+  height: 8px;
+  flex: none;
+  background: var(--fg-4);
+}
+
+.mo-dot.is-correct i {
+  background: var(--pos);
+}
+
+.mo-dot.is-missed i {
+  background: var(--warn);
+}
+
+.mo-dot b {
+  font-family: var(--font-mono);
+  font-variant-numeric: tabular-nums slashed-zero;
+  color: var(--fg-1);
+}
+
+.mo-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.mo-row {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) 130px 56px 56px 62px;
+  align-items: center;
+  gap: 9px;
+}
+
+.mo-row.is-head {
+  font-family: var(--font-mono);
+  font-size: 8.5px;
+  letter-spacing: 0.09em;
+  text-transform: uppercase;
+  color: var(--fg-4);
+  padding-bottom: 3px;
+  border-bottom: 1px solid var(--line-soft);
+}
+
+.mo-row.is-head .mo-rn,
+.mo-row.is-head .mo-rp {
+  color: var(--fg-4);
+  font-size: 8.5px;
+}
+
+.mo-rk {
+  font-size: 11px;
+  color: var(--fg-1);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  cursor: help;
+}
+
+.mo-rb {
+  display: block;
+  min-width: 0;
+}
+
+/* The row bar is scaled twice on purpose: its LENGTH is how many rejections
+   this reason produced, and its SPLIT is how many of them were right. One
+   without the other turns a reason with three rejections into a headline. */
+.mo-rbar {
+  display: flex;
+  height: 9px;
+  background: var(--bg-3);
+  border: 1px solid var(--line-soft);
+  min-width: 2px;
+}
+
+.mo-rfill {
+  display: block;
+  height: 100%;
+}
+
+.mo-rfill.is-correct {
+  background: var(--pos);
+}
+
+.mo-rfill.is-missed {
+  background: var(--warn);
+}
+
+.mo-rn {
+  font-family: var(--font-mono);
+  font-variant-numeric: tabular-nums slashed-zero;
+  font-size: 11px;
+  text-align: right;
+  color: var(--fg-1);
+}
+
+.mo-rn.is-missed {
+  color: var(--warn);
+}
+
+.mo-rn.is-correct {
+  color: var(--pos);
+}
+
+.mo-rp {
+  font-family: var(--font-mono);
+  font-variant-numeric: tabular-nums slashed-zero;
+  font-size: 10.5px;
+  text-align: right;
+  color: var(--fg-3);
+}
+
+@media (max-width: 980px) {
+  .cap-heads {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
+  .cap-cell:first-child {
+    grid-column: 1 / -1;
+  }
+
+  .cap-v {
+    font-size: 22px;
+  }
+
+  .idle-row {
+    grid-template-columns: minmax(0, 1fr) 64px 76px 40px;
+  }
+
+  .mo-row {
+    grid-template-columns: minmax(0, 1fr) 78px 46px 46px 54px;
+  }
+}
+
+@media (max-width: 680px) {
+  .cap-heads {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .idle-row {
+    grid-template-columns: minmax(0, 1fr) 78px 40px;
+  }
+
+  .idle-row .idle-bar {
+    display: none;
+  }
+
+  .mo-row {
+    grid-template-columns: minmax(0, 1fr) 44px 44px 50px;
+  }
+
+  .mo-row .mo-rb {
+    display: none;
+  }
+}

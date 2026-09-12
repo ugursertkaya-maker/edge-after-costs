@@ -16,7 +16,15 @@ import dataclasses
 import pytest
 
 from app.config import PortfolioConfig, RiskConfig, Settings
-from app.portfolio import CorrelationEngine, PortfolioEngine
+from app.portfolio import (
+    DEFAULT_TARGET_DEPLOYED_PCT,
+    DEPLOYMENT_BANDS,
+    MANY_SMALL_MAX_PCT_EQUITY,
+    TARGET_BOOK_MAX,
+    TARGET_BOOK_MIN,
+    CorrelationEngine,
+    PortfolioEngine,
+)
 from app.types import (
     BookLevel,
     Features,
@@ -475,3 +483,133 @@ def test_engines_share_one_correlation_engine_when_told_to() -> None:
     corr = CorrelationEngine(settings=Settings())
     eng = PortfolioEngine(settings=Settings(), correlation=corr)
     assert eng.correlation is corr
+
+
+# --------------------------------------------------------------------------- #
+# The deployment band (V5)
+# --------------------------------------------------------------------------- #
+#
+# The band says how much of equity *should* be working.  It is arithmetic on
+# the same $500 account: at the default 20% reserve, $400 is deployable, and an
+# 80% band wants $400 working — so band and reserve bind at the same dollar.
+# Everything here is a property of the plan alone; what the allocator does with
+# it, and what happens to the capital the band never reaches, is
+# ``test_idle_attribution.py``.
+
+
+def make_plan(eng: PortfolioEngine, *, candidates: int, cash: float = 500.0,
+              positions=(), target: float | None = None):
+    state = make_state(eng, cash=cash, positions=positions, equity=500.0)
+    return eng.deployment_plan(state, candidates=candidates, target_pct=target)
+
+
+@pytest.mark.parametrize(
+    "target,budget",
+    [(60.0, 300.0), (70.0, 350.0), (80.0, 400.0), (85.0, 400.0)],
+)
+def test_the_band_budget_is_the_tighter_of_the_band_and_the_reserve(
+    target: float, budget: float
+) -> None:
+    """85% asks for $425 and gets $400: the reserve outranks the band.
+
+    Both are ceilings, and a band that could reach past the reserve would make
+    the reserve a suggestion.
+    """
+    plan = make_plan(make_engine(), candidates=10, target=target)
+    assert plan.target_usd == pytest.approx(500.0 * target / 100.0)
+    assert plan.budget_usd == pytest.approx(budget)
+    assert plan.active
+
+
+def test_the_default_band_sits_inside_the_sixty_to_eighty_five_range() -> None:
+    eng = make_engine()
+    assert eng.target_deployed_pct == DEFAULT_TARGET_DEPLOYED_PCT
+    assert 60.0 <= eng.target_deployed_pct <= 85.0
+    assert DEFAULT_TARGET_DEPLOYED_PCT in DEPLOYMENT_BANDS
+    # And it is what allocate() uses when the caller says nothing.
+    assert make_plan(eng, candidates=10).target_pct == DEFAULT_TARGET_DEPLOYED_PCT
+
+
+@pytest.mark.parametrize(
+    "candidates,slots",
+    [(0, 8), (1, 8), (3, 8), (8, 8), (12, 12), (15, 15), (20, 15), (200, 15)],
+)
+def test_the_piece_count_is_clamped_to_the_target_book_size(
+    candidates: int, slots: int
+) -> None:
+    """Three ideas are sized as three pieces of an eight-position book.
+
+    Clamped below at 8 so scarcity cannot turn into concentration, and above at
+    15 so a long list cannot shave the book into slivers that each pay a full
+    round trip for a proportionally smaller edge.
+    """
+    plan = make_plan(make_engine(), candidates=candidates)
+    assert plan.slots == slots
+    assert TARGET_BOOK_MIN <= plan.slots <= TARGET_BOOK_MAX
+    assert plan.per_position_usd == pytest.approx(400.0 / slots)
+
+
+def test_fewer_candidates_never_buys_bigger_positions() -> None:
+    eng = make_engine()
+    sizes = [make_plan(eng, candidates=n).per_position_usd for n in (2, 4, 8, 12, 20)]
+    assert sizes == sorted(sizes, reverse=True), sizes
+    assert max(sizes) == pytest.approx(50.0), "a tenth of equity is the ceiling"
+
+
+def test_a_position_is_never_more_than_a_tenth_of_equity_or_less_than_the_floor() -> None:
+    eng = make_engine()
+    cap = 500.0 * MANY_SMALL_MAX_PCT_EQUITY / 100.0
+    for n in range(1, 40):
+        per = make_plan(eng, candidates=n).per_position_usd
+        assert eng.cfg.min_position_usd - 1e-9 <= per <= cap + 1e-9, n
+        assert per <= eng.cfg.max_position_usd + 1e-9
+
+
+def test_the_hard_cap_still_wins_when_it_is_tighter_than_a_tenth_of_equity() -> None:
+    eng = make_engine({"max_position_usd": 20.0})
+    assert make_plan(eng, candidates=2).per_position_usd == pytest.approx(20.0)
+
+
+def test_a_book_already_at_the_band_has_no_budget_left() -> None:
+    """$400 of a $500 account already working: the 80% band is full."""
+    eng = make_engine()
+    plan = make_plan(
+        eng,
+        candidates=10,
+        cash=100.0,
+        positions=[make_position("a", "ETHUSD", notional=400.0, risk=1.0)],
+    )
+    assert plan.budget_usd == pytest.approx(0.0)
+    assert plan.per_position_usd == 0.0
+    assert not plan.active
+
+
+def test_a_partly_deployed_book_asks_only_for_the_room_that_is_left() -> None:
+    eng = make_engine()
+    plan = make_plan(
+        eng,
+        candidates=10,
+        cash=300.0,
+        positions=[make_position("a", "ETHUSD", notional=200.0, risk=1.0)],
+    )
+    # Band room is $400 - $200 = $200; deployable cash is $300 - $100 = $200.
+    assert plan.budget_usd == pytest.approx(200.0)
+    assert plan.per_position_usd == pytest.approx(20.0)
+
+
+def test_a_zero_band_deploys_nothing_rather_than_falling_back_to_a_default() -> None:
+    plan = make_plan(make_engine(), candidates=10, target=0.0)
+    assert plan.budget_usd == 0.0 and not plan.active
+
+
+def test_an_out_of_range_band_is_clamped_not_believed() -> None:
+    assert make_plan(make_engine(), candidates=10, target=500.0).target_pct == 100.0
+    assert make_plan(make_engine(), candidates=10, target=-5.0).target_pct == 0.0
+
+
+def test_the_plan_serialises_for_the_dashboard() -> None:
+    import json
+
+    payload = make_plan(make_engine(), candidates=10).as_dict()
+    assert json.loads(json.dumps(payload)) == payload
+    assert payload["slots"] == 10

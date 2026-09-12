@@ -886,3 +886,209 @@ Object.assign(DECISION_LABELS, {
   REJECTED: "REDDETTİ",
   SKIP: "İŞLEM YOK",
 });
+
+// --------------------------------------------------------------------------
+// Phase 5 vocabulary — capital utilisation, the idle-capital attribution and
+// the post-hoc missed-opportunity audit.
+//
+// One argument governs this whole block: the six idle reasons are not six
+// flavours of the same thing. Two of them are opposite findings, and which
+// one dominates is the entire Phase 5 question — so the grouping below is a
+// diagnosis, not a colour scheme, and every caller reads it from here rather
+// than re-deciding per panel.
+// --------------------------------------------------------------------------
+
+/** The deployment band the Phase 5 brief sets: 60–85% of equity at work. */
+export const DEPLOY_BAND: readonly [number, number] = [60, 85];
+
+/** Above this the book has no meaningful cash buffer left. */
+export const DEPLOY_CEILING = 95;
+
+/** `IdleReason` in `app/portfolio.py`, in the order the brief lists them. */
+export const IDLE_REASONS: readonly string[] = [
+  "NO_QUALIFIED_SIGNAL",
+  "CORRELATION_LIMIT",
+  "RISK_LIMIT",
+  "LIQUIDITY_LIMIT",
+  "EXECUTION_COST",
+  "CASH_RESERVE",
+];
+
+export const IDLE_REASON_LABELS: Record<string, string> = {
+  NO_QUALIFIED_SIGNAL: "Nitelikli sinyal yok",
+  CORRELATION_LIMIT: "Korelasyon sınırı",
+  RISK_LIMIT: "Risk bütçesi dolu",
+  LIQUIDITY_LIMIT: "Likidite sınırı",
+  EXECUTION_COST: "İcra maliyeti",
+  CASH_RESERVE: "Nakit rezervi",
+};
+
+export const IDLE_REASON_NOTES: Record<string, string> = {
+  NO_QUALIFIED_SIGNAL:
+    "Tarayıcı baktı ve kapıları geçen tek bir aday bulamadı. Bu para, alınacak bir şey olmadığı için boşta.",
+  CORRELATION_LIMIT:
+    "Aday vardı ve nitelikliydi; portföy onu zaten taşıdığı bahsin aynısı saydığı için almadı.",
+  RISK_LIMIT:
+    "Aday vardı; açık risk bütçesi dolu olduğu için üstüne pozisyon eklenmedi.",
+  LIQUIDITY_LIMIT:
+    "Aday vardı; defterin derinliği istenen büyüklüğü taşımadığı için tutar kısıldı veya iptal edildi.",
+  EXECUTION_COST:
+    "Aday vardı ve reddedilmedi çünkü zayıftı — komisyon, makas ve kayma toplamı beklenen hareketin tamamını yediği için reddedildi.",
+  CASH_RESERVE:
+    "Bu para kasıtlı olarak bekletiliyor. Rezerv bir kusur değil, bir karardır ve diğer beş sebeple aynı anlama gelmez.",
+};
+
+/**
+ * The three things a tall bar can mean. This is the reading the Phase 5 brief
+ * is built around:
+ *
+ *   supply — there was nothing to buy. A wider universe is exactly the fix.
+ *   venue  — there were candidates and they were not worth their own costs.
+ *            A wider universe does not help and plausibly hurts: non-Tier-0
+ *            pairs cost ~20 bps a round trip against ~2 bps on Tier-0.
+ *   policy — there were candidates and the portfolio deliberately refused
+ *            them. Says nothing about the venue at all.
+ */
+export type IdleGroup = "supply" | "venue" | "policy";
+
+export const IDLE_REASON_GROUP: Record<string, IdleGroup> = {
+  NO_QUALIFIED_SIGNAL: "supply",
+  EXECUTION_COST: "venue",
+  LIQUIDITY_LIMIT: "venue",
+  CORRELATION_LIMIT: "policy",
+  RISK_LIMIT: "policy",
+  CASH_RESERVE: "policy",
+};
+
+export const IDLE_GROUP_ORDER: readonly IdleGroup[] = ["supply", "venue", "policy"];
+
+export const IDLE_GROUP_LABELS: Record<IdleGroup, string> = {
+  supply: "ALINACAK BİR ŞEY YOKTU",
+  venue: "ADAY VARDI, KENDİ MALİYETİNE DEĞMEDİ",
+  policy: "ADAY VARDI, BİLEREK ALINMADI",
+};
+
+/** The one-line conclusion each group licenses about widening the universe. */
+export const IDLE_GROUP_VERDICTS: Record<IdleGroup, string> = {
+  supply:
+    "Daha fazla piyasa taramak bu parayı çalıştırır: kısıt evrenin darlığıdır.",
+  venue:
+    "Daha fazla piyasa taramak bu parayı ÇALIŞTIRMAZ: kısıt maliyettir ve yeni çiftler daha pahalıdır (~20 bps, Tier-0'da ~2 bps).",
+  policy:
+    "Bu para bir arama sorunu yüzünden değil, portföy kararı yüzünden boşta. Evreni genişletmek bunu değiştirmez.",
+};
+
+export const IDLE_GROUP_NOTES: Record<IdleGroup, string> = {
+  supply:
+    "Tarayıcı çalıştı ve kapıları geçen aday üretemedi — kenarın yokluğu değil, arzın yokluğu.",
+  venue:
+    "Adaylar üretildi ve icra maliyeti ya da defter derinliği onları eledi. Kenar ölçüldü ve maliyetin altında kaldı.",
+  policy:
+    "Adaylar üretildi ve nitelikliydi; korelasyon, risk bütçesi veya nakit rezervi onları kasıtlı olarak dışarıda bıraktı.",
+};
+
+export function idleReasonLabel(v: string | null | undefined): string {
+  if (!v) return DASH;
+  return IDLE_REASON_LABELS[v] ?? v;
+}
+
+export function idleReasonNote(v: string | null | undefined): string | undefined {
+  if (!v) return undefined;
+  return IDLE_REASON_NOTES[v];
+}
+
+export function idleGroup(code: string): IdleGroup | null {
+  return IDLE_REASON_GROUP[code] ?? null;
+}
+
+// ------------------------------------------------------- missed-opportunity
+
+/**
+ * Where the aggregate `missed_net_bps` stops being noise.
+ *
+ * Both numbers are costs from the Phase 5 brief's own table rather than taste:
+ * a Tier-0 round trip is ~2 bps, so anything inside that is smaller than the
+ * cost of acting on it; a non-Tier-0 round trip is ~20 bps, so a figure that
+ * large means the refusals gave up a whole round trip's worth of move.
+ */
+export const MISSED_NOISE_BPS = 2;
+export const MISSED_ALARM_BPS = 20;
+
+export type MissedVerdictKind = "saved" | "noise" | "leaking" | "bleeding" | "absent";
+
+export interface MissedVerdict {
+  kind: MissedVerdictKind;
+  /** The verdict in three or four words. */
+  text: string;
+  /** Why, in one line. */
+  note: string;
+}
+
+/**
+ * Read the aggregate. `missed_net_bps` is what the REFUSED moves went on to
+ * do, so its sign is the calibration reading and the sign is easy to invert by
+ * accident: negative means the refusals avoided losses and the gate earned its
+ * keep; positive means the gate refused money that was there.
+ */
+export function missedVerdict(value: Numeric): MissedVerdict {
+  const n = toNum(value);
+  if (n === null) {
+    return {
+      kind: "absent",
+      text: "ÖLÇÜLMEDİ",
+      note: "Toplam kaçırılan hareket bildirilmedi. Ölçülmemiş bir denetim, temiz bir denetim değildir.",
+    };
+  }
+  if (n <= -MISSED_NOISE_BPS) {
+    return {
+      kind: "saved",
+      text: "KAPI PARA KAZANDIRDI",
+      note: "Reddedilen hareketler maliyet sonrası eksiye gitti: bu retler zarardan korudu, fırsat kaçırmadı.",
+    };
+  }
+  if (Math.abs(n) < MISSED_NOISE_BPS) {
+    return {
+      kind: "noise",
+      text: "GÜRÜLTÜ SINIRINDA",
+      note: `Toplam, tek bir Tier-0 gidiş-dönüş maliyetinin (~${MISSED_NOISE_BPS} bps) altında. Bu farkı kovalamak, kovalamanın maliyetinden ucuz değildir.`,
+    };
+  }
+  if (n < MISSED_ALARM_BPS) {
+    return {
+      kind: "leaking",
+      text: "KAPI PARA BIRAKIYOR",
+      note: "Reddedilen hareketler maliyet sonrası artıya gitti: kapı, gerçekten orada olan bir kenarı geri çeviriyor.",
+    };
+  }
+  return {
+    kind: "bleeding",
+    text: "KAPI FAZLA SIKI",
+    note: `Reddedilen hareketler tam bir Tier-0 dışı gidiş-dönüş maliyetinden (~${MISSED_ALARM_BPS} bps) fazlasını kazandırmış. Bu ölçekte eleme, korunma değil kayıptır.`,
+  };
+}
+
+/** Tone class for a missed-audit verdict. */
+export function missedVerdictTone(kind: MissedVerdictKind): string {
+  switch (kind) {
+    case "saved":
+      return "is-saved";
+    case "noise":
+      return "is-noise";
+    case "leaking":
+      return "is-leaking";
+    case "bleeding":
+      return "is-bleeding";
+    default:
+      return "is-absent";
+  }
+}
+
+/** Percentage points, as a difference rather than as a level: "75,8 puan". */
+export function formatPoints(value: Numeric, digits = 1): string {
+  const n = toNum(value);
+  if (n === null) return DASH;
+  return `${n.toLocaleString("en-US", {
+    minimumFractionDigits: digits,
+    maximumFractionDigits: digits,
+  })} puan`;
+}

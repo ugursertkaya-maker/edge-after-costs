@@ -358,6 +358,16 @@ export interface DashboardPayload {
    * never be a model here at all. The panels say so rather than waiting.
    */
   predictive?: PredictiveState | null;
+
+  // ---- Phase 5 -------------------------------------------------------------
+  /**
+   * Capital utilisation and the idle-capital attribution. Absent until the
+   * portfolio layer is extended to serve it; the panels render that absence
+   * as "not yet measured" rather than as a fully idle book.
+   */
+  capital?: CapitalState | null;
+  /** The post-hoc missed-opportunity audit. Never a live signal. */
+  missed?: MissedAudit | null;
 }
 
 export interface HealthResponse {
@@ -658,4 +668,98 @@ export interface PredictiveState {
   candidates?: PredictiveCandidate[] | null;
   rejections?: RejectionTally | null;
   explanations?: PredictiveExplanation[] | null;
+}
+
+// ===========================================================================
+// PHASE 5 — capital utilisation and the idle-capital attribution
+// ---------------------------------------------------------------------------
+// Every field below is OPTIONAL and the whole `capital` / `missed` pair is
+// expected to be absent until the worker that fills them lands. The rule from
+// V1 does not change: an absent measurement renders as an em dash, never as a
+// zero — "no idle capital" and "idle capital was never attributed" are
+// opposite statements and the panels keep them apart.
+//
+// The distinction this section exists to protect: the six idle reasons do not
+// mean the same kind of thing. `NO_QUALIFIED_SIGNAL` says there was nothing
+// to buy — a wider universe is the fix. `EXECUTION_COST` says there were
+// candidates and they were not worth their own round trip — a wider universe
+// makes that strictly worse, because every non-Tier-0 pair costs ~20 bps
+// against ~2 bps on Tier-0. Phase 5 is settled by which of the two dominates,
+// so the dashboard never shows them as six interchangeable slices.
+// ===========================================================================
+
+/** `IdleReason` in `app/portfolio.py`. */
+export type IdleReasonCode =
+  | "NO_QUALIFIED_SIGNAL"
+  | "CORRELATION_LIMIT"
+  | "RISK_LIMIT"
+  | "LIQUIDITY_LIMIT"
+  | "EXECUTION_COST"
+  | "CASH_RESERVE";
+
+/**
+ * `{IdleReason: usd}` — **dollars, not percentages of a percentage.**
+ *
+ * Kept as an open record rather than a closed map, like `RejectionTally`, so a
+ * reason the worker adds later still reaches the screen instead of vanishing.
+ * The contract guarantees these sum to `idle_usd`; when a payload arrives
+ * where they do not, the panel prints the discrepancy rather than hiding it
+ * behind a rounded total.
+ */
+export type IdleByReason = Record<string, number | null | undefined>;
+
+/**
+ * `IdleAttribution.as_dict()` plus the utilisation readings around it.
+ *
+ * Percentages follow the house convention and are expressed in POINTS
+ * (`1.0 === 1%`), exactly as `PortfolioState.open_risk_pct` is.
+ */
+export interface CapitalState {
+  equity?: Num;
+  /** Notional currently at work. */
+  deployed_usd?: Num;
+  /** Deployed / equity, in points. */
+  deployed_pct?: Num;
+  idle_usd?: Num;
+  idle_pct?: Num;
+  /** The deployment target the run is aiming at, in points. */
+  target_pct?: Num;
+  open_positions?: Num;
+  /** Candidates that cleared every gate this cycle. */
+  qualified_opportunities?: Num;
+  /** Candidates that did not. */
+  rejected_opportunities?: Num;
+  /** Traded notional per day / equity. */
+  turnover_per_day?: Num;
+  avg_position_usd?: Num;
+  avg_holding_seconds?: Num;
+  net_pnl_today?: Num;
+  /** NET P&L per $100 of capital actually put to work. */
+  net_pnl_per_100_deployed?: Num;
+  idle_by_reason?: IdleByReason | null;
+}
+
+/** `[missed_winners, correct_rejections]` for one rejection reason. */
+export type MissedPair = [number, number];
+
+/**
+ * `MissedAudit` from `app/research/missed.py`.
+ *
+ * This is POST-HOC analysis computed with future data: it asks what a refused
+ * candidate went on to do, which is knowable only afterwards. It never reaches
+ * an entry decision — any path where it could is a leak and a defect — and the
+ * panel says so in its own line so nobody reads it as a live signal.
+ */
+export interface MissedAudit {
+  windows?: Num;
+  rejections_examined?: Num;
+  /** Refusals that would have paid, after costs. */
+  missed_winners?: Num;
+  /** Refusals that saved money. */
+  correct_rejections?: Num;
+  /** What the rejected moves went on to do, aggregated. Negative = the gate
+      saved money; strongly positive = the gate is throwing money away. */
+  missed_net_bps?: Num;
+  /** `{RejectReason: [missed, correct]}`. Open record, like `IdleByReason`. */
+  by_reason?: Record<string, MissedPair | null | undefined> | null;
 }

@@ -341,11 +341,23 @@ class PortfolioConfig:
     count ceiling that remains is a safety valve, not the normal constraint.
     """
 
-    max_open_positions: int = _ei("MAX_OPEN_POSITIONS", 25)   # emergency ceiling only
+    max_open_positions: int = _ei("MAX_OPEN_POSITIONS", 20)   # emergency ceiling only
     total_open_risk_pct: float = _ef("TOTAL_OPEN_RISK_PCT", 3.0)  # 2 | 3 | 5 profiles
     cash_reserve_pct: float = _ef("CASH_RESERVE_PCT", 20.0)       # 10 | 20 | 30
     min_position_usd: float = _ef("MIN_POSITION_USD", 10.0)
-    max_position_usd: float = _ef("MAX_POSITION_USD", 125.0)
+    # 10% of a $500 account. This is not just a risk preference: the risk engine
+    # applies its portfolio gate to its OWN un-shrunk size before the allocator
+    # shrinks a candidate to the per-cycle slice, so a $125 ceiling made every
+    # candidate face the gate at five times the size that would actually be
+    # sent. Measured effect: deployment capped at 46.8% with the 60-85% band
+    # unreachable, and the dominant idle reason misreported as
+    # CORRELATION_LIMIT. At $50 the same candidate list deploys 57.1% and the
+    # dominant reason is NO_QUALIFIED_SIGNAL -- the diagnosis itself changes.
+    max_position_usd: float = _ef("MAX_POSITION_USD", 50.0)
+    #: Share of equity the allocator aims to have working. A stopping
+    #: condition, never a quota: it stops allocating when the band is reached
+    #: OR when candidates run out, and never lowers the bar to fill it.
+    target_deployed_pct: float = _ef("TARGET_DEPLOYED_PCT", 80.0)
     max_positions_per_symbol: int = _ei("MAX_POSITIONS_PER_SYMBOL", 1)
 
     # Correlation: eight simultaneous crypto longs are one large crypto long.

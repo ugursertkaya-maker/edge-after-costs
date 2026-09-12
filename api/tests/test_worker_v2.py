@@ -372,3 +372,90 @@ def test_health_reports_the_tape_recorder(worker):
     h = worker.dashboard_payload("base")["health"]
     assert "recorder" in h and "tape" in h
     assert "enabled" in h["recorder"]
+
+
+# --------------------------------------------------------------------------- #
+# Phase 5 — capital utilisation
+# --------------------------------------------------------------------------- #
+
+
+def test_payload_carries_capital_and_missed_keys(worker):
+    worker.evaluate_once(1_000_000)
+    payload = worker.dashboard_payload("base")
+    assert "capital" in payload and "missed" in payload
+
+
+def test_every_idle_dollar_is_attributed_to_a_reason(worker):
+    """A residual bucket would defeat the whole point: if $350 is idle the
+    operator must be told exactly why, with no rounding to hide in."""
+    worker.evaluate_once(1_000_000)
+    cap = worker.dashboard_payload("base")["capital"]
+    assert cap is not None
+    assert set(cap["idle_by_reason"]) == {
+        "NO_QUALIFIED_SIGNAL", "CORRELATION_LIMIT", "RISK_LIMIT",
+        "LIQUIDITY_LIMIT", "EXECUTION_COST", "CASH_RESERVE",
+    }
+    assert sum(cap["idle_by_reason"].values()) == pytest.approx(
+        cap["idle_usd"], abs=0.02
+    )
+
+
+def test_capital_block_reports_the_band_it_is_aiming_at(worker):
+    worker.evaluate_once(1_000_000)
+    cap = worker.dashboard_payload("base")["capital"]
+    assert 60.0 <= cap["target_pct"] <= 85.0
+    assert cap["deployed_pct"] >= 0.0
+    assert cap["equity"] == pytest.approx(500.0)
+
+
+def test_an_idle_account_attributes_to_no_qualified_signal(worker):
+    """The Phase 3 shape: nothing ranked, so nothing was refused for cost or
+    correlation — the money had nothing to buy."""
+    worker._ranked = []
+    worker.stats.rejects = {}
+    cap = worker.dashboard_payload("base")["capital"]
+    by = cap["idle_by_reason"]
+    assert by["NO_QUALIFIED_SIGNAL"] > 0
+    assert by["NO_QUALIFIED_SIGNAL"] >= max(
+        by["EXECUTION_COST"], by["CORRELATION_LIMIT"], by["RISK_LIMIT"]
+    )
+
+
+def test_cold_tier_symbols_are_not_subscribed_to_the_feed(worker, monkeypatch):
+    """COLD is a watchlist. Subscribing it is exactly the CPU the tiering
+    exists to avoid on a 2-vCPU host."""
+    from app.universe import UniverseEntry
+
+    seen = {}
+
+    class Feed(FakeFeed):
+        def set_universe(self, hot, warm):
+            seen["hot"], seen["warm"] = list(hot), list(warm)
+
+    worker.feed = Feed([], [])
+    entries = [
+        UniverseEntry(symbol="BTCUSD", info=INFO, quote_volume_24h=1e6,
+                      trades_24h=4000, spread_bps=1.0, volatility_bps=400.0,
+                      depth_usd=50_000.0, score=1.0, tier="hot"),
+        UniverseEntry(symbol="ETHUSD", info=INFO, quote_volume_24h=1e6,
+                      trades_24h=2000, spread_bps=1.0, volatility_bps=400.0,
+                      depth_usd=40_000.0, score=0.9, tier="warm"),
+        UniverseEntry(symbol="ZECUSDT", info=INFO, quote_volume_24h=2e6,
+                      trades_24h=3000, spread_bps=25.0, volatility_bps=900.0,
+                      depth_usd=10_000.0, score=0.5, tier="cold"),
+    ]
+    monkeypatch.setattr(
+        worker.universe_selector, "refresh",
+        lambda *a, **k: (_ for _ in ()).throw(AssertionError("should not be called")),
+    )
+    import asyncio
+
+    async def fake_refresh(rest, *a, **k):
+        return entries
+
+    monkeypatch.setattr(worker.universe_selector, "refresh", fake_refresh)
+    monkeypatch.setattr(worker, "_seed_bars", lambda syms: asyncio.sleep(0))
+    asyncio.run(worker.refresh_universe())
+
+    assert "ZECUSDT" not in seen.get("hot", []) + seen.get("warm", [])
+    assert "BTCUSD" in seen["hot"]

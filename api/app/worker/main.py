@@ -276,8 +276,17 @@ class TradingWorker:
             log.warning("universe refresh returned nothing; keeping previous set")
             return
         self.universe = entries
-        hot = [e.symbol for e in entries if e.tier == "hot"]
-        warm = [e.symbol for e in entries if e.tier != "hot"]
+        # COLD is a watchlist, not a subscription. The old `tier != "hot"` put
+        # every cold pair on the websocket, which is exactly the CPU the tiering
+        # exists to avoid on a 2-vCPU host.
+        try:
+            from app.universe import symbols_by_tier
+
+            tiers = symbols_by_tier(entries)
+            hot, warm = tiers["hot"], tiers["warm"]
+        except Exception:
+            hot = [e.symbol for e in entries if e.tier == "hot"]
+            warm = [e.symbol for e in entries if e.tier == "warm"]
         self.feed.set_universe(hot, warm)
         await self._seed_bars([e.symbol for e in entries])
         self._universe_refreshed_ms = now_ms()
@@ -1016,6 +1025,10 @@ class TradingWorker:
                 "rejects": self.stats.rejects,
             },
             "portfolio": self._portfolio_block(ledger, ts),
+            "capital": self._capital_block(ledger, ts),
+            "missed": _read_json(
+                Path(self.s.research.directory) / "missed.json"
+            ),
             "tournament": tournament,
             "finalists": finalists,
             "champion": self._champion_payload(ledger),
@@ -1173,6 +1186,56 @@ class TradingWorker:
             "max_drawdown": round(live.max_drawdown, 4),
             "trades": live.trades,
             "gate_reasons": list(self.champion.gate_reasons),
+        }
+
+    def _capital_block(self, ledger: Ledger, ts: int) -> dict[str, Any] | None:
+        """Capital utilisation, with every idle dollar attributed to a reason.
+
+        The dashboard contract names `idle_usd` / `idle_by_reason` while
+        `IdleAttribution` emits `total_idle_usd` / `by_reason`; the mapping
+        happens here rather than in either owner's module.
+        """
+        try:
+            from app.portfolio import attribute_idle
+
+            state = self.portfolio.state(
+                ledger, ts_ms=ts, bars_by_symbol=self._bars_map()
+            )
+            target = getattr(self.s.portfolio, "target_deployed_pct", 80.0)
+            att = attribute_idle(
+                state,
+                ranked=self._ranked,
+                rejections=self.stats.rejects,
+                target_pct=target,
+                equity=ledger.equity,
+            )
+        except Exception:
+            log.exception("idle attribution failed")
+            return None
+
+        stats = ledger.stats()
+        day_start = ts - (ts % 86_400_000)
+        deployed = state.deployed_usd
+        sizes = [p.notional_usd for p in state.positions]
+        ages = [p.holding_seconds(ts) for p in state.positions]
+        return {
+            "equity": round(ledger.equity, 4),
+            "deployed_usd": round(deployed, 2),
+            "deployed_pct": round(state.deployed_pct, 3),
+            "idle_usd": round(att.total_idle_usd, 2),
+            "idle_pct": round(getattr(att, "idle_pct", 0.0), 3),
+            "target_pct": round(float(target), 2),
+            "open_positions": len(state.positions),
+            "qualified_opportunities": len(self._ranked),
+            "rejected_opportunities": sum(self.stats.rejects.values()),
+            "turnover_per_day": round(stats.capital_turnover, 3),
+            "avg_position_usd": round(sum(sizes) / len(sizes), 2) if sizes else 0.0,
+            "avg_holding_seconds": round(sum(ages) / len(ages), 0) if ages else 0.0,
+            "net_pnl_today": round(ledger.realized_since(day_start), 4),
+            "net_pnl_per_100_deployed": (
+                round(stats.net_pnl / deployed * 100.0, 4) if deployed > 0 else 0.0
+            ),
+            "idle_by_reason": {k: round(v, 2) for k, v in att.by_reason.items()},
         }
 
     def publish(self) -> None:

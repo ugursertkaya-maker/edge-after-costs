@@ -5,6 +5,8 @@ import { Rail } from "@/components/dashboard/Rail";
 import { MetricStrip } from "@/components/dashboard/MetricStrip";
 import { Scanner } from "@/components/dashboard/Scanner";
 import { CostSplit } from "@/components/dashboard/CostSplit";
+import { Capital } from "@/components/dashboard/Capital";
+import { IdleCapital } from "@/components/dashboard/IdleCapital";
 import { Portfolio } from "@/components/dashboard/Portfolio";
 import { Positions } from "@/components/dashboard/Positions";
 import { Trades } from "@/components/dashboard/Trades";
@@ -17,6 +19,7 @@ import { Champion } from "@/components/dashboard/Champion";
 import { PredictiveEngine } from "@/components/dashboard/PredictiveEngine";
 import { ModelQuality } from "@/components/dashboard/ModelQuality";
 import { Explanations } from "@/components/dashboard/Explanations";
+import { MissedOpportunities } from "@/components/dashboard/MissedOpportunities";
 import { Banner } from "@/components/ui/DataState";
 import { useApiHealth, useDashboard } from "@/lib/useDashboard";
 
@@ -93,6 +96,16 @@ export default function DashboardPage() {
 
         <CostSplit metrics={data?.metrics ?? null} />
 
+        {/* Phase 5 — capital utilisation, at the top of the screen because it
+            is the reading the whole phase turns on. §01 says how much of the
+            account is at work against the target band; §02 says, in dollars,
+            why the rest is not. They are deliberately the first two panels:
+            Phase 3 measured 99.5% idle cash from a portfolio table nobody
+            scrolled to. */}
+        <Capital capital={data?.capital ?? null} loading={loading} />
+
+        <IdleCapital capital={data?.capital ?? null} loading={loading} />
+
         <Scanner
           rows={data?.scanner ?? null}
           loading={loading}
@@ -147,6 +160,11 @@ export default function DashboardPage() {
         <ModelQuality predictive={data?.predictive ?? null} loading={loading} />
 
         <Explanations predictive={data?.predictive ?? null} loading={loading} now={now} />
+
+        {/* Phase 5 — the post-hoc rejection audit. It sits with the research
+            panels rather than next to §02 on purpose: it is computed with
+            future data and must never be read as a live signal. */}
+        <MissedOpportunities missed={data?.missed ?? null} loading={loading} />
 
         <p className="footnote">
           Tüm işlemler simülasyondur. Binance.US herkese açık piyasa verisi

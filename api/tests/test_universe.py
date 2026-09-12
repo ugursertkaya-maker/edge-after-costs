@@ -378,3 +378,68 @@ def test_tier0_restriction_falls_back_rather_than_going_blind():
     infos = {"ZZZUSD": info("ZZZUSD", "ZZZ")}
     out = sel.select([ticker("ZZZUSD")], infos)
     assert [e.symbol for e in out] == ["ZZZUSD"]
+
+
+# --------------------------------------------------------------------------- #
+# the legacy path, pinned against the Phase 5 additions
+# --------------------------------------------------------------------------- #
+
+
+def test_select_still_truncates_at_max_symbols_and_only_tags_hot_or_warm():
+    """Tiering adds a third tier; ``select`` must not start emitting it.
+
+    Callers of ``select`` — ``refresh``, the worker's ``hot``/``warm`` split,
+    ``repo.upsert_markets`` — read ``tier`` as a two-valued field, and
+    ``max_symbols`` is the only cap they have.
+    """
+    sel = selector(max_symbols=3, hot_symbols=1, restrict_to_fee_tier0=False)
+    infos, tickers = {}, []
+    for i, volume in enumerate([90e6, 80e6, 70e6, 60e6, 50e6]):
+        sym = f"C{i}USD"
+        infos[sym] = info(sym, f"C{i}")
+        tickers.append(ticker(sym, quote_volume=volume))
+
+    out = sel.select(tickers, infos)
+    assert [e.symbol for e in out] == ["C0USD", "C1USD", "C2USD"]
+    assert [e.tier for e in out] == ["hot", "warm", "warm"]
+    assert "cold" not in {e.tier for e in out}
+
+
+def test_the_legacy_score_is_untouched_by_the_cost_aware_variant():
+    """Pinned numbers, not a re-derivation: 0.45/0.35/0.20 on the old terms."""
+    sel = selector(min_quote_volume_24h=2_000_000.0)
+    # liquidity log10(5)/2 = 0.3494850, volatility (400-8)/1492 = 0.2627346,
+    # tightness 1 - 2/8 = 0.75.
+    assert sel.score(10_000_000.0, 400.0, 2.0) == pytest.approx(0.3992254, abs=1e-6)
+    assert sel.score(10_000_000.0, 400.0, 8.0) == pytest.approx(0.2492254, abs=1e-6)
+
+
+def test_legacy_entries_still_carry_the_economics_block():
+    """``select`` does not rank on cost, but it still reports it.
+
+    The dashboard and the idle-capital attribution both want to know what a
+    scanned pair costs even when the scan list was chosen the old way.
+    """
+    sel = selector(restrict_to_fee_tier0=False, min_quote_volume_24h=2_000_000.0)
+    infos = {"BTCUSD": info("BTCUSD", "BTC"), "XRPUSDT": info("XRPUSDT", "XRP", "USDT")}
+    out = {e.symbol: e for e in sel.select([ticker("BTCUSD"), ticker("XRPUSDT")], infos)}
+
+    assert out["BTCUSD"].fee_bps == pytest.approx(1.0)
+    assert out["BTCUSD"].fee_tier0 is True
+    assert out["XRPUSDT"].fee_bps == pytest.approx(10.0)
+    assert out["XRPUSDT"].fee_tier0 is False
+    # No book and no quoted bid/ask, so both carry the pessimistic 8 bps spread.
+    assert out["BTCUSD"].round_trip_bps == pytest.approx(10.0)
+    assert out["XRPUSDT"].round_trip_bps == pytest.approx(28.0)
+    assert out["BTCUSD"].edge_ratio > out["XRPUSDT"].edge_ratio
+
+
+def test_an_entry_built_the_old_way_is_still_valid():
+    """Every Phase 5 field is defaulted, so nothing that constructs one breaks."""
+    e = UniverseEntry(
+        symbol="AAAUSD", info=info("AAAUSD", "AAA"), quote_volume_24h=1.0,
+        trades_24h=1, spread_bps=1.0, volatility_bps=1.0, depth_usd=1.0,
+        score=0.5, tier="hot",
+    )
+    assert e.round_trip_bps == 0.0 and e.edge_ratio == 0.0 and e.fee_tier0 is False
+    assert e.as_dict()["symbol"] == "AAAUSD"
