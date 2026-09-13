@@ -36,7 +36,7 @@ and returns a reason or ``None``.
 
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from typing import TYPE_CHECKING, Any, Callable
 
 from app.types import ExitReason, Features, OrderBook, Position, Side
@@ -166,6 +166,39 @@ DEFAULT_PROFILE = HoldingProfile(
     trail_after_net_bps=0.0,
     reeval_entry_score=False,
 )
+
+
+def profile_for_horizon(strategy: str, horizon_seconds: float) -> HoldingProfile:
+    """The holding profile, widened when the configured horizon exceeds it.
+
+    The ceilings in :data:`PROFILES` were written for the short-horizon
+    configuration. Moving momentum_scalp to a 60-minute horizon while its
+    profile still caps the hold at 2,400s would close every position at 40
+    minutes and then report the 60-minute arm's results -- measuring a
+    strategy nobody deployed, which is the failure mode this project has hit
+    repeatedly.
+
+    The ceiling becomes 1.5x the horizon: enough room for the setup to resolve
+    past its own deadline, not so much that a dead position is held forever.
+    Profiles are only ever WIDENED here; a strategy whose profile already
+    allows more than the horizon keeps what it has.
+    """
+    base = profile_for(strategy)
+    horizon = max(0.0, float(horizon_seconds))
+    if horizon <= 0:
+        return base
+    # Widen only when the horizon genuinely exceeds the existing ceiling.
+    # Comparing against 1.5x the horizon instead would widen flow_impulse from
+    # 180s to 270s just for asking -- a strategy this phase deliberately does
+    # not touch, because its only measured alpha was measured at 32 seconds.
+    if base.max_hold_seconds >= horizon:
+        return base
+    needed = horizon * 1.5
+    return replace(
+        base,
+        typical_hold_seconds=max(base.typical_hold_seconds, horizon),
+        max_hold_seconds=needed,
+    )
 
 
 def profile_for(strategy: str) -> HoldingProfile:
