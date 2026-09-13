@@ -65,9 +65,10 @@ class MomentumScalp(Strategy):
             f,
             side,
             score=score,
-            target_bps=horizon_move_bps(f, self.default_horizon_seconds)
-            * TARGET_ATR_MULT,
-            stop_bps=atr * STOP_ATR_MULT,
+            target_bps=horizon_move_bps(f, self.horizon_seconds)
+            * self.target_mult(TARGET_ATR_MULT),
+            stop_bps=horizon_move_bps(f, self.horizon_seconds)
+            * self.stop_mult(STOP_ATR_MULT),
             reasons=[
                 f"EMA {'up' if direction > 0 else 'down'}, slope {f.ema_slope_bps:+.1f} bps",
                 f"1m {f.ret_1m_bps:+.0f} bps on x{f.volume_ratio:.1f} volume",

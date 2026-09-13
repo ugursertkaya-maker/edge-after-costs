@@ -62,9 +62,10 @@ class FlowImpulse(Strategy):
             f,
             side,
             score=score,
-            target_bps=horizon_move_bps(f, self.default_horizon_seconds)
-            * TARGET_ATR_MULT,
-            stop_bps=atr * STOP_ATR_MULT,
+            target_bps=horizon_move_bps(f, self.horizon_seconds)
+            * self.target_mult(TARGET_ATR_MULT),
+            stop_bps=horizon_move_bps(f, self.horizon_seconds)
+            * self.stop_mult(STOP_ATR_MULT),
             reasons=[
                 f"flow {f.trade_flow_imbalance:+.2f} accelerating "
                 f"({f.trade_flow_accel:+.2f})",

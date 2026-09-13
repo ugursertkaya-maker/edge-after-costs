@@ -456,6 +456,35 @@ class RecycleConfig:
 
 
 @dataclass(frozen=True)
+class StrategyHorizonConfig:
+    """Per-strategy holding horizon and the target/stop multipliers on it.
+
+    Binance.US does not trade in most minutes -- 80.4% of ETHUSD's one-minute
+    bars have high == low -- so a one-minute ATR describes almost nothing and
+    an ultra-short strategy is economically mismatched to the venue. Measured
+    over 30 days, the median absolute move is 0.00 bps at 1 minute, 4.45 at 5,
+    10.20 at 15 and 22.36 at 60, against a ~3 bps round trip. The slow
+    strategies therefore need their horizon to be a researched parameter
+    rather than a constant chosen before that was known.
+
+    ``horizon_seconds`` of 0 means "keep the strategy's own default", so an
+    unset config changes nothing.
+    """
+
+    #: Applies to the slow families only. flow_impulse and book_imbalance keep
+    #: their own horizons: a 30-second order-flow signal stretched into a
+    #: 30-minute position is a different strategy wearing the same name.
+    slow_horizon_seconds: int = _ei("SLOW_HORIZON_SECONDS", 0)
+    #: Multipliers ON the horizon-aware expected move. 0 means "strategy default".
+    target_mult: float = _ef("STRATEGY_TARGET_MULT", 0.0)
+    stop_mult: float = _ef("STRATEGY_STOP_MULT", 0.0)
+    #: Families that follow ``slow_horizon_seconds``.
+    slow_families: tuple[str, ...] = (
+        "momentum_scalp", "breakout_scalp", "trend_pullback", "mean_reversion",
+    )
+
+
+@dataclass(frozen=True)
 class HorizonConfig:
     """The 25-60 minute development window.
 
@@ -586,6 +615,9 @@ class Settings:
     portfolio: PortfolioConfig = field(default_factory=PortfolioConfig)
     recycle: RecycleConfig = field(default_factory=RecycleConfig)
     horizon: HorizonConfig = field(default_factory=HorizonConfig)
+    strategy_horizon: StrategyHorizonConfig = field(
+        default_factory=StrategyHorizonConfig
+    )
     holding: HoldingConfig = field(default_factory=HoldingConfig)
 
     def __post_init__(self) -> None:

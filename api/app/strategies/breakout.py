@@ -64,9 +64,10 @@ class BreakoutScalp(Strategy):
             f,
             side,
             score=score,
-            target_bps=horizon_move_bps(f, self.default_horizon_seconds)
-            * TARGET_ATR_MULT,
-            stop_bps=atr * STOP_ATR_MULT,
+            target_bps=horizon_move_bps(f, self.horizon_seconds)
+            * self.target_mult(TARGET_ATR_MULT),
+            stop_bps=horizon_move_bps(f, self.horizon_seconds)
+            * self.stop_mult(STOP_ATR_MULT),
             reasons=[
                 f"squeeze {compression:.2f} released",
                 f"broke 20-bar {edge} (pos {f.range_pos:.2f})",

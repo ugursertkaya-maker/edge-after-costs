@@ -106,6 +106,36 @@ class Strategy:
     def __init__(self, *, settings: Settings | None = None) -> None:
         self.settings = settings or get_settings()
 
+    # -- horizon ----------------------------------------------------------- #
+
+    @property
+    def horizon_seconds(self) -> int:
+        """This strategy's holding horizon, config first, own default second.
+
+        Only the slow families follow the configured value. flow_impulse and
+        book_imbalance keep their own: a 30-second order-flow signal stretched
+        into a 30-minute position is a different strategy wearing the same name,
+        and the research that produced flow_impulse's only measured alpha was
+        done at 32 seconds.
+        """
+        cfg = getattr(self.settings, "strategy_horizon", None)
+        if cfg is None or self.name not in cfg.slow_families:
+            return int(self.default_horizon_seconds)
+        return int(cfg.slow_horizon_seconds or self.default_horizon_seconds)
+
+    def target_mult(self, own: float) -> float:
+        """Multiplier on the horizon move for the target; config may override."""
+        cfg = getattr(self.settings, "strategy_horizon", None)
+        if cfg is None or self.name not in cfg.slow_families or cfg.target_mult <= 0:
+            return own
+        return float(cfg.target_mult)
+
+    def stop_mult(self, own: float) -> float:
+        cfg = getattr(self.settings, "strategy_horizon", None)
+        if cfg is None or self.name not in cfg.slow_families or cfg.stop_mult <= 0:
+            return own
+        return float(cfg.stop_mult)
+
     # -- gating ------------------------------------------------------------ #
 
     def accepts(self, regime: RegimeState) -> bool:
