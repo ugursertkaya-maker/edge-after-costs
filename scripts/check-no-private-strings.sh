@@ -107,16 +107,19 @@ probe() {
     return 1
   fi
 }
+# Every sample below is synthetic by construction: the addresses are RFC 5737
+# documentation ranges, which can never route, and the key-shaped strings spell
+# EXAMPLE. The private-key line is a header with no key material.
 selftest=0
-probe "$IPV4"        'resolved to an AWS ap-northeast-1 address, AWS'            || selftest=1
-probe "$IPV4"        'host 192.0.2.4'                             || selftest=1
+probe "$IPV4"        'resolved to 203.0.113.7, somewhere'       || selftest=1
+probe "$IPV4"        'host 192.0.2.4'                           || selftest=1
 probe "${PATTERNS[0]}" 'run: ssh deployer@build-host uptime'    || selftest=1
 probe "${PATTERNS[1]}" '/Users/someone/project'                 || selftest=1
 probe "${PATTERNS[2]}" '/home/someone/project'                  || selftest=1
 probe "${PATTERNS[3]}" 'password = "correcthorsebattery"'       || selftest=1
 probe "${PATTERNS[4]}" '-----BEGIN RSA PRIVATE KEY-----'        || selftest=1
 probe "${PATTERNS[5]}" 'AKIAEXAMPLEEXAMPLE12'                   || selftest=1
-probe "${PATTERNS[6]}" 'token ghp_EXAMPLEEXAMPLEEXAMPLE'         || selftest=1
+probe "${PATTERNS[6]}" 'token ghp_EXAMPLEEXAMPLEEXAMPLE'        || selftest=1
 if [[ $selftest -ne 0 ]]; then
   echo "::error::the scanner cannot be trusted; fix the patterns before relying on a pass"
   exit 2
