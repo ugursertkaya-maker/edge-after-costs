@@ -104,6 +104,12 @@ class ScannerRow:
     reject_reason: str | None = None
     depth_usd: float = 0.0
     book_age_ms: int = 0
+    #: Why no strategy produced a candidate, with the number that decided it.
+    #: Without this a quiet market and a dead worker render identically: zero
+    #: candidates, zero rejections, zero trades, and no way to tell which.
+    no_signal_reason: str | None = None
+    no_signal_value: float = 0.0
+    no_signal_threshold: float = 0.0
 
     def as_dict(self) -> dict[str, Any]:
         return {
@@ -116,6 +122,9 @@ class ScannerRow:
             "volume_ratio": round(self.volume_ratio, 2),
             "spread_bps": round(self.spread_bps, 2),
             "imbalance": round(self.imbalance, 3),
+            "no_signal_reason": self.no_signal_reason,
+            "no_signal_value": round(self.no_signal_value, 4),
+            "no_signal_threshold": round(self.no_signal_threshold, 4),
             "net_edge_bps": round(self.net_edge_bps, 2),
             "strategy": self.strategy,
             "decision": self.decision,
@@ -647,6 +656,12 @@ class TradingWorker:
             opportunities.extend(symbol_opps)
 
             decision, reject = self._row_decision(best, feats, regime)
+            # When nothing fired, say which strategy came closest and why, with
+            # the number. "No candidates" on its own is the same screen a dead
+            # worker draws.
+            ns_reason = ns_value = ns_threshold = None
+            if best is None:
+                ns_reason, ns_value, ns_threshold = self._closest_decline()
             rows.append(
                 ScannerRow(
                     symbol=entry.symbol,
@@ -664,6 +679,9 @@ class TradingWorker:
                     reject_reason=reject,
                     depth_usd=feats.depth_bid_usd + feats.depth_ask_usd,
                     book_age_ms=feats.book_age_ms,
+                    no_signal_reason=ns_reason,
+                    no_signal_value=ns_value or 0.0,
+                    no_signal_threshold=ns_threshold or 0.0,
                 )
             )
             stats_rows.append(
@@ -731,6 +749,32 @@ class TradingWorker:
             self.s.risk.min_notional_usd,
             base.equity * self.s.risk.max_position_pct_equity / 100.0 * 0.5,
         )
+
+    #: Declines ranked by how close they came to producing a signal. A target
+    #: just under the floor is a near miss worth showing; a regime that forbids
+    #: the strategy entirely is not.
+    _DECLINE_RANK = (
+        "TARGET_BELOW_FLOOR", "SPREAD_EATS_TARGET", "SCORE_BELOW_MIN",
+        "NO_SETUP", "WARMING_UP", "REGIME_NOT_ALLOWED",
+    )
+
+    def _closest_decline(self) -> tuple[str | None, float, float]:
+        """The most informative reason no strategy fired on this symbol."""
+        best: tuple[int, str, float, float] | None = None
+        for strat in self.strategies:
+            d = getattr(strat, "last_decline", None)
+            if not d:
+                continue
+            reason, value, threshold = d
+            try:
+                rank = self._DECLINE_RANK.index(reason)
+            except ValueError:
+                rank = len(self._DECLINE_RANK)
+            if best is None or rank < best[0]:
+                best = (rank, f"{strat.name}:{reason}", float(value), float(threshold))
+        if best is None:
+            return (None, 0.0, 0.0)
+        return (best[1], best[2], best[3])
 
     def _row_decision(
         self, best: Opportunity | None, feats: Features, regime: RegimeState

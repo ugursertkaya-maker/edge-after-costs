@@ -105,6 +105,12 @@ class Strategy:
 
     def __init__(self, *, settings: Settings | None = None) -> None:
         self.settings = settings or get_settings()
+        #: Why the last evaluation produced no signal, with the number that
+        #: decided it. A strategy that declines silently is indistinguishable
+        #: from a broken one: the dashboard showed zero candidates, zero
+        #: rejections and zero trades, and the only honest reading of that
+        #: screen was "the worker is dead" -- which it was not.
+        self.last_decline: tuple[str, float, float] | None = None
 
     # -- horizon ----------------------------------------------------------- #
 
@@ -155,10 +161,17 @@ class Strategy:
 
     def evaluate(self, f: Features, regime: RegimeState) -> Signal | None:
         if not self.accepts(regime):
+            self.last_decline = ("REGIME_NOT_ALLOWED", 0.0, 0.0)
             return None
         if not self.ready(f):
+            self.last_decline = ("WARMING_UP", float(f.bars_available), float(MIN_BARS))
             return None
-        return self._evaluate(f, regime)
+        sig = self._evaluate(f, regime)
+        if sig is None and self.last_decline is None:
+            # The subclass declined on its own terms without saying why. Better
+            # to name that plainly than to leave the screen blank.
+            self.last_decline = ("NO_SETUP", 0.0, 0.0)
+        return sig
 
     # -- subclass hook ------------------------------------------------------ #
 
@@ -186,6 +199,7 @@ class Strategy:
         """
         score = clamp(score)
         if score < self.min_score:
+            self.last_decline = ("SCORE_BELOW_MIN", score, self.min_score)
             return None
         # A target below the floor means the market is not offering a move this
         # strategy can aim at. Clamping it UP does not make the move exist -- it
@@ -203,10 +217,16 @@ class Strategy:
         # This makes the system trade LESS, not more. That is the point.
         target_bps = float(target_bps)
         if target_bps < MIN_TARGET_BPS:
+            self.last_decline = ("TARGET_BELOW_FLOOR", target_bps, MIN_TARGET_BPS)
             return None
         stop_bps = max(float(stop_bps), MIN_STOP_BPS)
         if f.spread_bps > MAX_SPREAD_FRACTION_OF_TARGET * target_bps:
+            self.last_decline = (
+                "SPREAD_EATS_TARGET", f.spread_bps,
+                MAX_SPREAD_FRACTION_OF_TARGET * target_bps,
+            )
             return None
+        self.last_decline = None
         used = {
             "atr_bps": f.atr_bps,
             "spread_bps": f.spread_bps,

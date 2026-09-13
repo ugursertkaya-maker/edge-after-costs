@@ -304,3 +304,69 @@ class TestHorizonProfileIsReachable:
                     == profile_for(fast).max_hold_seconds)
         monkeypatch.delenv("SLOW_HORIZON_SECONDS")
         reload_settings()
+
+
+class TestSilenceIsExplained:
+    """A quiet market and a dead worker must not draw the same screen.
+
+    Reported live: "worker calismiyor". The worker was healthy -- 1,080
+    evaluations, last one 0.6s earlier, book fresh at 957ms -- but every
+    strategy was declining on a sub-floor target, silently. Zero candidates,
+    zero rejections, zero trades, and no way to tell that from a crash.
+    """
+
+    def test_a_declining_strategy_records_why(self):
+        from app.strategies.base import MIN_TARGET_BPS
+        from app.strategies import get_strategies
+
+        strat = next(s for s in get_strategies() if s.name == "momentum_scalp")
+        sig = strat._signal(
+            f=_quiet_features(), side=__import__("app.types", fromlist=["Side"]).Side.LONG,
+            score=0.9, target_bps=0.079, stop_bps=10.0, reasons=["probe"],
+        )
+        assert sig is None
+        assert strat.last_decline is not None
+        reason, value, threshold = strat.last_decline
+        assert reason == "TARGET_BELOW_FLOOR"
+        assert value == pytest.approx(0.079)
+        assert threshold == pytest.approx(MIN_TARGET_BPS)
+
+    def test_a_produced_signal_clears_the_decline(self):
+        from app.strategies import get_strategies
+        from app.types import Side
+
+        strat = next(s for s in get_strategies() if s.name == "momentum_scalp")
+        strat.last_decline = ("TARGET_BELOW_FLOOR", 0.0, 4.0)
+        sig = strat._signal(f=_quiet_features(), side=Side.LONG, score=0.9,
+                            target_bps=24.0, stop_bps=10.0, reasons=["probe"])
+        assert sig is not None
+        assert strat.last_decline is None
+
+    def test_the_scanner_row_carries_the_reason(self):
+        src = _source(worker_main.TradingWorker.evaluate_once)
+        assert "_closest_decline()" in src
+        assert "no_signal_reason=" in src
+
+    def test_a_near_miss_outranks_a_structural_refusal(self):
+        """A target just under the floor is worth showing; a forbidden regime
+        is not the interesting fact when another strategy nearly fired."""
+        rank = worker_main.TradingWorker._DECLINE_RANK
+        assert rank.index("TARGET_BELOW_FLOOR") < rank.index("REGIME_NOT_ALLOWED")
+        assert rank.index("SCORE_BELOW_MIN") < rank.index("WARMING_UP")
+
+
+def _quiet_features():
+    from app.types import Features
+    mid = 2_500.0
+    return Features(
+        symbol="ETHUSD", ts_ms=1_789_000_000_000, price=mid, mid=mid,
+        microprice=mid, spread_bps=0.1, book_age_ms=100,
+        depth_bid_usd=100_000.0, depth_ask_usd=100_000.0, imbalance=0.3,
+        atr_bps=0.131, realized_vol_bps=0.47, vol_percentile=0.5,
+        ret_1m_bps=1.0, ret_5m_bps=2.0, ret_15m_bps=3.0,
+        ema_fast=mid, ema_slow=mid, ema_slope_bps=0.5, trend_strength=0.4,
+        range_pos=0.5, bb_width_bps=2.0, compression=0.4, volume_ratio=1.0,
+        trade_flow_imbalance=0.1, trade_flow_accel=0.0, vwap=mid,
+        vwap_dev_bps=0.2, quote_volume_24h=700_000.0, trades_24h=3_000,
+        bars_available=60, range_window_bps=14.0,
+    )
