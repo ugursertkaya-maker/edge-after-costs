@@ -4,6 +4,7 @@ import { useEffect, useState } from "react";
 import { Rail } from "@/components/dashboard/Rail";
 import { MetricStrip } from "@/components/dashboard/MetricStrip";
 import { Scanner } from "@/components/dashboard/Scanner";
+import { ScanActivity } from "@/components/dashboard/ScanActivity";
 import { CostSplit } from "@/components/dashboard/CostSplit";
 import { Capital } from "@/components/dashboard/Capital";
 import { IdleCapital } from "@/components/dashboard/IdleCapital";
@@ -129,6 +130,12 @@ export default function DashboardPage() {
           loading={loading}
           connected={data?.header.data_connected ?? false}
           now={now}
+        />
+
+        <ScanActivity
+          scan={data?.scan ?? null}
+          watchlist={data?.watchlist ?? null}
+          loading={loading}
         />
 
         <Scanner

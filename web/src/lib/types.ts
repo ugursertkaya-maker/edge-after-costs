@@ -357,6 +357,21 @@ export interface DashboardPayload {
   /** What is running in live paper. `null` is a legitimate answer. */
   champion?: ChampionState | null;
 
+  // ---- Phase 7: liveness ---------------------------------------------------
+  /**
+   * Proof the scanner is running, in the form an operator can read. Added
+   * after the dashboard was reported dead while the worker was evaluating
+   * about once a second: "evaluations: 1080" buried in a health blob does not
+   * answer "is this thing alive", and a rate plus an age does.
+   */
+  scan?: ScanState | null;
+  /**
+   * The pairs on the bench and the number that benched them. The bot had
+   * ranked six pairs and benched five; the ranking was invisible, so the
+   * screen was indistinguishable from one showing no scanning at all.
+   */
+  watchlist?: WatchlistState | null;
+
   // ---- Phase 4 -------------------------------------------------------------
   /**
    * The predictive entry engine. Absent until the worker serves it, and that
@@ -1035,4 +1050,37 @@ export interface OpportunityBoard {
   evaluated?: Num;
   qualified?: Num;
   rejected?: Num;
+}
+
+
+/** §07 scan heartbeat. */
+export interface ScanState {
+  evaluations: Num;
+  last_evaluation_ms: Num;
+  seconds_since_last: Num;
+  evaluations_per_second: Num;
+  symbols_evaluated: Num;
+  symbols_benched: Num;
+  uptime_seconds: Num;
+}
+
+/** One benched pair, with the threshold that benched it. */
+export interface BenchedSymbol {
+  symbol: string;
+  tier: string | null;
+  edge_ratio: Num;
+  warm_threshold: Num;
+  hot_threshold: Num;
+  round_trip_bps: Num;
+  expected_move_bps: Num;
+  capacity_max_usd: Num;
+  /** How far short of the WARM bar, in the units that decided it. */
+  short_of_warm: Num;
+}
+
+export interface WatchlistState {
+  evaluated: string[];
+  benched: BenchedSymbol[];
+  warm_threshold: Num;
+  hot_threshold: Num;
 }

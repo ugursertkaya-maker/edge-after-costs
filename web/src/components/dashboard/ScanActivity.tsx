@@ -1,0 +1,176 @@
+import { Panel } from "@/components/ui/Panel";
+import { DataState, Skeleton } from "@/components/ui/DataState";
+import { formatMoney, toNum } from "@/lib/format";
+import type { ScanState, WatchlistState } from "@/lib/types";
+
+/** A scan that has not run in this long is a different fact from a quiet market. */
+const STALL_SECONDS = 30;
+/** Within this much of the WARM bar is a near miss worth highlighting. */
+const NEAR_MISS = 0.3;
+
+/**
+ * TARAMA VE BANKO — the panel that answers "is this thing alive".
+ *
+ * Added after the terminal was reported dead three times while the worker was
+ * evaluating about once a second and the API was serving payloads a second
+ * old. Every figure on the screen was a legitimate zero — no trades, no
+ * positions, no candidates — and zero activity and zero EVIDENCE of activity
+ * render identically.
+ *
+ * So this reports the two things a static screen cannot: the scan's own pulse,
+ * and the pairs the bot ranked and benched. "Nothing is scanning" and "six
+ * pairs ranked, five benched by a number you can read" are different claims,
+ * and only the second was ever true.
+ */
+export function ScanActivity({
+  scan,
+  watchlist,
+  loading,
+}: {
+  scan: ScanState | null | undefined;
+  watchlist: WatchlistState | null | undefined;
+  loading: boolean;
+}) {
+  const rate = toNum(scan?.evaluations_per_second);
+  const since = toNum(scan?.seconds_since_last);
+  const evals = toNum(scan?.evaluations);
+  const benched = watchlist?.benched ?? [];
+  const evaluated = watchlist?.evaluated ?? [];
+
+  const stalled = since !== null && since > STALL_SECONDS;
+  const alive = rate !== null && rate > 0 && !stalled;
+  const warmBar = toNum(watchlist?.warm_threshold);
+
+  return (
+    <Panel
+      idx="07"
+      title="TARAMA VE BANKO"
+      note="motor çalışıyor mu, kaç çift değerlendiriliyor, kalanlar neden bankta"
+      meta={
+        <span className={`pill ${alive ? "is-pos" : stalled ? "is-neg" : "is-warn"}`}>
+          {alive ? "TARAMA AKTİF" : stalled ? "TARAMA DURDU" : "BEKLENİYOR"}
+        </span>
+      }
+    >
+      {loading && !scan ? (
+        <Skeleton rows={3} />
+      ) : !scan ? (
+        <DataState
+          title="Tarama verisi henüz yayınlanmadı"
+          text="Worker bu bloğu yayınlamıyor. Bu, taramanın durduğu anlamına gelmez — yalnızca ekranın onu görecek bir alanı olmadığı anlamına gelir, ki bu paneli var eden sorun tam olarak buydu."
+          scanning
+        />
+      ) : (
+        <>
+            <div className="metrics">
+              <Metric
+                k="Değerlendirme"
+                v={evals === null ? "—" : evals.toLocaleString("tr-TR")}
+                note="süreç başından beri"
+              />
+              <Metric
+                k="Tarama hızı"
+                v={rate === null ? "—" : `${rate.toFixed(2)}/sn`}
+                note="saniyedeki değerlendirme"
+                tone={alive ? "pos" : undefined}
+              />
+              <Metric
+                k="Son tarama"
+                v={since === null ? "—" : `${since.toFixed(1)} sn`}
+                note={stalled ? `${STALL_SECONDS} sn üstü — durmuş` : "önce"}
+                tone={stalled ? "neg" : undefined}
+              />
+              <Metric
+                k="Değerlendirilen"
+                v={String(evaluated.length)}
+                note={evaluated.join(", ") || "—"}
+              />
+              <Metric
+                k="Bankta"
+                v={String(benched.length)}
+                note="sıralandı, eşiği geçemedi"
+              />
+            </div>
+
+            {benched.length > 0 && (
+              <div className="tbl-wrap">
+                <table className="tbl">
+                  <thead>
+                    <tr>
+                      <th>Sembol</th>
+                      <th className="num">Kenar oranı</th>
+                      <th className="num">Eşik</th>
+                      <th className="num">Eksik</th>
+                      <th className="num">Gidiş-dönüş</th>
+                      <th className="num">Beklenen hareket</th>
+                      <th className="num">Kapasite</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {benched.map((b) => {
+                      const shortBy = toNum(b.short_of_warm);
+                      const near =
+                        shortBy !== null && shortBy > 0 && shortBy <= NEAR_MISS;
+                      return (
+                        <tr key={b.symbol}>
+                          <td>{b.symbol}</td>
+                          <td className={`num${near ? " pos" : ""}`}>
+                            {toNum(b.edge_ratio)?.toFixed(2) ?? "—"}
+                          </td>
+                          <td className="num">
+                            {toNum(b.warm_threshold)?.toFixed(2) ?? "—"}
+                          </td>
+                          <td className={`num${near ? " pos" : ""}`}>
+                            {shortBy === null || shortBy <= 0
+                              ? "—"
+                              : shortBy.toFixed(2)}
+                          </td>
+                          <td className="num">
+                            {toNum(b.round_trip_bps)?.toFixed(2) ?? "—"} bps
+                          </td>
+                          <td className="num">
+                            {toNum(b.expected_move_bps)?.toFixed(1) ?? "—"} bps
+                          </td>
+                          <td className="num">
+                            {formatMoney(toNum(b.capacity_max_usd))}/dk
+                          </td>
+                        </tr>
+                      );
+                    })}
+                  </tbody>
+                </table>
+              </div>
+            )}
+
+            <p className="panel-note">
+              Kenar oranı = çiftin beklenen hareketi ÷ gidiş-dönüş maliyeti.{" "}
+              {warmBar === null ? "1,50" : warmBar.toFixed(2)} altındaki bir çift
+              kendi icrasını ödeyemez, bu yüzden taranmaz — bu bir arıza değil,
+              bir ölçümdür. Eşiği {NEAR_MISS.toFixed(2)} veya daha az farkla
+              kaçıran satırlar vurgulanır.
+            </p>
+        </>
+      )}
+    </Panel>
+  );
+}
+
+function Metric({
+  k,
+  v,
+  note,
+  tone,
+}: {
+  k: string;
+  v: string;
+  note?: string;
+  tone?: "pos" | "neg";
+}) {
+  return (
+    <div className="metric">
+      <span className="metric-k">{k}</span>
+      <span className={`metric-v${tone ? ` ${tone}` : ""}`}>{v}</span>
+      {note && <span className="metric-note">{note}</span>}
+    </div>
+  );
+}
