@@ -73,7 +73,7 @@ def _seed(session):
             RiskEvent(ts_ms=stale_event, kind="KILL_SWITCH"),
             Market(symbol="BTCUSD", last_seen_ms=stale_event),
             PaperOrder(ts_ms=stale_event, symbol="BTCUSD"),
-            User(email="keep@me.com", password_hash="x"),
+            User(email="keep@example.com", password_hash="x"),
         ]
     )
     fresh_sig = Signal(ts_ms=fresh_event, symbol="BTCUSD", strategy="a")
