@@ -1,16 +1,16 @@
 # Runbook
 
-Operating notes for a NetEdge deployment. Nothing here is specific to a
-particular host: substitute your own server, path and domain.
+Operating notes for an EdgeAfterCosts deployment. Nothing here is specific to
+a particular host: substitute your own server, path and domain.
 
 Conventions used below:
 
 | Placeholder | Meaning |
 |---|---|
 | `your-server` | the host running the stack |
-| `/srv/netedge` | wherever you cloned the repository on that host |
+| `/srv/edge-after-costs` | wherever you cloned the repository on that host |
 | `https://your-domain.example` | wherever the dashboard is published |
-| `${BASE_PATH}` | the path prefix in `.env` (default `/netedge`) |
+| `${BASE_PATH}` | the path prefix in `.env` (default `/edge-after-costs`) |
 
 If the account you deploy with is not in the `docker` group, prefix the Docker
 commands below with `sudo`.
@@ -18,9 +18,9 @@ commands below with `sudo`.
 ## Daily checks
 
 ```bash
-curl -s https://your-domain.example/netedge/api/health | python3 -m json.tool
+curl -s https://your-domain.example/edge-after-costs/api/health | python3 -m json.tool
 docker compose ps
-docker stats --no-stream | grep netedge
+docker stats --no-stream | grep edge-after-costs
 ```
 
 `worker_alive: false`, or a `worker_lag_ms` above ~30 s, means the loop has
@@ -45,8 +45,8 @@ If you deploy by copying files from a workstation instead, **exclude `.env`**:
 rsync -az --delete \
       --exclude .venv --exclude __pycache__ --exclude '*.pyc' \
       --exclude node_modules --exclude .next --exclude .env --exclude .git \
-      ./ user@your-server:/srv/netedge/
-ssh user@your-server /srv/netedge/scripts/deploy.sh
+      ./ user@your-server:/srv/edge-after-costs/
+ssh user@your-server /srv/edge-after-costs/scripts/deploy.sh
 ```
 
 `--exclude .env` is not optional: the server's `.env` holds the only copy of the
@@ -65,9 +65,9 @@ Three levers, in increasing order of severity:
 
 1. **Kill switch** (no restart; open positions are still managed to their exits):
    ```bash
-   docker compose exec redis redis-cli set netedge:kill_switch 1
+   docker compose exec redis redis-cli set edge_after_costs:kill_switch 1
    ```
-   Clear it with `set netedge:kill_switch 0`.
+   Clear it with `set edge_after_costs:kill_switch 0`.
 2. **Stop the worker** (no new decisions at all; open paper positions freeze):
    ```bash
    docker compose stop worker
@@ -82,17 +82,17 @@ trading: `TRADING_MODE=PAPER` and the API refuses to boot on anything else.
 
 | | |
 |---|---|
-| Postgres | volume `netedge-pgdata`, container `netedge-db`, db `netedge` |
+| Postgres | volume `edge-after-costs-pgdata`, container `edge-after-costs-db`, db `edge_after_costs` |
 | Redis | ephemeral by design (`--save ""`), holds only the live dashboard snapshot |
-| Backtest cache | volume `netedge-cache` → `/data/backtest-cache` |
-| Market tape | volume `netedge-tape` → `/data/tape` |
+| Backtest cache | volume `edge-after-costs-cache` → `/data/backtest-cache` |
+| Market tape | volume `edge-after-costs-tape` → `/data/tape` |
 | Secrets | `.env` next to `docker-compose.yml`, `chmod 600` |
 
 Trades, positions, equity snapshots and backtest runs are **never** deleted by
 retention. Market stats age out after 48 h, events after 30 days.
 
 ```bash
-docker compose exec db psql -U netedge -d netedge \
+docker compose exec db psql -U edge_after_costs -d edge_after_costs \
   -c "select count(*) from trades; select count(*) from equity_snapshots;"
 ```
 

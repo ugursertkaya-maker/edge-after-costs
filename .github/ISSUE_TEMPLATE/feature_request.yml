@@ -8,8 +8,8 @@ body:
         Thanks for the idea.
 
         One thing will always be declined: **anything that adds an
-        order-execution path.** NetEdge is paper-only by construction and the
-        safety tests enforce it. See
+        order-execution path.** EdgeAfterCosts is paper-only by construction
+        and the safety tests enforce it. See
         [CONTRIBUTING.md](../blob/main/CONTRIBUTING.md).
 
   - type: textarea

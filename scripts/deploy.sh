@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Build and (re)start the NetEdge stack with Docker Compose.
+# Build and (re)start the EdgeAfterCosts stack with Docker Compose.
 #
 #   ./scripts/deploy.sh              # build api + web, recreate everything
 #   ./scripts/deploy.sh worker       # rebuild and restart one service only
@@ -14,8 +14,8 @@ cd "$REPO_ROOT"
 
 # Where the web container is published on this machine, for the health probe.
 # Override if you changed the port mapping in docker-compose.yml.
-WEB_URL="${NETEDGE_WEB_URL:-http://127.0.0.1:3000}"
-BASE_PATH="${BASE_PATH:-/netedge}"
+WEB_URL="${EDGE_AFTER_COSTS_WEB_URL:-http://127.0.0.1:3000}"
+BASE_PATH="${BASE_PATH:-/edge-after-costs}"
 
 if [[ ! -f .env ]]; then
   echo "No .env found. Copy the template first:  cp .env.example .env" >&2

@@ -16,10 +16,10 @@ RUN pip install --no-cache-dir -r requirements.txt
 COPY app ./app
 COPY scripts ./scripts
 
-RUN useradd --create-home --uid 10001 netedge \
+RUN useradd --create-home --uid 10001 appuser \
  && mkdir -p /data/backtest-cache /data/tape /data/research \
- && chown -R netedge:netedge /app /data
-USER netedge
+ && chown -R appuser:appuser /app /data
+USER appuser
 
 EXPOSE 8000
 

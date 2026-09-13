@@ -138,7 +138,7 @@ def test_redis_serves_when_disk_is_empty(tmp_path):
 
     reloaded = ChampionStore(tmp_path, redis_client=redis).load()
     assert reloaded is not None and reloaded.family == "momentum_continuation"
-    assert json.loads(redis.data["netedge:champion"])["family"] == "momentum_continuation"
+    assert json.loads(redis.data["edge_after_costs:champion"])["family"] == "momentum_continuation"
 
 
 # --------------------------------------------------------------------------- #

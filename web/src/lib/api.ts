@@ -4,7 +4,7 @@ import type { AuthMeResponse, DashboardPayload, HealthResponse } from "./types";
 // the FastAPI container by the rewrite in next.config.mjs. That is what makes
 // the session cookie work without CORS. Note that with `basePath` set, Next
 // does NOT rewrite plain fetch() URLs, so the prefix is written out here.
-const API_BASE = "/netedge/api";
+const API_BASE = "/edge-after-costs/api";
 
 export class ApiError extends Error {
   status: number;

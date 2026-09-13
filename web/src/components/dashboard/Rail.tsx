@@ -46,7 +46,7 @@ export function Rail({
   return (
     <header className="rail">
       <div className="wordmark">
-        <span className="wordmark-name">NETEDGE</span>
+        <span className="wordmark-name">EDGE AFTER COSTS</span>
         <span className="wordmark-ver">
           {data?.simulator_version ?? "sim-?"} · {data?.exchange ?? "—"}
         </span>

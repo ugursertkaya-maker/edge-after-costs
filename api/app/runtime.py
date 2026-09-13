@@ -23,10 +23,10 @@ except Exception:  # pragma: no cover - exercised only when redis is absent
 
 from app.config import Settings, get_settings
 
-DASHBOARD_KEY = "netedge:dashboard:{ledger}"
-HEALTH_KEY = "netedge:health"
-HEARTBEAT_KEY = "netedge:worker:heartbeat"
-KILL_SWITCH_KEY = "netedge:kill_switch"
+DASHBOARD_KEY = "edge_after_costs:dashboard:{ledger}"
+HEALTH_KEY = "edge_after_costs:health"
+HEARTBEAT_KEY = "edge_after_costs:worker:heartbeat"
+KILL_SWITCH_KEY = "edge_after_costs:kill_switch"
 
 # If the worker has not written a heartbeat for this long, the API reports the
 # data as stale rather than serving a frozen snapshot as if it were live.

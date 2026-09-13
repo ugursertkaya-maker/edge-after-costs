@@ -65,7 +65,7 @@ export default function LoginPage() {
   return (
     <main className="login">
       <div className="panel login-card">
-        <div className="login-title">NETEDGE</div>
+        <div className="login-title">EDGE AFTER COSTS</div>
         <div className="login-sub">
           Paper-only research terminal · observation and simulation
         </div>

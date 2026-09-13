@@ -1,4 +1,4 @@
-# Contributing to NetEdge
+# Contributing to EdgeAfterCosts
 
 Thanks for considering a contribution. This document covers the things that are
 specific to this project; the usual open-source etiquette applies otherwise.
@@ -7,8 +7,8 @@ specific to this project; the usual open-source etiquette applies otherwise.
 
 **Nothing may add an order-execution path.**
 
-NetEdge is paper-only by construction, and that property is enforced by tests
-rather than promised in prose (`api/app/safety.py`,
+EdgeAfterCosts is paper-only by construction, and that property is enforced by
+tests rather than promised in prose (`api/app/safety.py`,
 `api/tests/test_paper_only.py`, `api/tests/test_safety.py`). A change that
 introduces any of the following will fail CI and will not be merged:
 

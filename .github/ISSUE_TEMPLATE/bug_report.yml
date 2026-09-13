@@ -1,5 +1,5 @@
 name: Bug report
-description: Something in NetEdge behaves incorrectly
+description: Something in EdgeAfterCosts behaves incorrectly
 labels: ["bug"]
 body:
   - type: markdown
@@ -31,7 +31,7 @@ body:
       placeholder: |
         1. cp .env.example .env and set ...
         2. docker compose up --build
-        3. Open /netedge/... and ...
+        3. Open /edge-after-costs/... and ...
     validations:
       required: true
 

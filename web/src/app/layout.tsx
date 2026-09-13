@@ -7,7 +7,7 @@ import "./globals.css";
 // open all day. A downloaded face would buy nothing and add a flash.
 
 export const metadata: Metadata = {
-  title: "NetEdge",
+  title: "EdgeAfterCosts",
   description:
     "Quantitative market research and execution-simulation terminal — paper only, no real order is ever submitted.",
 };

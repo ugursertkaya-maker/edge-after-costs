@@ -612,14 +612,14 @@ class Settings:
     env: str = _es("ENV", "production")
     debug: bool = _eb("DEBUG", False)
     mode: str = _es("TRADING_MODE", PAPER)
-    base_path: str = _es("BASE_PATH", "/netedge")
-    public_base_url: str = _es("PUBLIC_BASE_URL", "http://localhost:3000/netedge")
+    base_path: str = _es("BASE_PATH", "/edge-after-costs")
+    public_base_url: str = _es("PUBLIC_BASE_URL", "http://localhost:3000/edge-after-costs")
     secret_key: str = _es("SECRET_KEY", "dev-insecure-key-change-me")
     cookie_secure: bool = _eb("COOKIE_SECURE", True)
     bootstrap_admin_email: str = _es("BOOTSTRAP_ADMIN_EMAIL", "")
     bootstrap_admin_password: str = _es("BOOTSTRAP_ADMIN_PASSWORD", "")
     database_url: str = _es(
-        "DATABASE_URL", "postgresql+psycopg://netedge:netedge@127.0.0.1:5432/netedge"
+        "DATABASE_URL", "postgresql+psycopg://edge_after_costs:edge_after_costs@127.0.0.1:5432/edge_after_costs"
     )
     redis_url: str = _es("REDIS_URL", "redis://127.0.0.1:6379/0")
     simulator_version: str = _es("SIMULATOR_VERSION", "sim-1.0.0")

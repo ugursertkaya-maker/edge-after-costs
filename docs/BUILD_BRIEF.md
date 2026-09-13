@@ -1,4 +1,4 @@
-# NETEDGE — build brief (read this first)
+# EDGE AFTER COSTS — build brief (read this first)
 
 ## What we are building
 
@@ -66,7 +66,7 @@ api/app/
   features.py    regime.py     ranker.py     risk.py  exits.py     universe.py
   worker/main.py
 api/tests/
-web/             (Next.js 15 dashboard, basePath=/netedge, Turkish UI)
+web/             (Next.js 15 dashboard, basePath=/edge-after-costs, Turkish UI)
 ```
 
 ## Non-negotiables

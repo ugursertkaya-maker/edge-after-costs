@@ -1,12 +1,22 @@
-# NetEdge
+# EdgeAfterCosts
 
-**A quantitative market research and execution-simulation framework for testing
-whether a trading strategy retains an edge after fees, spread, slippage,
-liquidity constraints, regime changes and out-of-sample validation.**
+**Cost-aware quantitative research and execution simulation.**
 
-NetEdge is built as much to *disprove* strategies as to find them. Most of what
-it has measured so far is negative, and those results are published here rather
-than hidden — see [Research findings](#research-findings).
+A framework for answering one question about a trading strategy: does its
+apparent edge survive **after costs**? Fees, the bid/ask spread, slippage from
+walking a real order book, latency, finite liquidity, fill probability, a change
+of regime, and validation on data the parameters never saw — each of those is
+modelled explicitly and each of them is allowed to take the edge away.
+
+The name is the thesis. *Edge before costs* is easy to produce and means
+nothing; **edge after costs** is the only quantity a decision can be made on,
+and this framework is built to measure it honestly enough that the answer is
+usually "no".
+
+EdgeAfterCosts is therefore designed as much to *disprove* strategies as to
+find them. Most of what it has measured so far is negative, and those results
+are published here rather than hidden — see
+[Research findings](#research-findings).
 
 > **This is research software. It is paper-only by construction, it has never
 > placed a real order, and it is not investment advice.** See
@@ -20,7 +30,7 @@ A backtest is very easy to make look good. The usual way it lies is not fraud
 but omission — the simulation quietly assumes away the things that actually
 determine whether a strategy makes money:
 
-| Assumed away | What NetEdge does instead |
+| Assumed away | What EdgeAfterCosts does instead |
 |---|---|
 | **Fees** | Every candidate is ranked on *net* edge, with the venue's real fee schedule (including tiered and promotional rates) applied per leg |
 | **Spread** | Entry pays the spread; the break-even price is computed and displayed per position |
@@ -33,9 +43,9 @@ determine whether a strategy makes money:
 | **Look-ahead bias** | Feature construction is causal, labels are purged and embargoed, and window ordering is asserted |
 | **Survivorship in the search** | Losing candidates stay in the results table — the easiest way for a search to lie is to not show what it tried |
 
-The claim is not that NetEdge models these perfectly. The claim is that it makes
-each of them **explicit, configurable and testable**, so that a result can be
-attacked on its assumptions instead of taken on trust.
+The claim is not that EdgeAfterCosts models these perfectly. The claim is that
+it makes each of them **explicit, configurable and testable**, so that a result
+can be attacked on its assumptions instead of taken on trust.
 
 ---
 
@@ -241,8 +251,8 @@ the data supported one.
 ## Quick start
 
 ```bash
-git clone <your-fork-url> netedge
-cd netedge
+git clone <your-fork-url> edge-after-costs
+cd edge-after-costs
 cp .env.example .env
 
 # Set at minimum POSTGRES_PASSWORD, SECRET_KEY and BOOTSTRAP_ADMIN_PASSWORD.
@@ -251,7 +261,7 @@ cp .env.example .env
 docker compose up --build
 ```
 
-Then open <http://localhost:3000/netedge> and sign in with
+Then open <http://localhost:3000/edge-after-costs> and sign in with
 `BOOTSTRAP_ADMIN_EMAIL` / `BOOTSTRAP_ADMIN_PASSWORD`.
 
 No exchange account and no API key are needed: the system reads public market

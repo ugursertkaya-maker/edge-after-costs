@@ -82,7 +82,7 @@ WARM_SNAPSHOT_INTERVAL_MS = int(os.getenv("WARM_SNAPSHOT_INTERVAL_MS", "1000"))
 #: rather than merely exists.
 WARM_STALENESS_SNAPSHOTS = int(os.getenv("WARM_STALENESS_SNAPSHOTS", "5"))
 
-log = logging.getLogger("netedge.worker")
+log = logging.getLogger("edge_after_costs.worker")
 
 
 @dataclass

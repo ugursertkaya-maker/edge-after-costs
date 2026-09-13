@@ -18,7 +18,7 @@ from app.routes import auth as auth_routes
 from app.routes import backtests, dashboard, health, system
 from app.safety import PAPER_ONLY_BANNER, assert_paper_mode, source_tree_is_paper_only
 
-log = logging.getLogger("netedge.api")
+log = logging.getLogger("edge_after_costs.api")
 
 
 def create_app() -> FastAPI:
@@ -26,7 +26,7 @@ def create_app() -> FastAPI:
     assert_paper_mode(s)
 
     app = FastAPI(
-        title="NetEdge",
+        title="EdgeAfterCosts",
         version="1.0.0",
         docs_url=None,
         redoc_url=None,

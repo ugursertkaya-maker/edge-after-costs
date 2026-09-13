@@ -28,10 +28,10 @@ from dataclasses import asdict, dataclass, field
 from pathlib import Path
 from typing import Any
 
-log = logging.getLogger("netedge.champion")
+log = logging.getLogger("edge_after_costs.champion")
 
 CHAMPION_FILENAME = "champion.json"
-REDIS_KEY = "netedge:champion"
+REDIS_KEY = "edge_after_costs:champion"
 
 
 @dataclass(frozen=True)

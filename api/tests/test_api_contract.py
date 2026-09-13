@@ -7,7 +7,7 @@ from fastapi.testclient import TestClient
 
 from app.config import reload_settings
 
-PREFIX = "/netedge/api"
+PREFIX = "/edge-after-costs/api"
 
 
 @pytest.fixture

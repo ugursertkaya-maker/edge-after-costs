@@ -1,8 +1,8 @@
-# NetEdge — PAPER ONLY. Self-contained stack.
+# EdgeAfterCosts — PAPER ONLY. Self-contained stack.
 #
 # `docker compose up --build` brings up the whole system with no external
 # dependency beyond a container runtime:
-#   * its own bridge network `netedge-internal`; db and redis are never
+#   * its own bridge network `edge-after-costs-internal`; db and redis are never
 #     published to the host
 #   * its own Postgres, Redis and volumes — nothing is shared with anything
 #     else running on the machine
@@ -12,7 +12,7 @@
 #
 # To put this behind a TLS-terminating reverse proxy, see
 # docker/nginx.example.conf.
-name: netedge
+name: edge-after-costs
 
 x-restart: &restart
   restart: unless-stopped
@@ -23,18 +23,18 @@ services:
   db:
     <<: [*restart, *logging]
     image: postgres:16-alpine
-    container_name: netedge-db
+    container_name: edge-after-costs-db
     environment:
-      POSTGRES_DB: ${POSTGRES_DB:-netedge}
-      POSTGRES_USER: ${POSTGRES_USER:-netedge}
+      POSTGRES_DB: ${POSTGRES_DB:-edge_after_costs}
+      POSTGRES_USER: ${POSTGRES_USER:-edge_after_costs}
       POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?POSTGRES_PASSWORD is required}
       POSTGRES_INITDB_ARGS: "--data-checksums"
-    volumes: [netedge-pgdata:/var/lib/postgresql/data]
-    networks: [netedge-internal]
+    volumes: [edge-after-costs-pgdata:/var/lib/postgresql/data]
+    networks: [edge-after-costs-internal]
     mem_limit: 448m
     cpus: 0.4
     healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-netedge} -d ${POSTGRES_DB:-netedge}"]
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-edge_after_costs} -d ${POSTGRES_DB:-edge_after_costs}"]
       interval: 15s
       timeout: 5s
       retries: 6
@@ -43,9 +43,9 @@ services:
   redis:
     <<: [*restart, *logging]
     image: redis:7-alpine
-    container_name: netedge-redis
+    container_name: edge-after-costs-redis
     command: ["redis-server", "--appendonly", "no", "--save", "", "--maxmemory", "64mb", "--maxmemory-policy", "allkeys-lru"]
-    networks: [netedge-internal]
+    networks: [edge-after-costs-internal]
     mem_limit: 96m
     cpus: 0.15
     healthcheck:
@@ -57,20 +57,20 @@ services:
   api:
     <<: [*restart, *logging]
     build: { context: ./api }
-    image: netedge-api:latest
-    container_name: netedge-api
+    image: edge-after-costs-api:latest
+    container_name: edge-after-costs-api
     env_file: [.env]
     environment:
-      POSTGRES_HOST: netedge-db
-      REDIS_HOST: netedge-redis
+      POSTGRES_HOST: edge-after-costs-db
+      REDIS_HOST: edge-after-costs-redis
     depends_on:
       db: { condition: service_healthy }
       redis: { condition: service_healthy }
-    networks: [netedge-internal]
+    networks: [edge-after-costs-internal]
     mem_limit: 384m
     cpus: 0.5
     healthcheck:
-      test: ["CMD-SHELL", "curl -fsS http://127.0.0.1:8000/netedge/api/health >/dev/null || exit 1"]
+      test: ["CMD-SHELL", "curl -fsS http://127.0.0.1:8000/edge-after-costs/api/health >/dev/null || exit 1"]
       interval: 20s
       timeout: 6s
       retries: 5
@@ -78,27 +78,27 @@ services:
 
   worker:
     <<: [*restart, *logging]
-    image: netedge-api:latest
-    container_name: netedge-worker
+    image: edge-after-costs-api:latest
+    container_name: edge-after-costs-worker
     entrypoint: []
     command: ["python", "-m", "app.worker.main"]
     env_file: [.env]
     environment:
-      POSTGRES_HOST: netedge-db
-      REDIS_HOST: netedge-redis
+      POSTGRES_HOST: edge-after-costs-db
+      REDIS_HOST: edge-after-costs-redis
     depends_on:
       db: { condition: service_healthy }
       redis: { condition: service_healthy }
       api: { condition: service_healthy }
     volumes:
-      - netedge-cache:/data/backtest-cache
-      - netedge-tape:/data/tape
-      - netedge-research:/data/research
-    networks: [netedge-internal]   # outbound only, nothing inbound
+      - edge-after-costs-cache:/data/backtest-cache
+      - edge-after-costs-tape:/data/tape
+      - edge-after-costs-research:/data/research
+    networks: [edge-after-costs-internal]   # outbound only, nothing inbound
     mem_limit: 640m
     cpus: 0.8
     healthcheck:
-      test: ["CMD-SHELL", "python -c \"import redis,os,sys,time;r=redis.Redis(host='netedge-redis',decode_responses=True);b=r.get('netedge:worker:heartbeat');sys.exit(0 if b and (time.time()*1000-int(b))<60000 else 1)\""]
+      test: ["CMD-SHELL", "python -c \"import redis,os,sys,time;r=redis.Redis(host='edge-after-costs-redis',decode_responses=True);b=r.get('edge_after_costs:worker:heartbeat');sys.exit(0 if b and (time.time()*1000-int(b))<60000 else 1)\""]
       interval: 30s
       timeout: 8s
       retries: 4
@@ -107,31 +107,31 @@ services:
   web:
     <<: [*restart, *logging]
     build: { context: ./web }
-    image: netedge-web:latest
-    container_name: netedge-web
+    image: edge-after-costs-web:latest
+    container_name: edge-after-costs-web
     environment:
-      API_ORIGIN: http://netedge-api:8000
+      API_ORIGIN: http://edge-after-costs-api:8000
       NODE_ENV: production
     depends_on:
       api: { condition: service_started }
     # Loopback only by default. Change to "3000:3000" to expose it on the LAN,
     # or drop the mapping entirely and reach it through a reverse proxy.
     ports: ["127.0.0.1:3000:3000"]
-    networks: [netedge-internal]
+    networks: [edge-after-costs-internal]
     mem_limit: 256m
     cpus: 0.35
     healthcheck:
-      test: ["CMD-SHELL", "node -e \"fetch('http://127.0.0.1:3000/netedge/login').then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))\""]
+      test: ["CMD-SHELL", "node -e \"fetch('http://127.0.0.1:3000/edge-after-costs/login').then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))\""]
       interval: 20s
       timeout: 6s
       retries: 5
       start_period: 25s
 
 networks:
-  netedge-internal: { name: netedge-internal, driver: bridge }
+  edge-after-costs-internal: { name: edge-after-costs-internal, driver: bridge }
 
 volumes:
-  netedge-pgdata: { name: netedge-pgdata }
-  netedge-cache: { name: netedge-cache }
-  netedge-tape: { name: netedge-tape }
-  netedge-research: { name: netedge-research }
+  edge-after-costs-pgdata: { name: edge-after-costs-pgdata }
+  edge-after-costs-cache: { name: edge-after-costs-cache }
+  edge-after-costs-tape: { name: edge-after-costs-tape }
+  edge-after-costs-research: { name: edge-after-costs-research }

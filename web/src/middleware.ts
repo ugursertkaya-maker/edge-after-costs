@@ -8,15 +8,15 @@ import { NextRequest, NextResponse } from "next/server";
  * the dashboard, get a 401, and bounce back — a loop. The login page verifies
  * the session itself via `GET /auth/me` and only then navigates away.
  *
- * With `basePath: "/netedge"` Next strips the prefix from
+ * With `basePath: "/edge-after-costs"` Next strips the prefix from
  * `request.nextUrl.pathname` before middleware sees it, so the paths below are
  * basePath-relative. The prefix is stripped defensively anyway in case that
  * behaviour changes between Next versions.
  */
 export function middleware(request: NextRequest) {
   let pathname = request.nextUrl.pathname;
-  if (pathname.startsWith("/netedge")) {
-    pathname = pathname.slice("/netedge".length) || "/";
+  if (pathname.startsWith("/edge-after-costs")) {
+    pathname = pathname.slice("/edge-after-costs".length) || "/";
   }
 
   if (pathname === "/login" || pathname.startsWith("/login/")) {
@@ -28,7 +28,7 @@ export function middleware(request: NextRequest) {
   if (!hasSession) {
     const loginUrl = request.nextUrl.clone();
     // basePath is re-applied by Next when the URL is built; writing
-    // "/netedge/login" here would redirect to /netedge/netedge/login.
+    // "/edge-after-costs/login" here would redirect to /edge-after-costs/edge-after-costs/login.
     loginUrl.pathname = "/login";
     loginUrl.search = "";
     return NextResponse.redirect(loginUrl);

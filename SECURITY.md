@@ -2,9 +2,10 @@
 
 ## Scope
 
-NetEdge is paper-only research software. It holds no exchange credentials, has
-no order-execution path, and reads public market data only. That narrows the
-threat surface considerably, but the following are all in scope:
+EdgeAfterCosts is paper-only research software. It holds no exchange
+credentials, has no order-execution path, and reads public market data only.
+That narrows the threat surface considerably, but the following are all in
+scope:
 
 - **Anything that could create an order-execution path**, or that weakens or
   bypasses the paper-only guard in `api/app/safety.py`. This is the highest

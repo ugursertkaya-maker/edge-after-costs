@@ -29,7 +29,7 @@ from typing import Any
 from app.config import Settings, get_settings
 from app.types import Features, Regime, RegimeState, Side, now_ms
 
-log = logging.getLogger("netedge.predict")
+log = logging.getLogger("edge_after_costs.predict")
 
 #: Every way the engine can decline.  Counted, so the report can tell "found no
 #: edge" apart from "refuses everything" — identical in the P&L, completely

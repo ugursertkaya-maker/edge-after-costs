@@ -1,4 +1,4 @@
-# Phase report — NetEdge
+# Phase report — EdgeAfterCosts
 
 Date: 2026-09-11 · Mode: **PAPER** · Live orders placed: **0**
 
@@ -7,7 +7,7 @@ Date: 2026-09-11 · Mode: **PAPER** · Live orders placed: **0**
 ## 1. The system
 
 - **UI:** the dashboard at `{BASE_PATH}` (login-gated)
-- **Deployment:** five containers — `netedge-{web,api,worker,db,redis}`
+- **Deployment:** five containers — `edge-after-costs-{web,api,worker,db,redis}`
 - Own network, own Postgres, own Redis, own volumes. The stack shares nothing
   with anything else running on the host.
 - **10,332 lines** of application Python across 52 modules, **24 test files**,
@@ -237,7 +237,7 @@ is running and will accumulate evidence either way.
 
 ## 6. Safety posture
 
-Live-verified at `GET /netedge/api/system/safety`:
+Live-verified at `GET /edge-after-costs/api/system/safety`:
 
 ```json
 { "mode": "PAPER", "live_orders_enabled": false,
