@@ -39,29 +39,31 @@ class MeanReversion(Strategy):
         # bb_width_bps spans mean +/- 2 sigma, so half of it *is* the 2-sigma
         # extension we are looking for.
         threshold = max(f.bb_width_bps / 2.0, MIN_EXTENSION_ATR * atr)
+        if atr <= 0.0:
+            return self._no("atr_zero", atr, 1e-9)
         if threshold <= 0:
-            return None
+            return self._no("threshold", threshold, 1e-9)
 
         if f.vwap_dev_bps <= -threshold and f.range_pos <= RANGE_POS_LOW:
             direction = 1                      # stretched down -> buy
         elif f.vwap_dev_bps >= threshold and f.range_pos >= RANGE_POS_HIGH:
             direction = -1                     # stretched up -> sell
         else:
-            return None
+            return self._no("not_stretched", f.vwap_dev_bps, threshold)
 
         # The aggressors that caused the stretch must be losing steam:
         # flow still points the way price went, acceleration points back.
-        if -direction * f.trade_flow_imbalance < FLOW_PRESSURE_MIN:
-            return None
-        if direction * f.trade_flow_accel < FLOW_EXHAUSTION_MIN:
-            return None
+        if -direction * f.trade_flow_imbalance < self.relaxed(FLOW_PRESSURE_MIN):
+            return self._no("flow_pressure", -direction * f.trade_flow_imbalance, FLOW_PRESSURE_MIN)
+        if direction * f.trade_flow_accel < self.relaxed(FLOW_EXHAUSTION_MIN):
+            return self._no("flow_exhaustion", direction * f.trade_flow_accel, FLOW_EXHAUSTION_MIN)
 
         # The book has to agree: microprice tilted back toward our side.
         if f.mid <= 0:
-            return None
+            return self._no("mid", f.mid, 1e-9)
         micro_off_bps = (f.microprice - f.mid) / f.mid * 10_000.0
         if direction * micro_off_bps < 0:
-            return None
+            return self._no("micro_offset", direction * micro_off_bps, 0.0)
 
         stretch_atr = abs(f.vwap_dev_bps) / atr
         score = clamp(

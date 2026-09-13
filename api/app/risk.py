@@ -103,6 +103,9 @@ class RiskEngine:
 
             settings = get_settings()
         self.settings = settings
+        #: symbol -> USD one minute of its own flow absorbs. Empty means
+        #: unmeasured, and an unmeasured pair is sized exactly as before.
+        self._capacity: dict[str, float] = {}
         self.cfg = settings.risk
         self.exits = ExitEngine(settings=settings)
         # Share one engine with the allocator when you can: it is what holds
@@ -115,6 +118,11 @@ class RiskEngine:
     # ------------------------------------------------------------------ #
     # Account-level blocks
     # ------------------------------------------------------------------ #
+
+    def capacity_hint(self, symbol: str, max_usd: float) -> None:
+        """Record what one minute of this pair's flow can absorb."""
+        if max_usd > 0:
+            self._capacity[symbol.upper()] = float(max_usd)
 
     def blocked_reason(self, state: RiskState) -> RejectReason | None:
         """Why the account may not open *anything* right now, or ``None``.
@@ -335,6 +343,21 @@ class RiskEngine:
             qty = _clamp(
                 qty, pcfg.max_position_usd / entry, "clamp:max_position_usd", notes
             )
+
+        # 1b. what this pair's own flow can absorb.
+        #
+        # Capacity was measured for the universe tier decision and applied
+        # nowhere else, so sizing was bounded by the risk budget alone. In the
+        # 120-day replay that put an average of $1,352 into ETHUSD, a pair whose
+        # flow absorbs about $22 a minute, and the simulator charged the book
+        # walk honestly: realised slippage 6.7 bps against the 2.0 the config
+        # models, 78% of all execution cost. The clamp belongs here rather than
+        # in the allocator because this is the gate BOTH paths pass through --
+        # the live allocator and the backtest, which does not build a portfolio
+        # engine at all.
+        cap_usd = float(self._capacity.get(info.symbol.upper(), 0.0) or 0.0)
+        if cap_usd > 0:
+            qty = _clamp(qty, cap_usd / entry, "clamp:capacity", notes)
 
         # 2. total exposure, counting what is already on
         room = equity * cfg.max_total_exposure_pct / 100.0 - open_notional

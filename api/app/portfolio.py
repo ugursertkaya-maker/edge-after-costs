@@ -1135,6 +1135,10 @@ class PortfolioEngine:
         # The most recent view, so can_open()/allocate() can price a candidate
         # into the book without being handed the bars a second time.
         self.view: CorrelationView | None = None
+        #: symbol -> USD one minute of its own flow absorbs comfortably. Fed by
+        #: the worker from the universe entry; empty means "unmeasured", and an
+        #: unmeasured pair is sized exactly as before rather than blocked.
+        self._capacity: dict[str, float] = {}
 
     # ------------------------------------------------------------------ #
     # Deployment band
@@ -1489,6 +1493,15 @@ class PortfolioEngine:
                 mean_edge_bps=mean_edge,
                 plan=plan,
             )
+            # Capacity bounds the SIZE, not just the listing. It was measured
+            # for the universe tier decision and never applied here, so a
+            # $5,000 book sized $1,715 into ETHUSD -- a pair whose own flow
+            # absorbs about $22 a minute. The simulator charged the book walk
+            # honestly and realised slippage came out at 6.85 bps against the
+            # 2.0 the config models, which is most of why every arm loses.
+            cap = self._capacity_cap(opp.symbol)
+            if cap is not None and cap > 0:
+                target_notional = min(target_notional, cap)
             qty, notional, risk_usd, notes = self._shrink(
                 verdict, target_notional, info=info, entry=entry
             )
@@ -1551,6 +1564,19 @@ class PortfolioEngine:
             portfolio=working,
         )
         return risk_engine.evaluate(opp, rs, info=info, book=book)
+
+    def capacity_hint(self, symbol: str, max_usd: float) -> None:
+        """Record what one minute of this pair's flow can absorb.
+
+        Supplied by the worker from the universe entry, because the allocator
+        does not own market metadata and should not start.
+        """
+        if max_usd > 0:
+            self._capacity[symbol.upper()] = float(max_usd)
+
+    def _capacity_cap(self, symbol: str) -> float | None:
+        """The per-position ceiling this pair's own flow supports, or None."""
+        return self._capacity.get(symbol.upper())
 
     def _mode_notional(
         self,

@@ -35,18 +35,18 @@ class BookImbalance(Strategy):
     def _evaluate(self, f: Features, regime: RegimeState) -> Signal | None:
         atr = f.atr_bps
         if f.mid <= 0 or f.depth_bid_usd <= 0 or f.depth_ask_usd <= 0:
-            return None
-        if abs(f.imbalance) < IMBALANCE_MIN:
-            return None
+            return self._no("book_empty", min(f.depth_bid_usd, f.depth_ask_usd), 1e-9)
+        if abs(f.imbalance) < self.relaxed(IMBALANCE_MIN):
+            return self._no("imbalance", abs(f.imbalance), IMBALANCE_MIN)
         direction = 1 if f.imbalance > 0 else -1
 
         micro_off_bps = (f.microprice - f.mid) / f.mid * 10_000.0
         if direction * micro_off_bps < MICRO_OFFSET_FRAC_OF_SPREAD * f.spread_bps:
-            return None
+            return self._no("micro_offset", direction * micro_off_bps, MICRO_OFFSET_FRAC_OF_SPREAD * f.spread_bps)
 
         # Aggressive flow running hard the other way overwhelms resting depth.
         if direction * f.trade_flow_imbalance < -FLOW_AGAINST_MAX:
-            return None
+            return self._no("flow_against", direction * f.trade_flow_imbalance, -FLOW_AGAINST_MAX)
 
         score = clamp(
             0.40 * scale(abs(f.imbalance), IMBALANCE_MIN, 0.85)

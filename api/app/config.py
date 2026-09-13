@@ -456,6 +456,28 @@ class RecycleConfig:
 
 
 @dataclass(frozen=True)
+class EntryProfileConfig:
+    """Controlled relaxation of SETUP-GENERATION thresholds only.
+
+    Nothing here touches fees, spread, slippage, the NET EV arithmetic, risk or
+    accounting. A relaxed profile produces more CANDIDATES; every one of them
+    still faces the same unchanged NET edge gate, so the only way a profile can
+    add trades is by finding setups that genuinely clear their own costs.
+
+    ``relax`` scales each strategy's minimum-conviction thresholds toward zero:
+    1.0 is untouched, 0.5 halves them. It is a single dial on purpose -- a
+    per-condition grid over six strategies is a search big enough to fit noise,
+    and the point of this sweep is the activity/quality tradeoff curve, not an
+    optimum.
+    """
+
+    #: 1.0 = CURRENT. Lower is more permissive.
+    relax: float = _ef("ENTRY_RELAX", 1.0)
+    #: Minimum conviction score, scaled the same way.
+    min_score_relax: float = _ef("ENTRY_MIN_SCORE_RELAX", 1.0)
+
+
+@dataclass(frozen=True)
 class StrategyHorizonConfig:
     """Per-strategy holding horizon and the target/stop multipliers on it.
 
@@ -615,6 +637,9 @@ class Settings:
     portfolio: PortfolioConfig = field(default_factory=PortfolioConfig)
     recycle: RecycleConfig = field(default_factory=RecycleConfig)
     horizon: HorizonConfig = field(default_factory=HorizonConfig)
+    entry_profile: EntryProfileConfig = field(
+        default_factory=EntryProfileConfig
+    )
     strategy_horizon: StrategyHorizonConfig = field(
         default_factory=StrategyHorizonConfig
     )

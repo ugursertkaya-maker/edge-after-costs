@@ -142,6 +142,36 @@ class Strategy:
             return own
         return float(cfg.stop_mult)
 
+    def relaxed(self, threshold: float) -> float:
+        """A setup threshold after the entry profile's relaxation.
+
+        Applies to minimum-conviction gates only. Costs, the NET edge gate and
+        risk are untouched by design: a profile may widen the mouth of the
+        funnel, never the exit.
+        """
+        cfg = getattr(self.settings, "entry_profile", None)
+        if cfg is None:
+            return threshold
+        return threshold * max(0.0, float(cfg.relax))
+
+    @property
+    def effective_min_score(self) -> float:
+        cfg = getattr(self.settings, "entry_profile", None)
+        if cfg is None:
+            return self.min_score
+        return self.min_score * max(0.0, float(cfg.min_score_relax))
+
+    def _no(self, condition: str, value: float, threshold: float) -> None:
+        """Decline, recording WHICH condition bound and with what number.
+
+        A strategy that returns None tells the operator nothing. "NO_SETUP"
+        repeated on a live screen is a black box, and the only way to tell an
+        over-restrictive threshold from an empty market is to see the
+        distribution of the value that did the refusing.
+        """
+        self.last_decline = (condition, float(value), float(threshold))
+        return None
+
     # -- gating ------------------------------------------------------------ #
 
     def accepts(self, regime: RegimeState) -> bool:
@@ -198,8 +228,9 @@ class Strategy:
         ``stop_bps > 0`` and a target the quoted spread cannot swallow.
         """
         score = clamp(score)
-        if score < self.min_score:
-            self.last_decline = ("SCORE_BELOW_MIN", score, self.min_score)
+        floor = self.effective_min_score
+        if score < floor:
+            self.last_decline = ("SCORE_BELOW_MIN", score, floor)
             return None
         # A target below the floor means the market is not offering a move this
         # strategy can aim at. Clamping it UP does not make the move exist -- it

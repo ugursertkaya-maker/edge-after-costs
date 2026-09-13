@@ -33,22 +33,24 @@ class FlowImpulse(Strategy):
 
     def _evaluate(self, f: Features, regime: RegimeState) -> Signal | None:
         atr = f.atr_bps
-        if abs(f.trade_flow_imbalance) < FLOW_MIN:
-            return None
+        if atr <= 0.0:
+            return self._no("atr_zero", atr, 1e-9)
+        if abs(f.trade_flow_imbalance) < self.relaxed(FLOW_MIN):
+            return self._no("trade_flow", abs(f.trade_flow_imbalance), FLOW_MIN)
         direction = 1 if f.trade_flow_imbalance > 0 else -1
 
-        if direction * f.trade_flow_accel < ACCEL_MIN:
-            return None
+        if direction * f.trade_flow_accel < self.relaxed(ACCEL_MIN):
+            return self._no("flow_accel", direction * f.trade_flow_accel, ACCEL_MIN)
 
         response_atr = direction * f.ret_1m_bps / atr
-        if response_atr < PRICE_RESPONSE_ATR:
-            return None
+        if response_atr < self.relaxed(PRICE_RESPONSE_ATR):
+            return self._no("price_response", response_atr, PRICE_RESPONSE_ATR)
 
         # An impulse into a shrinking book is a trap, not an opportunity: we
         # need the side we would be hitting to still have resting size.
         taking_side_depth = f.depth_ask_usd if direction > 0 else f.depth_bid_usd
         if taking_side_depth <= 0:
-            return None
+            return self._no("taking_side_depth", taking_side_depth, 1e-9)
 
         score = clamp(
             0.35 * scale(abs(f.trade_flow_imbalance), FLOW_MIN, 0.85)

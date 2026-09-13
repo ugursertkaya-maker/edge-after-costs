@@ -33,22 +33,22 @@ class BreakoutScalp(Strategy):
         # The squeeze is measured *before* the breaking bar widened the bands,
         # so take whichever reading still remembers the coil.
         compression = max(f.compression, float(f.extras.get("compression_prev", 0.0)))
-        if compression < COMPRESSION_MIN:
-            return None
-        if f.volume_ratio < VOLUME_RATIO_MIN:
-            return None
+        if compression < self.relaxed(COMPRESSION_MIN):
+            return self._no("compression", compression, COMPRESSION_MIN)
+        if f.volume_ratio < self.relaxed(VOLUME_RATIO_MIN):
+            return self._no("volume_ratio", f.volume_ratio, VOLUME_RATIO_MIN)
 
         if f.range_pos >= RANGE_POS_HIGH:
             direction = 1
         elif f.range_pos <= RANGE_POS_LOW:
             direction = -1
         else:
-            return None
+            return self._no("range_pos", f.range_pos, RANGE_POS_HIGH)
 
-        if direction * f.trade_flow_imbalance < FLOW_MIN:
-            return None
+        if direction * f.trade_flow_imbalance < self.relaxed(FLOW_MIN):
+            return self._no("trade_flow", direction * f.trade_flow_imbalance, FLOW_MIN)
         if direction * f.ret_1m_bps <= 0:
-            return None
+            return self._no("ret_1m_agree", direction * f.ret_1m_bps, 0.0)
 
         atr = f.atr_bps
         score = clamp(

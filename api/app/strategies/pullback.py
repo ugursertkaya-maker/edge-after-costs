@@ -38,29 +38,33 @@ class TrendPullback(Strategy):
     def _evaluate(self, f: Features, regime: RegimeState) -> Signal | None:
         atr = f.atr_bps
         gap = f.ema_fast - f.ema_slow
-        if gap == 0.0 or f.trend_strength < TREND_STRENGTH_MIN:
-            return None
+        if atr <= 0.0:
+            return self._no("atr_zero", atr, 1e-9)
+        if gap == 0.0:
+            return self._no("ema_gap", 0.0, 0.0)
+        if f.trend_strength < self.relaxed(TREND_STRENGTH_MIN):
+            return self._no("trend_strength", f.trend_strength, TREND_STRENGTH_MIN)
         direction = 1 if gap > 0 else -1
 
         # Distance from the slow EMA, signed with the trend.
         if f.ema_slow <= 0:
-            return None
+            return self._no("ema_slow", f.ema_slow, 1e-9)
         dist_atr = (f.price - f.ema_slow) / f.price * 10_000.0 / atr * direction
         if dist_atr > SLOW_EMA_NEAR_ATR or dist_atr < -SLOW_EMA_THROUGH_ATR:
-            return None
+            return self._no("dist_to_ema", dist_atr, SLOW_EMA_NEAR_ATR)
 
         # A real, controlled retracement over the last five bars.
         pullback_atr = -direction * f.ret_5m_bps / atr
-        if pullback_atr < PULLBACK_MIN_ATR or pullback_atr > PULLBACK_MAX_ATR:
-            return None
+        if pullback_atr < self.relaxed(PULLBACK_MIN_ATR) or pullback_atr > PULLBACK_MAX_ATR:
+            return self._no("pullback_depth", pullback_atr, PULLBACK_MIN_ATR)
 
         # ...that has stopped.
         resume_atr = direction * f.ret_1m_bps / atr
-        if resume_atr < RESUME_MIN_ATR:
-            return None
+        if resume_atr < self.relaxed(RESUME_MIN_ATR):
+            return self._no("resume", resume_atr, RESUME_MIN_ATR)
 
         if direction * f.trade_flow_imbalance < -FLOW_AGAINST_MAX:
-            return None
+            return self._no("flow_against", direction * f.trade_flow_imbalance, -FLOW_AGAINST_MAX)
 
         # VWAP confirms the same picture: price is back at value, not extended.
         vwap_atr = abs(f.vwap_dev_bps) / atr

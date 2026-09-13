@@ -382,6 +382,11 @@ class TradingWorker:
         # and every reject counter downstream.
         self.watchlist = [e for e in entries if e.tier == "cold"]
         self.universe = [e for e in entries if e.tier != "cold"]
+        # Teach the allocator what each pair's own flow can absorb, so position
+        # SIZE is bounded by depth and not only by the risk budget.
+        for e in self.universe:
+            self.portfolio.capacity_hint(e.symbol, e.capacity_max_usd)
+            self.risk.capacity_hint(e.symbol, e.capacity_max_usd)
         await self._seed_bars([e.symbol for e in self.universe])
         self._universe_refreshed_ms = now_ms()
         # Log the ACTUAL subscription, not the pre-promotion variables: a line

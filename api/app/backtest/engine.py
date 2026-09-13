@@ -1000,6 +1000,23 @@ def run_backtest(
     ``components`` exists so the harness can be exercised against test doubles;
     leave it ``None`` and the real production objects are built.
     """
+    # Capacity is derivable from the bars themselves, so the harness bounds
+    # position size the same way production does rather than sizing into books
+    # that cannot absorb the order.
+    if components is None:
+        components = build_components(cfg, settings)
+    from app.universe import capacity_max_usd as _cap
+    for _sym, _bars in bars_by_symbol.items():
+        if not _bars:
+            continue
+        _recent = _bars[-1440:]
+        _vol24 = sum(b.quote_volume for b in _recent)
+        # Test doubles need not implement the hint; a harness that cannot be
+        # told about capacity sizes exactly as it did before.
+        hint = getattr(components.risk, "capacity_hint", None)
+        if _vol24 > 0 and callable(hint):
+            hint(_sym, _cap(_vol24))
+
     return _Backtester(
         bars_by_symbol,
         cfg,

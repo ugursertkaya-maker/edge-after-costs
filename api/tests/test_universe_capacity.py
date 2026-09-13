@@ -196,3 +196,53 @@ class TestDedupeIsStableAndPrefersTheCheapLeg:
         clearly_better = self._leg("SOLUSDT", "USDT", net_score=0.40,
                                    trip=21.0, tier0=False)
         assert sel._prefer(clearly_better, cheap_but_dead, key="net_score") is True
+
+
+class TestCapacityBoundsPositionSize:
+    """Capacity was measured for the universe and never applied to sizing.
+
+    Measured in the 120-day replay: average position $1,714.67 into ETHUSD, a
+    pair whose own flow absorbs about $22 a minute. The simulator charged the
+    book walk honestly and realised slippage came out at 6.85 bps against the
+    2.0 the config models -- most of why every activity profile lost money.
+    """
+
+    def _engine(self):
+        from app.config import get_settings
+        from app.portfolio import PortfolioEngine
+        return PortfolioEngine(settings=get_settings())
+
+    def test_an_unmeasured_symbol_is_sized_exactly_as_before(self):
+        """Absence of a measurement must not become a position block."""
+        pe = self._engine()
+        assert pe._capacity_cap("ETHUSD") is None
+
+    def test_a_hint_caps_the_symbol(self):
+        pe = self._engine()
+        pe.capacity_hint("ETHUSD", 22.43)
+        assert pe._capacity_cap("ETHUSD") == pytest.approx(22.43)
+
+    def test_a_zero_or_negative_hint_is_ignored(self):
+        """A pair reporting no capacity is unmeasured, not un-tradable at 0."""
+        pe = self._engine()
+        pe.capacity_hint("SOLUSD", 0.0)
+        pe.capacity_hint("BTCUSD", -5.0)
+        assert pe._capacity_cap("SOLUSD") is None
+        assert pe._capacity_cap("BTCUSD") is None
+
+    def test_the_cap_is_case_insensitive(self):
+        pe = self._engine()
+        pe.capacity_hint("ethusd", 61.75)
+        assert pe._capacity_cap("ETHUSD") == pytest.approx(61.75)
+
+    def test_allocate_applies_the_cap(self):
+        """Asserted on allocate_detailed, which is where the walk lives --
+        allocate() delegates to it, and checking the wrapper would have passed
+        while the cap sat on an unused path."""
+        import inspect
+        from app.portfolio import PortfolioEngine
+
+        assert "allocate_detailed(" in inspect.getsource(PortfolioEngine.allocate)
+        src = inspect.getsource(PortfolioEngine.allocate_detailed)
+        assert "_capacity_cap(" in src
+        assert "min(target_notional, cap)" in src

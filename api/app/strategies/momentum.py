@@ -31,7 +31,11 @@ class MomentumScalp(Strategy):
         atr = f.atr_bps
         gap = f.ema_fast - f.ema_slow
         if gap == 0.0:
-            return None
+            return self._no("ema_gap", 0.0, 0.0)
+        if atr <= 0.0:
+            # Every ratio below divides by ATR. A zero ATR is a market with no
+            # measurable movement, not a setup with infinite conviction.
+            return self._no("atr_zero", atr, 1e-9)
         direction = 1 if gap > 0 else -1
 
         slope_ratio = f.ema_slope_bps / atr
@@ -39,16 +43,16 @@ class MomentumScalp(Strategy):
         ret5_ratio = f.ret_5m_bps / atr
 
         # Everything must point the same way as the EMA structure.
-        if direction * slope_ratio < SLOPE_TO_ATR_MIN:
-            return None
-        if direction * ret_ratio < RET_TO_ATR_MIN:
-            return None
+        if direction * slope_ratio < self.relaxed(SLOPE_TO_ATR_MIN):
+            return self._no("ema_slope", direction * slope_ratio, SLOPE_TO_ATR_MIN)
+        if direction * ret_ratio < self.relaxed(RET_TO_ATR_MIN):
+            return self._no("ret_1m", direction * ret_ratio, RET_TO_ATR_MIN)
         if direction * ret5_ratio <= 0:
-            return None
-        if f.volume_ratio < VOLUME_RATIO_MIN:
-            return None
-        if direction * f.trade_flow_imbalance < FLOW_MIN:
-            return None
+            return self._no("ret_5m_agree", direction * ret5_ratio, 0.0)
+        if f.volume_ratio < self.relaxed(VOLUME_RATIO_MIN):
+            return self._no("volume_ratio", f.volume_ratio, VOLUME_RATIO_MIN)
+        if direction * f.trade_flow_imbalance < self.relaxed(FLOW_MIN):
+            return self._no("trade_flow", direction * f.trade_flow_imbalance, FLOW_MIN)
 
         score = clamp(
             0.30 * scale(direction * slope_ratio, SLOPE_TO_ATR_MIN, 0.45)
