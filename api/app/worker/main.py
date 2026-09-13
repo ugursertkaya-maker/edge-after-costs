@@ -313,10 +313,34 @@ class TradingWorker:
         except Exception as exc:
             log.warning("database not ready, continuing without persistence: %s", exc)
 
+        self._seed_equity_curves()
         self.symbol_info = await self.rest.exchange_info()
         log.info("exchange metadata: %d symbols", len(self.symbol_info))
         await self.refresh_universe()
         self._refresh_expectancy()
+
+    def _seed_equity_curves(self) -> None:
+        """Restore each ledger's curve from the snapshots already persisted.
+
+        Without this the dashboard's equity chart starts empty on every deploy
+        and only fills while positions are open -- so an account that had 47.7
+        hours of history in Postgres rendered as "not drawn yet". The rows were
+        being written since the first commit and read by nothing.
+        """
+        if not self._db_ok:
+            return
+        for name, ledger in self.ledgers.items():
+            try:
+                self._persist(
+                    lambda session, repo, n=name, lg=ledger: lg.seed_equity_points(
+                        repo.load_equity_points(session, n)
+                    )
+                )
+            except Exception:
+                # A curve is a display; losing it must never stop the trader.
+                log.debug("equity seed failed for %s", name, exc_info=True)
+        seeded = {n: len(lg.equity_points()) for n, lg in self.ledgers.items()}
+        log.info("equity curves seeded from history: %s", seeded)
 
     async def refresh_universe(self) -> None:
         # The tier path, not ``refresh()``.  Phase 5 built HOT/WARM/COLD tiering
@@ -1160,8 +1184,12 @@ class TradingWorker:
                     continue
                 if self._close_position(ledger, pos, book, reason, ts_ms):
                     closed += 1
-            if prices:
-                ledger.mark(prices, ts_ms)
+            # Stamp every tick, not only when something is open. An account
+            # holding nothing still HAS an equity curve -- a flat line -- and
+            # guarding on `prices` meant a bot with no positions drew no curve
+            # at all, which reads on screen as a broken chart rather than as a
+            # quiet account.
+            ledger.mark(prices, ts_ms)
         return closed
 
     def _checkpoint_due(self, pos: Position, ts_ms: int) -> bool:

@@ -355,6 +355,30 @@ def close_position(session: Session, trade: t.ClosedTrade) -> None:
 # --------------------------------------------------------------------------- #
 
 
+def load_equity_points(
+    session: Session,
+    ledger_name: str,
+    *,
+    limit: int = 5_000,
+) -> list[tuple[int, float]]:
+    """The persisted equity curve for one ledger, oldest first.
+
+    The worker has been writing these every housekeeping tick since the first
+    commit and nothing has ever read them back. The dashboard served
+    ``Ledger.equity_points()`` instead -- an in-memory list that starts empty
+    on every restart -- so a curve with 47.7 hours of history in Postgres
+    rendered as "not drawn yet" after each deploy.
+    """
+    rows = (
+        session.query(EquitySnapshot.ts_ms, EquitySnapshot.equity)
+        .filter(EquitySnapshot.ledger == ledger_name)
+        .order_by(EquitySnapshot.ts_ms.desc())
+        .limit(max(1, limit))
+        .all()
+    )
+    return [(int(ts), float(eq)) for ts, eq in reversed(rows)]
+
+
 def record_equity(
     session: Session,
     ledger_name: str,

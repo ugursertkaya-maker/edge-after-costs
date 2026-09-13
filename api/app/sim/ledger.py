@@ -203,6 +203,21 @@ class Ledger:
                 break
         return streak
 
+    def seed_equity_points(self, points: list[tuple[int, float]]) -> int:
+        """Prepend persisted history, once, at boot.
+
+        Only points older than anything already stamped are taken, so seeding
+        can never rewrite what this process measured itself.
+        """
+        if not points:
+            return 0
+        floor = self._equity_points[0][0] if self._equity_points else None
+        older = [p for p in points if floor is None or p[0] < floor]
+        if not older:
+            return 0
+        self._equity_points = older + self._equity_points
+        return len(older)
+
     def equity_points(self) -> list[tuple[int, float]]:
         return list(self._equity_points)
 
