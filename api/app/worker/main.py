@@ -206,6 +206,9 @@ class TradingWorker:
         self.universe: list[UniverseEntry] = []
         #: COLD tier: ranked and reported, never subscribed, never evaluated.
         self.watchlist: list[UniverseEntry] = []
+        #: Process start, so the dashboard can report a scan RATE rather than
+        #: a bare counter that tells an operator nothing about liveness.
+        self._started_ms: int = now_ms()
         self.scanner: list[ScannerRow] = []
         self.stats = WorkerStats()
         self._expectancy_cache: dict[tuple[str, str, str], tuple[float, int]] = {}
@@ -1555,6 +1558,8 @@ class TradingWorker:
             "funnel": self._symbol_funnel(ledger),
             "opportunities": self.recycler.queue.as_dict(),
             "stale_market_data": self.stale_market_data(),
+            "watchlist": self._watchlist_block(),
+            "scan": self._scan_block(),
             "short_side": self._short_side_block(),
             "recycling": self._recycling_block(ledger, ts),
             "missed": _read_json(
@@ -1717,6 +1722,64 @@ class TradingWorker:
             "max_drawdown": round(live.max_drawdown, 4),
             "trades": live.trades,
             "gate_reasons": list(self.champion.gate_reasons),
+        }
+
+    def _watchlist_block(self) -> dict[str, Any]:
+        """The pairs on the bench, with the number that benched them.
+
+        Reported live as "hicbir tarama yapmiyor" -- no scanning at all. The
+        worker was scanning about once a second, but the screen showed one
+        symbol and no activity, so there was nothing to contradict that
+        reading. The bot had in fact ranked six pairs and benched five; the
+        ranking was invisible.
+        """
+        from app.universe import TierPolicy
+
+        policy = TierPolicy()
+        rows = []
+        for e in self.watchlist:
+            rows.append({
+                "symbol": e.symbol,
+                "tier": e.tier,
+                "edge_ratio": round(e.edge_ratio, 3),
+                "warm_threshold": policy.warm_min_edge_ratio,
+                "hot_threshold": policy.hot_min_edge_ratio,
+                "round_trip_bps": round(e.round_trip_bps, 2),
+                "expected_move_bps": round(e.expected_move_bps, 2),
+                "capacity_max_usd": round(e.capacity_max_usd, 2),
+                # How far from being scanned, in the units that decided it.
+                "short_of_warm": round(
+                    max(0.0, policy.warm_min_edge_ratio - e.edge_ratio), 3
+                ),
+            })
+        rows.sort(key=lambda r: -r["edge_ratio"])
+        return {
+            "evaluated": [e.symbol for e in self.universe],
+            "benched": rows,
+            "warm_threshold": policy.warm_min_edge_ratio,
+            "hot_threshold": policy.hot_min_edge_ratio,
+        }
+
+    def _scan_block(self) -> dict[str, Any]:
+        """Proof the scanner is running, in the form an operator can read.
+
+        "Evaluations: 1080" buried in a health blob does not answer "is this
+        thing alive". A rate, an age and a symbol count do.
+        """
+        now = now_ms()
+        last = int(self.stats.last_evaluation_ms or 0)
+        started = int(getattr(self, "_started_ms", 0) or 0)
+        elapsed_s = max(1e-9, (now - started) / 1000.0) if started else 0.0
+        return {
+            "evaluations": self.stats.evaluations,
+            "last_evaluation_ms": last or None,
+            "seconds_since_last": round((now - last) / 1000.0, 2) if last else None,
+            "evaluations_per_second": (
+                round(self.stats.evaluations / elapsed_s, 2) if elapsed_s > 0 else None
+            ),
+            "symbols_evaluated": len(self.universe),
+            "symbols_benched": len(self.watchlist),
+            "uptime_seconds": round(elapsed_s, 1) if started else None,
         }
 
     def _recycling_block(self, ledger: Ledger, ts: int) -> dict[str, Any]:
