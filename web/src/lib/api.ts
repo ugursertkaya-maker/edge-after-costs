@@ -4,7 +4,7 @@ import type { AuthMeResponse, DashboardPayload, HealthResponse } from "./types";
 // the FastAPI container by the rewrite in next.config.mjs. That is what makes
 // the session cookie work without CORS. Note that with `basePath` set, Next
 // does NOT rewrite plain fetch() URLs, so the prefix is written out here.
-const API_BASE = "/cryptobot/api";
+const API_BASE = "/netedge/api";
 
 export class ApiError extends Error {
   status: number;
@@ -44,7 +44,7 @@ async function request<T>(path: string, init: RequestInit = {}): Promise<T> {
   });
 
   if (!res.ok) {
-    let message = `İstek başarısız oldu (${res.status})`;
+    let message = `Request failed (${res.status})`;
     try {
       const body = await res.json();
       if (typeof body?.message === "string") message = body.message;

@@ -31,7 +31,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
 
-log = logging.getLogger("cryptobot.recorder")
+log = logging.getLogger("netedge.recorder")
 
 # Roll a file every hour: small enough to copy or delete individually, large
 # enough that the gzip dictionary is worth having.

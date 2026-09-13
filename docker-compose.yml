@@ -1,14 +1,18 @@
-# Crypto Micro-Profit Trader — PAPER ONLY. Fully isolated stack.
+# NetEdge — PAPER ONLY. Self-contained stack.
 #
-# Isolation guarantees (the host runs ~20 other production containers):
-#   * own network `cryptobot-internal`; db/redis are NOT published anywhere
-#   * only `web` and `api` also join the pre-existing external `shared-network`
-#     so the shared nginx can reach them by container name for /cryptobot
-#   * only host port: 127.0.0.1:8130 -> web, for internal checks
-#   * own database, own redis, own volumes — nothing is shared with
-#     another project or the archived another project stack
-#   * hard memory/CPU limits sized for 2 vCPU shared with everything else
-name: cryptobot
+# `docker compose up --build` brings up the whole system with no external
+# dependency beyond a container runtime:
+#   * its own bridge network `netedge-internal`; db and redis are never
+#     published to the host
+#   * its own Postgres, Redis and volumes — nothing is shared with anything
+#     else running on the machine
+#   * a single published port: 127.0.0.1:3000 -> web
+#   * memory/CPU limits sized for a small 2-core machine. Raise them if you
+#     have the headroom; nothing here depends on the specific values.
+#
+# To put this behind a TLS-terminating reverse proxy, see
+# docker/nginx.example.conf.
+name: netedge
 
 x-restart: &restart
   restart: unless-stopped
@@ -19,18 +23,18 @@ services:
   db:
     <<: [*restart, *logging]
     image: postgres:16-alpine
-    container_name: cryptobot-db
+    container_name: netedge-db
     environment:
-      POSTGRES_DB: ${POSTGRES_DB:-cryptobot}
-      POSTGRES_USER: ${POSTGRES_USER:-cryptobot}
+      POSTGRES_DB: ${POSTGRES_DB:-netedge}
+      POSTGRES_USER: ${POSTGRES_USER:-netedge}
       POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?POSTGRES_PASSWORD is required}
       POSTGRES_INITDB_ARGS: "--data-checksums"
-    volumes: [cryptobot-pgdata:/var/lib/postgresql/data]
-    networks: [cryptobot-internal]
+    volumes: [netedge-pgdata:/var/lib/postgresql/data]
+    networks: [netedge-internal]
     mem_limit: 448m
     cpus: 0.4
     healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-cryptobot} -d ${POSTGRES_DB:-cryptobot}"]
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-netedge} -d ${POSTGRES_DB:-netedge}"]
       interval: 15s
       timeout: 5s
       retries: 6
@@ -39,9 +43,9 @@ services:
   redis:
     <<: [*restart, *logging]
     image: redis:7-alpine
-    container_name: cryptobot-redis
+    container_name: netedge-redis
     command: ["redis-server", "--appendonly", "no", "--save", "", "--maxmemory", "64mb", "--maxmemory-policy", "allkeys-lru"]
-    networks: [cryptobot-internal]
+    networks: [netedge-internal]
     mem_limit: 96m
     cpus: 0.15
     healthcheck:
@@ -53,20 +57,20 @@ services:
   api:
     <<: [*restart, *logging]
     build: { context: ./api }
-    image: cryptobot-api:latest
-    container_name: cryptobot-api
+    image: netedge-api:latest
+    container_name: netedge-api
     env_file: [.env]
     environment:
-      POSTGRES_HOST: cryptobot-db
-      REDIS_HOST: cryptobot-redis
+      POSTGRES_HOST: netedge-db
+      REDIS_HOST: netedge-redis
     depends_on:
       db: { condition: service_healthy }
       redis: { condition: service_healthy }
-    networks: [cryptobot-internal, shared-network]
+    networks: [netedge-internal]
     mem_limit: 384m
     cpus: 0.5
     healthcheck:
-      test: ["CMD-SHELL", "curl -fsS http://127.0.0.1:8000/cryptobot/api/health >/dev/null || exit 1"]
+      test: ["CMD-SHELL", "curl -fsS http://127.0.0.1:8000/netedge/api/health >/dev/null || exit 1"]
       interval: 20s
       timeout: 6s
       retries: 5
@@ -74,27 +78,27 @@ services:
 
   worker:
     <<: [*restart, *logging]
-    image: cryptobot-api:latest
-    container_name: cryptobot-worker
+    image: netedge-api:latest
+    container_name: netedge-worker
     entrypoint: []
     command: ["python", "-m", "app.worker.main"]
     env_file: [.env]
     environment:
-      POSTGRES_HOST: cryptobot-db
-      REDIS_HOST: cryptobot-redis
+      POSTGRES_HOST: netedge-db
+      REDIS_HOST: netedge-redis
     depends_on:
       db: { condition: service_healthy }
       redis: { condition: service_healthy }
       api: { condition: service_healthy }
     volumes:
-      - cryptobot-cache:/data/backtest-cache
-      - cryptobot-tape:/data/tape
-      - cryptobot-research:/data/research
-    networks: [cryptobot-internal]   # outbound only, nothing inbound
+      - netedge-cache:/data/backtest-cache
+      - netedge-tape:/data/tape
+      - netedge-research:/data/research
+    networks: [netedge-internal]   # outbound only, nothing inbound
     mem_limit: 640m
     cpus: 0.8
     healthcheck:
-      test: ["CMD-SHELL", "python -c \"import redis,os,sys,time;r=redis.Redis(host='cryptobot-redis',decode_responses=True);b=r.get('cryptobot:worker:heartbeat');sys.exit(0 if b and (time.time()*1000-int(b))<60000 else 1)\""]
+      test: ["CMD-SHELL", "python -c \"import redis,os,sys,time;r=redis.Redis(host='netedge-redis',decode_responses=True);b=r.get('netedge:worker:heartbeat');sys.exit(0 if b and (time.time()*1000-int(b))<60000 else 1)\""]
       interval: 30s
       timeout: 8s
       retries: 4
@@ -103,30 +107,31 @@ services:
   web:
     <<: [*restart, *logging]
     build: { context: ./web }
-    image: cryptobot-web:latest
-    container_name: cryptobot-web
+    image: netedge-web:latest
+    container_name: netedge-web
     environment:
-      API_ORIGIN: http://cryptobot-api:8000
+      API_ORIGIN: http://netedge-api:8000
       NODE_ENV: production
     depends_on:
       api: { condition: service_started }
-    ports: ["127.0.0.1:8130:3000"]
-    networks: [cryptobot-internal, shared-network]
+    # Loopback only by default. Change to "3000:3000" to expose it on the LAN,
+    # or drop the mapping entirely and reach it through a reverse proxy.
+    ports: ["127.0.0.1:3000:3000"]
+    networks: [netedge-internal]
     mem_limit: 256m
     cpus: 0.35
     healthcheck:
-      test: ["CMD-SHELL", "node -e \"fetch('http://127.0.0.1:3000/cryptobot/login').then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))\""]
+      test: ["CMD-SHELL", "node -e \"fetch('http://127.0.0.1:3000/netedge/login').then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))\""]
       interval: 20s
       timeout: 6s
       retries: 5
       start_period: 25s
 
 networks:
-  cryptobot-internal: { name: cryptobot-internal, driver: bridge }
-  shared-network: { external: true }
+  netedge-internal: { name: netedge-internal, driver: bridge }
 
 volumes:
-  cryptobot-pgdata: { name: cryptobot-pgdata }
-  cryptobot-cache: { name: cryptobot-cache }
-  cryptobot-tape: { name: cryptobot-tape }
-  cryptobot-research: { name: cryptobot-research }
+  netedge-pgdata: { name: netedge-pgdata }
+  netedge-cache: { name: netedge-cache }
+  netedge-tape: { name: netedge-tape }
+  netedge-research: { name: netedge-research }

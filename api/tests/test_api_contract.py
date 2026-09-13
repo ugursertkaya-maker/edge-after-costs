@@ -7,7 +7,7 @@ from fastapi.testclient import TestClient
 
 from app.config import reload_settings
 
-PREFIX = "/cryptobot/api"
+PREFIX = "/netedge/api"
 
 
 @pytest.fixture

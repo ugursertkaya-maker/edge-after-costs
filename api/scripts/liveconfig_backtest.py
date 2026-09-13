@@ -33,7 +33,7 @@ from app.backtest.engine import BacktestConfig, run_backtest  # noqa: E402
 
 MS_PER_DAY = 86_400_000
 
-# Exactly what /srv/netedge/.env sets on the box, for the knobs the
+# The deployed .env values, for the knobs the
 # backtest harness can honour. Anything not listed here is already identical
 # because both paths read app.config defaults.
 LIVE_ENV = {

@@ -136,8 +136,7 @@ def main() -> int:
             print(f"  - {reason}")
     print(
         "\nRestart the worker to run it:\n"
-        "  ssh user@your-server 'cd /srv/netedge && "
-        "sudo -n docker compose up -d --no-deps worker'\n"
+        "  docker compose up -d --no-deps worker\n"
         "Live P&L from here on is recorded under the new version and is not\n"
         "mixed with the previous one. PAPER only — real orders remain 0."
     )

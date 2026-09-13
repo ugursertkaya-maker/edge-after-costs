@@ -1,10 +1,52 @@
-.venv/
-__pycache__/
-*.pyc
+# --- secrets: never commit ---------------------------------------------------
 .env
+.env.*
+!.env.example
 .exchange-credentials
+*.pem
+*.key
+*.p12
+
+# --- Python ------------------------------------------------------------------
+.venv/
+venv/
+__pycache__/
+*.py[cod]
+*.egg-info/
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.coverage
+coverage.xml
+htmlcov/
+
+# --- Node / Next -------------------------------------------------------------
 node_modules/
 .next/
 web/out/
+npm-debug.log*
+.eslintcache
+
+# --- runtime and research output ---------------------------------------------
+# Captured market tape, cached bars, model artifacts and research JSON are
+# reproducible from the tools in api/scripts/ and can be large. Keep the
+# concise reports in docs/ instead.
 data/
 *.log
+/research-out/
+/backtest-out/
+/tape/
+*.sqlite
+*.sqlite3
+*.db
+*.dump
+*.joblib
+*.pkl
+*.npy
+*.npz
+
+# --- editors and OS ----------------------------------------------------------
+.DS_Store
+.idea/
+.vscode/
+*.swp

@@ -2,7 +2,7 @@
  * The dashboard payload contract.
  *
  * These types mirror `api/app/types.py` as it is projected by
- * `GET /cryptobot/api/dashboard`. The rules that matter when reading them:
+ * `GET /netedge/api/dashboard`. The rules that matter when reading them:
  *
  *   * All timestamps are epoch **milliseconds** and end in `_ms`.
  *   * `bps` is basis points (1 bps = 0.01%); money is USD.

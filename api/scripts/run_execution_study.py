@@ -5,10 +5,10 @@
         --tape-dir /data/tape --symbols BTCUSD,ETHUSD,SOLUSD \
         --timeout-seconds 5,15,30,60 --offset-ticks 0,1,2 --out text
 
-Pull a local copy of the tape first (read-only; do not modify the server)::
+If the tape was captured inside the worker container, copy it out first
+(read-only; the running worker is not modified)::
 
-    ssh user@your-server \
-        'sudo -n docker exec cryptobot-worker tar cf - /data/tape' | tar xf - -C /tmp/
+    docker compose exec -T worker tar cf - /data/tape | tar xf - -C /tmp/
 
 The output has three parts, in this order on purpose:
 

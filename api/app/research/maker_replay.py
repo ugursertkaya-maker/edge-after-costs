@@ -76,7 +76,7 @@ from app.types import (
     Trade,
 )
 
-log = logging.getLogger("cryptobot.research.maker_replay")
+log = logging.getLogger("netedge.research.maker_replay")
 
 _BPS = 10_000.0
 

@@ -28,10 +28,10 @@ from dataclasses import asdict, dataclass, field
 from pathlib import Path
 from typing import Any
 
-log = logging.getLogger("cryptobot.champion")
+log = logging.getLogger("netedge.champion")
 
 CHAMPION_FILENAME = "champion.json"
-REDIS_KEY = "cryptobot:champion"
+REDIS_KEY = "netedge:champion"
 
 
 @dataclass(frozen=True)

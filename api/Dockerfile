@@ -16,10 +16,10 @@ RUN pip install --no-cache-dir -r requirements.txt
 COPY app ./app
 COPY scripts ./scripts
 
-RUN useradd --create-home --uid 10001 cryptobot \
+RUN useradd --create-home --uid 10001 netedge \
  && mkdir -p /data/backtest-cache /data/tape /data/research \
- && chown -R cryptobot:cryptobot /app /data
-USER cryptobot
+ && chown -R netedge:netedge /app /data
+USER netedge
 
 EXPOSE 8000
 

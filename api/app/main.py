@@ -1,9 +1,9 @@
 """FastAPI application.
 
-Mounted at ``/cryptobot/api`` behind the shared nginx.  The API is deliberately
-thin: the worker publishes a pre-rendered dashboard payload to Redis and this
-process mostly hands it over, so the API container costs almost nothing on a
-2-vCPU host.
+Mounted under ``{BASE_PATH}/api``.  The API is deliberately thin: the worker
+publishes a pre-rendered dashboard payload to Redis and this process mostly
+hands it over, so the API container costs almost nothing even on a small
+two-core machine.
 """
 
 from __future__ import annotations
@@ -18,7 +18,7 @@ from app.routes import auth as auth_routes
 from app.routes import backtests, dashboard, health, system
 from app.safety import PAPER_ONLY_BANNER, assert_paper_mode, source_tree_is_paper_only
 
-log = logging.getLogger("cryptobot.api")
+log = logging.getLogger("netedge.api")
 
 
 def create_app() -> FastAPI:
@@ -26,7 +26,7 @@ def create_app() -> FastAPI:
     assert_paper_mode(s)
 
     app = FastAPI(
-        title="Kripto Micro-Profit Trader",
+        title="NetEdge",
         version="1.0.0",
         docs_url=None,
         redoc_url=None,

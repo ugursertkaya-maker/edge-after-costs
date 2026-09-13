@@ -82,7 +82,7 @@ WARM_SNAPSHOT_INTERVAL_MS = int(os.getenv("WARM_SNAPSHOT_INTERVAL_MS", "1000"))
 #: rather than merely exists.
 WARM_STALENESS_SNAPSHOTS = int(os.getenv("WARM_STALENESS_SNAPSHOTS", "5"))
 
-log = logging.getLogger("cryptobot.worker")
+log = logging.getLogger("netedge.worker")
 
 
 @dataclass
@@ -1760,7 +1760,7 @@ class TradingWorker:
     def _watchlist_block(self) -> dict[str, Any]:
         """The pairs on the bench, with the number that benched them.
 
-        Reported live as "hicbir tarama yapmiyor" -- no scanning at all. The
+        Reported live as "it is not scanning at all" -- no scanning whatsoever. The
         worker was scanning about once a second, but the screen showed one
         symbol and no activity, so there was nothing to contradict that
         reading. The bot had in fact ranked six pairs and benched five; the

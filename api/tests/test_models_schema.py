@@ -175,7 +175,7 @@ def test_init_db_is_idempotent_and_seeds_the_bootstrap_admin():
     settings = dataclasses.replace(
         get_settings(),
         bootstrap_admin_email="Admin@Example.COM",
-        bootstrap_admin_password="paper-only",
+        bootstrap_admin_password="change-me-in-tests",
     )
     engine = make_engine("sqlite://")
     init_db(engine, settings)
@@ -186,7 +186,7 @@ def test_init_db_is_idempotent_and_seeds_the_bootstrap_admin():
     assert len(users) == 1
     assert users[0].email == "admin@example.com"
     assert users[0].role == "admin"
-    assert users[0].check_password("paper-only")
+    assert users[0].check_password("change-me-in-tests")
     assert users[0].created_ms > 0
     engine.dispose()
 
