@@ -21,17 +21,17 @@ import type { Num, StrategyRow } from "@/lib/types";
 type SortKey = keyof Omit<StrategyRow, "strategy">;
 
 const COLUMNS: { key: SortKey; label: string; title?: string }[] = [
-  { key: "trades", label: "İşlem" },
+  { key: "trades", label: "Trades" },
   { key: "win_rate", label: "Win rate" },
-  { key: "avg_win", label: "Ort. kazanç" },
-  { key: "avg_loss", label: "Ort. kayıp" },
+  { key: "avg_win", label: "Avg. win" },
+  { key: "avg_loss", label: "Avg. loss" },
   { key: "profit_factor", label: "Profit factor" },
   { key: "expectancy", label: "Expectancy" },
-  { key: "fees", label: "Komisyon" },
+  { key: "fees", label: "Fees" },
   { key: "net_pnl", label: "Net P&L" },
   { key: "max_drawdown", label: "Max DD" },
   { key: "avg_holding_seconds", label: "Ort. tutma" },
-  { key: "capital_turnover", label: "Sermaye devri" },
+  { key: "capital_turnover", label: "Capital turnover" },
 ];
 
 function cell(key: SortKey, row: StrategyRow): { text: string; cls: string } {
@@ -105,30 +105,30 @@ export function Strategies({
   return (
     <Panel
       idx="06"
-      title="Strateji sıralaması"
-      note="maliyet sonrası net P&L'e göre sıralı"
+      title="Strategy ranking"
+      note="ordered by net P&L after costs"
       flush
-      footer="Sıralamayı win rate belirlemez. %70 isabetle küçük kâr alıp seyrek büyük zarar yazan bir strateji, net P&L'de kaybeden stratejidir; bu tablo bu yüzden varsayılan olarak NET P&L'e göre sıralanır ve expectancy ile profit factor yanında okunur."
+      footer="Win rate does not decide the ranking. A strategy that takes small profits on 70% of its trades and occasionally writes a large loss is a losing strategy on net P&L; that is why this table sorts by NET P&L by default and is read alongside expectancy and profit factor."
     >
       {loading && !sorted ? (
         <Skeleton rows={4} />
       ) : !sorted || sorted.length === 0 ? (
         <DataState
-          title="Strateji istatistiği yok"
-          text="Hiçbir strateji henüz kapanmış tur üretmedi. İlk işlemler kapandıkça her modül burada kendi maliyet sonrası karnesiyle listelenecek."
+          title="No strategy statistics yet"
+          text="No strategy has produced a closed round trip yet. As the first trades close, every module will be listed here with its own after-cost scorecard."
         />
       ) : (
         <div className="tbl-wrap">
           <table className="tbl">
             <thead>
               <tr>
-                <th className="l">Strateji</th>
+                <th className="l">Strategy</th>
                 {COLUMNS.map((c) => (
                   <th
                     key={c.key}
                     className="sortable"
                     onClick={() => setSortKey(c.key)}
-                    title={`${c.label} sütununa göre sırala`}
+                    title={`Sort by the ${c.label} column`}
                   >
                     {c.label}
                     {sortKey === c.key && <span className="caret">▾</span>}

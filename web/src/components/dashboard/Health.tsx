@@ -45,9 +45,9 @@ function Tape({
           <span className="pill is-off">bildirilmiyor</span>
         </div>
         <p className="tape-note">
-          Worker kaydedici durumunu henüz raporlamıyor. Bu, kaydedicinin kapalı olduğu
-          anlamına gelmez — durumunun bilinmediği anlamına gelir, ve o ikisi burada
-          aynı şey olarak gösterilmez.
+          The worker is not reporting recorder status yet. That does not mean the
+          recorder is off — it means its state is unknown, and those two are not
+          shown as the same thing here.
         </p>
       </div>
     );
@@ -63,25 +63,25 @@ function Tape({
         <span className="tape-t">Tape kaydedici</span>
         <span
           className={`pill ${enabled === true ? "is-pos" : enabled === false ? "is-warn" : "is-off"}`}
-          title="Maker çalışması için ham tape kaydı"
+          title="Raw tape capture for the maker study"
         >
-          {enabled === true ? "KAYDEDİYOR" : enabled === false ? "KAPALI" : DASH}
+          {enabled === true ? "RECORDING" : enabled === false ? "OFF" : DASH}
         </span>
         <span className="tape-n">
-          {hours === null ? "kaset ölçülmedi" : `${formatHours(hours)} kaset`}
+          {hours === null ? "tape not measured" : `${formatHours(hours)} of tape`}
         </span>
       </div>
 
       {enabled === false && recorder?.disabled_reason && (
-        <p className="tape-note is-warn">Kapalı: {recorder.disabled_reason}</p>
+        <p className="tape-note is-warn">Off: {recorder.disabled_reason}</p>
       )}
 
-      <div className="tape-track" title="14 günlük saklama penceresine göre biriken kaset">
+      <div className="tape-track" title="Tape accumulated against the 14-day retention window">
         <span className="tape-fill" style={{ width: `${pct}%` }} />
       </div>
       <div className="tape-scale">
         <span>0</span>
-        <span>14 günlük saklama penceresi</span>
+        <span>14-day retention window</span>
       </div>
 
       <div className="tape-grid">
@@ -90,7 +90,7 @@ function Tape({
           <span className="tape-v">{formatInt(recorder?.messages)}</span>
         </span>
         <span className="tape-item">
-          <span className="tape-k">Yazılan</span>
+          <span className="tape-k">Written</span>
           <span className="tape-v">{formatMb(recorder?.mb_written)}</span>
         </span>
         <span className="tape-item">
@@ -105,7 +105,7 @@ function Tape({
 
       <p className="tape-note">
         {toNum(tape?.oldest) === null && toNum(tape?.newest) === null
-          ? "Kaset aralığı bildirilmedi."
+          ? "Tape range not reported."
           : `En eski ${formatDateTimeMs(tape?.oldest)} · en yeni ${formatDateTimeMs(tape?.newest)}`}
       </p>
     </div>
@@ -141,14 +141,14 @@ function Cell({
 
 function link(ok: boolean | undefined): { text: string; tone: Tone } {
   if (ok === undefined) return { text: DASH, tone: "empty" };
-  return ok ? { text: "BAĞLI", tone: "pos" } : { text: "KOPUK", tone: "neg" };
+  return ok ? { text: "CONNECTED", tone: "pos" } : { text: "DISCONNECTED", tone: "neg" };
 }
 
 /**
  * The machine's own vital signs.
  *
  * Book freshness is the one that can quietly cost money: a connected socket
- * that stopped delivering still reads "BAĞLI", so the age of the book is
+ * that stopped delivering still reads "CONNECTED", so the age of the book is
  * shown next to it and turns amber long before anything else notices.
  */
 export function Health({
@@ -164,7 +164,7 @@ export function Health({
 }) {
   if (loading && !health) {
     return (
-      <Panel idx="08" title="Sistem sağlığı" flush>
+      <Panel idx="08" title="System health" flush>
         <Skeleton rows={4} />
       </Panel>
     );
@@ -195,28 +195,28 @@ export function Health({
   return (
     <Panel
       idx="08"
-      title="Sistem sağlığı"
-      note="worker · besleme · veritabanı · tape"
+      title="System health"
+      note="worker · feed · database · tape"
       flush
-      footer="Bağlı bir soket veri akıtmayı sessizce bırakabilir; bu yüzden bağlantı durumu tek başına yeterli değil, kitap tazeliği ile birlikte okunur. Bayat kitapla karar üretilmez."
+      footer="A connected socket can quietly stop delivering data, so connection state alone is not enough — it is read together with book freshness. No decision is made on a stale book."
     >
       <div className="health-grid">
         <Cell label="WebSocket" value={ws.text} tone={ws.tone} />
         <Cell label="REST" value={rest.text} tone={rest.tone} />
         <Cell
-          label="Kitap tazeliği"
+          label="Book freshness"
           value={formatMs(bookAge)}
           tone={bookTone}
-          title="Son emir defteri güncellemesinin üzerinden geçen süre"
+          title="Time since the last order-book update"
         />
         <Cell
-          label="Güncelleme / sn"
+          label="Updates / s"
           value={formatNumber(h?.updates_per_sec, 1)}
-          title="Saniyede işlenen besleme mesajı"
+          title="Feed messages processed per second"
         />
         <Cell label="Reconnect" value={formatInt(h?.reconnects)} />
         <Cell
-          label="Düşen mesaj"
+          label="Dropped messages"
           value={formatInt(dropped)}
           tone={dropped !== null && dropped > 0 ? "warn" : undefined}
         />
@@ -227,9 +227,9 @@ export function Health({
           tone={memTone}
           title="Konteyner limiti 768 MB"
         />
-        <Cell label="Veritabanı" value={db.text} tone={db.tone} />
+        <Cell label="Database" value={db.text} tone={db.tone} />
         <Cell
-          label="Son değerlendirme"
+          label="Last evaluation"
           value={formatRelativeMs(lastEval, now)}
           tone={evalTone}
         />

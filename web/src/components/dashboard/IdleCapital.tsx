@@ -20,7 +20,7 @@ import { reconcileIdle } from "@/lib/phase6";
 import type { CapitalState, IdleByReason } from "@/lib/types";
 
 /**
- * NEDEN SERMAYE BOŞTA — the panel the phase is actually decided on.
+ * WHY CAPITAL IS IDLE — the panel this phase is actually decided on.
  *
  * The requirement is one sentence: *if $350 is idle, say exactly why.* So the
  * reasons are reported in DOLLARS, never as percentages of a percentage —
@@ -75,7 +75,7 @@ function Dominant({ rows, basis }: { rows: Row[]; basis: number }) {
 
   return (
     <div className={`idom ${groupClass(top.group)}`}>
-      <span className="idom-eye">Boşta sermayenin en büyük sebebi</span>
+      <span className="idom-eye">Largest reason capital is idle</span>
       <div className="idom-head">
         <span className="idom-name" title={top.code}>
           {idleReasonLabel(top.code)}
@@ -83,13 +83,13 @@ function Dominant({ rows, basis }: { rows: Row[]; basis: number }) {
         <span className="idom-v">{formatMoney(top.usd)}</span>
         <span className="idom-p">{formatRate(share, 0)}</span>
       </div>
-      <p className="idom-x">{IDLE_REASON_NOTES[top.code] ?? "Bu sebep için açıklama tanımlı değil; kod olduğu gibi gösteriliyor."}</p>
+      <p className="idom-x">{IDLE_REASON_NOTES[top.code] ?? "No explanation is defined for this reason; the code is shown as-is."}</p>
       {top.group && <p className="idom-verdict">{IDLE_GROUP_VERDICTS[top.group]}</p>}
       {tie && (
         <p className="idom-tie">
-          Baskınlık net değil: <b>{idleReasonLabel(tie.code)}</b> {formatMoney(tie.usd)} ile
-          başa baş. İki sebep birbirine bu kadar yakınken tek bir sonuç çıkarmak, ölçümün
-          söylediğinden fazlasını söylemek olur.
+          Dominance is not clear: <b>{idleReasonLabel(tie.code)}</b> is level with it at
+          {" "}{formatMoney(tie.usd)}. With two reasons this close, drawing a single
+          conclusion would say more than the measurement does.
         </p>
       )}
     </div>
@@ -116,8 +116,8 @@ function Attribution({
   if (rows.length === 0) {
     return (
       <DataState
-        title="Ayrıştırma kaydı boş geldi"
-        text="Boşta sermaye ayrıştırması bildirildi ama içinde tek bir sebep yok. Bu bir dağılım değil, boş bir kayıttır — ve boş bir kayıt, sermayenin sebepsiz boşta durduğu anlamına gelmez."
+        title="The attribution record arrived empty"
+        text="An idle-capital attribution was reported but it contains not a single reason. That is an empty record, not a distribution — and an empty record does not mean capital is idle for no reason."
       />
     );
   }
@@ -146,12 +146,12 @@ function Attribution({
       <div className="idle">
         <div className="idle-head">
           <span className="idle-total">{formatMoney(idleUsd ?? sum)}</span>
-          <span className="idle-total-k">boşta sermaye</span>
+          <span className="idle-total-k">idle capital</span>
         </div>
         <p className="xnote">
-          Bildirilen sebeplerin tamamı sıfır. Bu, boşta sermaye olmadığı okumasıdır:
-          hesabın tamamı ya piyasada ya da bu ayrıştırmanın dışında. Sıfır bir ölçümdür
-          ve bu panelde eksik bir ölçümle aynı şekilde gösterilmez.
+          Every reported reason is zero. This is the reading that there is no idle
+          capital: the whole account is either in the market or outside this
+          attribution. Zero is a measurement and is not drawn here the way a missing one is.
         </p>
       </div>
     );
@@ -162,11 +162,11 @@ function Attribution({
       <div className="idle-head">
         <span className="idle-total">{formatMoney(idleUsd ?? sum)}</span>
         <span className="idle-total-k">
-          boşta sermaye{idlePct === null ? "" : ` · sermayenin ${formatPct(idlePct)} kadarı`}
+          idle capital{idlePct === null ? "" : ` · ${formatPct(idlePct)} of equity`}
         </span>
         {idleUsd === null && (
-          <span className="idle-total-n" title="Toplam bakiye bildirilmedi">
-            sebeplerin toplamı
+          <span className="idle-total-n" title="No total balance was reported">
+            sum of the reasons
           </span>
         )}
       </div>
@@ -174,29 +174,29 @@ function Attribution({
       {mismatch && unexplained !== null && (
         <div className="idle-gap" role="alert">
           <span className="idle-gap-tag">
-            {unexplained > 0 ? "AÇIKLANAMAYAN NAKİT" : "FAZLA YAZILMIŞ NAKİT"}
+            {unexplained > 0 ? "UNEXPLAINED CASH" : "OVER-ATTRIBUTED CASH"}
           </span>
           <span className="idle-gap-v">{formatMoney(Math.abs(unexplained))}</span>
           <p className="idle-gap-x">
-            Sözleşme sebeplerin boşta bakiyeye eşit olmasını garanti eder, bu veride
-            etmiyor: sebepler toplamı <b>{formatMoney(sum)}</b>, bildirilen boşta bakiye{" "}
+            The contract guarantees the reasons sum to the idle balance; in this data they
+            do not: the reasons total <b>{formatMoney(sum)}</b> against a reported idle balance of{" "}
             <b>{formatMoney(idleUsd)}</b>.{" "}
             {unexplained > 0 ? (
               <>
-                Yani <b>{formatMoney(unexplained)}</b> boşta duruyor ve hiçbir sebebe
-                yazılmamış. Bu para bir yerde çalışmıyor ve neden çalışmadığını kimse
-                söylemiyor — §22'nin kovaladığı tek kusur tam olarak budur.
+                So <b>{formatMoney(unexplained)}</b> is sitting idle and is attributed to no
+                reason at all. That money is not working somewhere and nobody is saying
+                why — which is exactly the one defect §22 is chasing.
               </>
             ) : (
               <>
-                Sebepler, bildirilen boşta bakiyeden <b>{formatMoney(-unexplained)}</b>{" "}
-                fazlasını açıklıyor. Bir dolar iki sebebe birden yazılmış ya da bakiye
-                eksik bildirilmiş olmalı; her iki hâlde de aşağıdaki paylar olduğundan
-                küçüktür.
+                The reasons explain <b>{formatMoney(-unexplained)}</b> more than the reported
+                idle balance. Either a dollar was written to two reasons at once or the
+                balance was under-reported; either way the shares below are smaller than
+                they should be.
               </>
             )}{" "}
-            Aşağıdaki çubuklar sebeplerin kendi toplamına göre çizilmiştir; fark
-            yuvarlanarak gizlenmemiştir çünkü bu bir görüntü sorunu değil, ölçüm
+            The bars below are drawn against the reasons' own total; the difference is
+            not rounded away, because this is a measurement problem and not a display
             kusurudur.
           </p>
         </div>
@@ -204,7 +204,7 @@ function Attribution({
 
       <Dominant rows={rows} basis={basis} />
 
-      <div className="idle-stack" role="img" aria-label="Boşta sermayenin sebep gruplarına dağılımı">
+      <div className="idle-stack" role="img" aria-label="Distribution of idle capital across reason groups">
         {groups.map(
           (g) =>
             g.usd > 0 && (
@@ -225,7 +225,7 @@ function Attribution({
           <span
             className="idle-seg is-other"
             style={{ flexGrow: unclassified }}
-            title={`Sınıflandırılmamış sebepler · ${formatMoney(unclassified)}`}
+            title={`Unclassified reasons · ${formatMoney(unclassified)}`}
           >
             {formatRate(unclassified / basis, 0)}
           </span>
@@ -248,12 +248,12 @@ function Attribution({
           <div className="igrp is-other">
             <div className="igrp-head">
               <i aria-hidden />
-              <span className="igrp-k">SINIFLANDIRILMAMIŞ</span>
+              <span className="igrp-k">UNCLASSIFIED</span>
               <span className="igrp-v">{formatMoney(unclassified)}</span>
             </div>
             <p className="igrp-x">
-              Worker, bu ekranın tanımadığı bir sebep kodu bildirdi. Kod olduğu gibi
-              gösterilir; tanınmayan bir sebep gizlenmez.
+              The worker reported a reason code this screen does not recognise. The code
+              is shown as-is; an unrecognised reason is not hidden.
             </p>
           </div>
         )}
@@ -279,10 +279,10 @@ function Attribution({
 
       {missing.length > 0 && (
         <p className="idle-missing">
-          Bildirilmeyen sebepler ({missing.length}):{" "}
-          {missing.map((m) => idleReasonLabel(m)).join(" · ")}. Bildirilmemiş bir sebep
-          sıfır dolar sayılmaz; ayrıştırmada hiç görünmemiştir ve bu iki ifade bu
-          panelde birbirinin yerine kullanılmaz.
+          Reasons not reported ({missing.length}):{" "}
+          {missing.map((m) => idleReasonLabel(m)).join(" · ")}. An unreported reason does
+          not count as zero dollars; it never appeared in the attribution at all, and those
+          two statements are not interchangeable on this panel.
         </p>
       )}
     </div>
@@ -302,8 +302,8 @@ export function IdleCapital({
   const idlePct = toNum(c?.idle_pct);
 
   const meta = byReason ? (
-    <span className="pill is-off" title="Ayrıştırmada bildirilen sebep sayısı">
-      {Object.keys(byReason).filter((k) => toNum(byReason[k]) !== null).length} sebep
+    <span className="pill is-off" title="Reasons reported in the attribution">
+      {Object.keys(byReason).filter((k) => toNum(byReason[k]) !== null).length} reasons
       bildirildi
     </span>
   ) : null;
@@ -311,10 +311,10 @@ export function IdleCapital({
   return (
     <Panel
       idx="02"
-      title="Neden sermaye boşta"
-      note="boşta bakiyenin sebep sebep dolar dağılımı"
+      title="Why capital is idle"
+      note="the idle balance, in dollars, reason by reason"
       meta={meta}
-      footer="Sebepler dolar cinsindendir çünkü karar dolar cinsindendir: bir yüzdenin yüzdesi üzerine işlem yapılamaz. Bu panelin ayırdığı şey tek bir cümledir — NİTELİKLİ SİNYAL YOK, alınacak bir şey olmadığını söyler ve evreni genişletmek tam olarak bunun çözümüdür; İCRA MALİYETİ ise adayların var olduğunu ve kendi gidiş-dönüş maliyetini çıkaramadığını söyler, ki bu durumda evreni genişletmek yardımcı olmaz, daha pahalı çiftler ekleyerek durumu kötüleştirir. İkisi aynı boşta bakiyeden çıkan zıt sonuçlardır. Reddedilen adayların sonradan ne yaptığı §16'da ölçülür."
+      footer="The reasons are in dollars because the decision is in dollars: you cannot trade on a percentage of a percentage. What this panel separates is a single sentence — NO QUALIFIED SIGNAL says there was nothing to buy, and widening the universe is exactly the fix; EXECUTION COST says candidates existed and could not cover their own round-trip cost, in which case widening the universe does not help and makes things worse by adding more expensive pairs. They are opposite conclusions drawn from the same idle balance. What rejected candidates went on to do is measured in §16."
     >
       {loading && !c ? (
         <Skeleton rows={5} />
@@ -322,14 +322,14 @@ export function IdleCapital({
         <div className="fin-empty">
           <div className="fin-empty-head">
             <span className="state-mark" aria-hidden />
-            <p className="fin-empty-t">Boşta sermaye henüz ayrıştırılmadı</p>
+            <p className="fin-empty-t">Idle capital has not been attributed yet</p>
           </div>
           <p className="fin-empty-x">
-            Portföy katmanı bu ekrana bir ayrıştırma bildirmiyor. Bu, sermayenin sebepsiz
-            boşta durduğu anlamına gelmez — henüz hiçbir doların bir sebebe yazılmadığı
-            anlamına gelir, ve bu iki ifade burada birbirinin yerine kullanılmaz.
-            Ayrıştırma geldiğinde her boşta dolar aşağıdaki dokuz sebepten birine
-            yazılacak ve hangisinin baskın olduğu bu fazın cevabı olacak.
+            The portfolio layer is not reporting an attribution to this screen. That does
+            not mean capital is idle for no reason — it means no dollar has been written
+            to a reason yet, and those two statements are not interchangeable here.
+            When the attribution arrives, every idle dollar will be written to one of the
+            nine reasons below, and which one dominates will be this phase's answer.
           </p>
           <ReasonReference />
         </div>
@@ -337,12 +337,12 @@ export function IdleCapital({
         <div className="fin-empty">
           <div className="fin-empty-head">
             <span className="state-mark" aria-hidden />
-            <p className="fin-empty-t">Kullanım bildirildi, ayrıştırma bildirilmedi</p>
+            <p className="fin-empty-t">Utilisation reported, attribution not reported</p>
           </div>
           <p className="fin-empty-x">
-            Sermaye kullanımı ölçüldü{idleUsd === null ? "" : ` ve ${formatMoney(idleUsd)} boşta görünüyor`}
-            , ancak bu tutarın sebep dağılımı gelmedi. Toplamı bilmek, sebebini bilmek
-            değildir: bu panelin var oluş sebebi tam olarak o farktır.
+            Capital utilisation was measured{idleUsd === null ? "" : ` and ${formatMoney(idleUsd)} appears idle`}
+            , but no per-reason distribution of that amount arrived. Knowing the total is
+            not knowing the reason: that difference is exactly why this panel exists.
           </p>
           <ReasonReference />
         </div>
@@ -356,14 +356,14 @@ export function IdleCapital({
 /**
  * The six reasons, printed whenever there is no attribution to show.
  *
- * Same job as the gate list in the FİNALİSTLER panel: an empty panel only
+ * Same job as the gate list in the FINALISTS panel: an empty panel only
  * means something if the vocabulary it will be filled with is visible next to
  * it. It is also the fastest way to see that these six are not interchangeable.
  */
 function ReasonReference() {
   return (
     <div className="gateref">
-      <p className="gateref-t">Her boşta dolar bu dokuz sebepten birine yazılır</p>
+      <p className="gateref-t">Every idle dollar is written to one of these nine reasons</p>
       <ol className="gateref-l">
         {IDLE_REASONS_ALL.map((code, i) => (
           <li key={code}>
@@ -376,12 +376,12 @@ function ReasonReference() {
         ))}
       </ol>
       <p className="gateref-f">
-        Dokuzu da &ldquo;para çalışmıyor&rdquo; der, ama farklı şeyler ister:
-        NİTELİKLİ SİNYAL YOK daha geniş bir evren ister, İCRA MALİYETİ ve LİKİDİTE
-        SINIRI daha ucuz bir borsa ister, korelasyon/risk/rezerv/soğuma ise hiçbir şey
-        istemez — onlar zaten verilmiş kararlardır. TARAYICI GECİKMESİ ve SERMAYE
-        DURUMU KUSURU ise piyasa hakkında hiçbir şey söylemez; onlar bizim hatamızdır
-        ve sıfırlanana kadar diğerlerinin okumasını da kirletirler.
+        All nine say &ldquo;money is not working&rdquo;, but they ask for different things:
+        NO QUALIFIED SIGNAL asks for a wider universe; EXECUTION COST and LIQUIDITY
+        LIMIT ask for a cheaper venue; correlation / risk / reserve / cooldown ask for
+        nothing at all — they are decisions already taken. SCANNER DELAY and
+        CAPITAL-STATE DEFECT say nothing about the market; they are our own faults,
+        and until they are zero they contaminate the reading of all the others.
       </p>
     </div>
   );

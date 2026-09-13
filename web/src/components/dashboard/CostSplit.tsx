@@ -11,9 +11,9 @@ import type { DashboardMetrics } from "@/lib/types";
  * The governing statement of the whole terminal, given the largest type on the
  * screen: a gross gain is not profit.
  *
- * Three values, never one. MALİYET ÖNCESİ KÂR is what the price moves earned,
- * TOPLAM MALİYET is what capturing them cost in fees, spread and slippage, and
- * only GERÇEK NET KÂR is money. V1's measured result was that the middle term
+ * Three values, never one. PROFIT BEFORE COSTS is what the price moves earned,
+ * TOTAL COST is what capturing them cost in fees, spread and slippage, and
+ * only TRUE NET PROFIT is money. V1's measured result was that the middle term
  * is large enough to flip the sign of the third, which is exactly why it is
  * drawn here as an equation instead of being folded away into a P&L line.
  *
@@ -35,13 +35,13 @@ export function CostSplit({ metrics }: { metrics: DashboardMetrics | null }) {
       : null;
 
   return (
-    <section className={`split${reported ? "" : " is-empty"}`} aria-label="Kâr ayrıştırması">
+    <section className={`split${reported ? "" : " is-empty"}`} aria-label="Profit decomposition">
       <div className="split-cell">
-        <span className="split-k">Maliyet öncesi kâr</span>
+        <span className="split-k">Profit before costs</span>
         <span className={`split-v ${gross === null ? "is-empty" : (tone(gross) ?? "")}`}>
           {formatSignedMicroMoney(gross)}
         </span>
-        <span className="split-n">fiyat hareketinin kazandırdığı — kâr değildir</span>
+        <span className="split-n">what the price move earned — not profit</span>
       </div>
 
       <span className="split-op" aria-hidden>
@@ -49,14 +49,14 @@ export function CostSplit({ metrics }: { metrics: DashboardMetrics | null }) {
       </span>
 
       <div className="split-cell">
-        <span className="split-k">Toplam maliyet</span>
+        <span className="split-k">Total cost</span>
         <span className={`split-v ${costs === null ? "is-empty" : "neg"}`}>
           {costs === null ? DASH : formatMicroMoney(-Math.abs(costs))}
         </span>
         <span className="split-n">
           {bite === null
-            ? "komisyon + makas + kayma"
-            : `komisyon + makas + kayma · brütün ${formatPct(bite, 0)}'i`}
+            ? "fees + spread + slippage"
+            : `fees + spread + slippage · ${formatPct(bite, 0)} of gross`}
         </span>
       </div>
 
@@ -65,14 +65,14 @@ export function CostSplit({ metrics }: { metrics: DashboardMetrics | null }) {
       </span>
 
       <div className="split-cell is-final">
-        <span className="split-k">Gerçek net kâr</span>
+        <span className="split-k">True net profit</span>
         <span className={`split-v ${net === null ? "is-empty" : (tone(net) ?? "")}`}>
           {formatSignedMicroMoney(net)}
         </span>
         <span className="split-n">
           {reported
             ? "hesaba fiilen giren tutar"
-            : "worker bu üç değeri raporlamaya başladığında dolar"}
+            : "dollars, once the worker starts reporting all three figures"}
         </span>
       </div>
     </section>

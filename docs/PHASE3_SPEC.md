@@ -51,8 +51,8 @@ Two consequences shape Phase 3:
   survive cost stress. A parameter set that is only good at one exact value is
   noise.
 * **Determinism.** Seeded RNG, no wall clock, no network in tests.
-* **The VPS is small.** Research runs on the laptop against cached data. Do not
-  add load to the server; the live paper engine and another project keep running.
+* **The host is small.** Research runs on a workstation against cached data.
+  Do not add load to the deployment; the live paper engine keeps running.
 
 ## Promotion gates — a strategy is a FINALIST only if, OUT-OF-SAMPLE
 

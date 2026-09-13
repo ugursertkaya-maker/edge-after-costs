@@ -39,14 +39,14 @@ export function Rail({
       ? data.ledgers
       : [
           { name: "base", label: "$500", starting_equity: 500, equity: null },
-          { name: "mid", label: "$1.000", starting_equity: 1000, equity: null },
-          { name: "large", label: "$5.000", starting_equity: 5000, equity: null },
+          { name: "mid", label: "$1,000", starting_equity: 1000, equity: null },
+          { name: "large", label: "$5,000", starting_equity: 5000, equity: null },
         ];
 
   return (
     <header className="rail">
       <div className="wordmark">
-        <span className="wordmark-name">KRİPTO MICRO-PROFIT TRADER</span>
+        <span className="wordmark-name">NETEDGE</span>
         <span className="wordmark-ver">
           {data?.simulator_version ?? "sim-?"} · {data?.exchange ?? "—"}
         </span>
@@ -54,25 +54,25 @@ export function Rail({
 
       <span className="rail-sep" aria-hidden />
 
-      <span className="pill is-pos" title="Tüm emirler simülasyondur.">
+      <span className="pill is-pos" title="Every order is simulated.">
         <span className="dot is-pulse" aria-hidden />
         PAPER
       </span>
 
       {/* This one is deliberately red-on-affirmative: a live-order flag that
-          ever flips to AÇIK is the single worst thing that can happen to a
-          V1 paper bot, so it must not look like an ordinary metric. */}
+          ever flips to ON is the single worst thing that can happen to a
+          paper-only system, so it must not look like an ordinary metric. */}
       <div className="rstat">
-        <span className="rstat-k">Gerçek emir</span>
+        <span className="rstat-k">Live orders</span>
         <span className={`rstat-v ${liveOrders ? "is-neg" : "is-off"}`}>
-          {liveOrders ? "AÇIK" : "KAPALI"}
+          {liveOrders ? "ON" : "OFF"}
         </span>
       </div>
 
       <div className="rstat">
         <span className="rstat-k">Exchange data</span>
         <span className={`rstat-v ${connected ? "is-pos" : "is-neg"}`}>
-          {connected ? "CANLI" : "KOPUK"}
+          {connected ? "LIVE" : "DISCONNECTED"}
         </span>
       </div>
 
@@ -84,29 +84,29 @@ export function Rail({
         <span
           className={`rstat-v ${apiOk === null ? "is-off" : apiOk ? "is-pos" : "is-neg"}`}
         >
-          {apiOk === null ? "—" : apiOk ? "AYAKTA" : "YANIT YOK"}
+          {apiOk === null ? "—" : apiOk ? "UP" : "NO RESPONSE"}
         </span>
       </div>
 
       <div className="rstat">
-        <span className="rstat-k">Başlangıç sermaye</span>
+        <span className="rstat-k">Starting equity</span>
         <span className="rstat-v">{formatMoney(startingEquity, 0)}</span>
       </div>
 
       <span className="rail-spacer" />
 
       {stale && (
-        <span className="pill is-warn" title="Son okumalar başarısız oldu.">
-          VERİ BAYAT
+        <span className="pill is-warn" title="The most recent polls failed.">
+          STALE DATA
         </span>
       )}
 
       <div className="rstat">
-        <span className="rstat-k">Son okuma</span>
+        <span className="rstat-k">Last poll</span>
         <span className="rstat-v is-off">{formatRelativeMs(lastOkMs, now)}</span>
       </div>
 
-      <div className="switch" role="group" aria-label="Defter seçimi">
+      <div className="switch" role="group" aria-label="Ledger selection">
         {ledgers.map((l) => (
           <button
             key={l.name}

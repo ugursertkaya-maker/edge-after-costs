@@ -65,8 +65,8 @@ export function EquityCurve({
     body = (
       <DataState
         scanning
-        title="Sermaye eğrisi henüz çizilmedi"
-        text={`Eğri ${formatMoney(base, 0)} başlangıç sermayesinden başlar ve ilk kapanan turdan itibaren şekillenir. Şu an gösterilecek iki noktadan az veri var.`}
+        title="The equity curve has not been drawn yet"
+        text={`The curve starts from ${formatMoney(base, 0)} of starting equity and takes shape from the first closed round trip. There is currently less than the two points needed to draw it.`}
       />
     );
   } else {
@@ -106,21 +106,21 @@ export function EquityCurve({
               className="legend-swatch"
               style={{ borderTopColor: up ? "var(--pos)" : "var(--neg)" }}
             />
-            Piyasa değeri (gerçekleşmemiş dahil)
+            Market value (including unrealised)
           </span>
           <span className="legend-item">
             <span
               className="legend-swatch"
               style={{ borderTopColor: "var(--info)", borderTopStyle: "dashed" }}
             />
-            Gerçekleşmiş P&amp;L
+            Realised P&amp;L
           </span>
           <span className="legend-item">
             <span
               className="legend-swatch"
               style={{ borderTopColor: "var(--fg-4)", borderTopStyle: "dotted" }}
             />
-            Başlangıç {formatMoney(base, 0)}
+            Start {formatMoney(base, 0)}
           </span>
           {boundaries.length > 0 && (
             <span className="legend-item">
@@ -128,7 +128,7 @@ export function EquityCurve({
                 className="legend-swatch"
                 style={{ borderTopColor: "var(--warn)" }}
               />
-              Simülatör sürümü değişti
+              Simulator version changed
             </span>
           )}
         </div>
@@ -138,7 +138,7 @@ export function EquityCurve({
           viewBox={`0 0 ${W} ${H}`}
           preserveAspectRatio="none"
           role="img"
-          aria-label={`Sermaye eğrisi: ${formatMoney(base, 0)} başlangıçtan ${formatMoney(last[1])} seviyesine`}
+          aria-label={`Equity curve: from ${formatMoney(base, 0)} at the start to ${formatMoney(last[1])}`}
         >
           <defs>
             {/* The fill is split at the baseline so gains read green and
@@ -281,11 +281,11 @@ export function EquityCurve({
         </svg>
 
         <p className="footnote" style={{ marginTop: 6 }}>
-          Başlangıçtan bu yana{" "}
+          Since inception{" "}
           <span className={up ? "pos" : "neg"}>{formatSignedMicroMoney(delta)}</span> ·{" "}
-          {points.length} gözlem
+          {points.length} observations
           {boundaries.length > 0 &&
-            ` · ${boundaries.length} simülatör sürüm sınırı (sınırın iki yanı aynı deney değildir)`}
+            ` · ${boundaries.length} simulator-version boundaries (the two sides of a boundary are not the same experiment)`}
         </p>
       </>
     );
@@ -294,8 +294,8 @@ export function EquityCurve({
   return (
     <Panel
       idx="07"
-      title="Sermaye eğrisi"
-      note={`${formatMoney(base, 0)} başlangıçtan itibaren`}
+      title="Equity curve"
+      note={`from ${formatMoney(base, 0)} of starting equity`}
     >
       {body}
     </Panel>

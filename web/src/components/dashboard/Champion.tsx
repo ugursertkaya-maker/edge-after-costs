@@ -40,21 +40,21 @@ function ProfitFactorGap({ oos, live }: { oos: number | null; live: number | nul
 
   const verdict =
     gap === null
-      ? "İki ölçüm birden gelmeden fark okunamaz. Tek bir profit factor, hangi koşulda ölçüldüğü söylenmeden bir şey ifade etmez."
+      ? "A difference cannot be read until both measurements exist. A single profit factor means nothing without saying under what conditions it was measured."
       : gap < -PF_GAP
-        ? "Canlı kâğıt, araştırmanın gerisinde. Aradaki fark, backtest'in modellemediği bir maliyetin — kuyruk sırası, gecikme, gerçek makas — bedelidir ve araştırma sonucundan düşülmesi gerekir."
+        ? "Live paper is behind the research. The gap is the price of a cost the backtest did not model — queue position, latency, the real spread — and it should be deducted from the research result."
         : gap > PF_GAP
-          ? "Canlı kâğıt, araştırmanın önünde. Bu iyi haber değil, bir uyarıdır: örneklem küçükken bu fark çoğunlukla şanstır ve iki ölçümün yakınsaması beklenir."
-          : "İki ölçüm birbirine yakın. Bu, stratejinin gerçek akışta da araştırmadaki gibi davrandığını gösteren tek doğrudan kanıttır.";
+          ? "Live paper is ahead of the research. That is not good news but a warning: on a small sample this gap is usually luck, and the two measurements are expected to converge."
+          : "The two measurements are close. This is the only direct evidence that the strategy behaves in real flow the way it did in research.";
 
   return (
     <div className="vs">
       <div className="vs-cell">
-        <span className="vs-k">Örneklem dışı PF</span>
+        <span className="vs-k">Out-of-sample PF</span>
         <span className={`vs-v ${oos === null ? "is-empty" : ""}`}>
           {formatFactor(oos)}
         </span>
-        <span className="vs-n">donmuş parametreler · kayıtlı geçmiş</span>
+        <span className="vs-n">frozen parameters · recorded history</span>
       </div>
 
       <div className="vs-gap">
@@ -73,11 +73,11 @@ function ProfitFactorGap({ oos, live }: { oos: number | null; live: number | nul
       </div>
 
       <div className="vs-cell is-live">
-        <span className="vs-k">Canlı kâğıt PF</span>
+        <span className="vs-k">Live paper PF</span>
         <span className={`vs-v ${live === null ? "is-empty" : ""}`}>
           {formatFactor(live)}
         </span>
-        <span className="vs-n">gerçek akış · gerçek gecikme</span>
+        <span className="vs-n">real flow · real latency</span>
       </div>
 
       <p className="vs-note">{verdict}</p>
@@ -109,13 +109,13 @@ export function Champion({
   const meta = c ? (
     <>
       {c.version && (
-        <span className="pill" title="Şampiyonun sürümü — terfi edilen strateji sürümlenir">
+        <span className="pill" title="The champion's version — a promoted strategy is versioned">
           {c.version}
         </span>
       )}
       {toNum(c.started_ms) !== null && (
         <span className="panel-note" title={formatDateTimeMs(c.started_ms)}>
-          {formatRelativeMs(c.started_ms, now)} başladı
+          started {formatRelativeMs(c.started_ms, now)}
         </span>
       )}
     </>
@@ -124,31 +124,31 @@ export function Champion({
   return (
     <Panel
       idx="12"
-      title="Mevcut paper şampiyonu"
-      note="canlı kâğıt motorunda çalışan strateji"
+      title="Current paper champion"
+      note="the strategy running in the live paper engine"
       meta={meta}
-      footer="Şampiyon kâğıt üzerinde çalışır; bu panelde gerçek emir yoktur. Örneklem dışı PF araştırmanın, canlı kâğıt PF ise gerçek akışın ölçümüdür — ikisinin ayrışması beklenen bir durumdur ve yan yana durmalarının sebebi de budur."
+      footer="The champion runs on paper; there is no real order anywhere in this panel. Out-of-sample PF is the research measurement and live paper PF is the measurement on real flow — the two diverging is expected, and that is exactly why they sit side by side."
     >
       {loading && !c ? (
         <Skeleton rows={3} />
       ) : !c ? (
         <DataState
-          title="Kâğıt şampiyonu yok"
-          text="Canlı kâğıt motorunda araştırmadan terfi etmiş bir strateji çalışmıyor. Kapıların tamamını geçen bir aday olmadan terfi yapılmaz; bir strateji terfi ettiğinde sürümü, başlangıç anı ve her iki profit factor'ü burada görünecek."
+          title="No paper champion"
+          text="No strategy promoted out of research is running in the live paper engine. There is no promotion without a candidate that clears every gate; when one is promoted, its version, start time and both profit factors will appear here."
         />
       ) : (
         <div className="champ">
           <div className="champ-id">
-            <span className="champ-k">Strateji</span>
+            <span className="champ-k">Strategy</span>
             <span className="champ-v">
               {c.strategy ? strategyLabel(c.strategy) : DASH}
             </span>
             <span className="champ-n">
               {toNum(c.started_ms) !== null
-                ? `${formatDateTimeMs(c.started_ms)} itibarıyla · ${formatDuration(
+                ? `since ${formatDateTimeMs(c.started_ms)} · running for ${formatDuration(
                     Math.max(0, (now - (toNum(c.started_ms) as number)) / 1000),
-                  )} çalışıyor`
-                : "başlangıç anı bildirilmedi"}
+                  )}`
+                : "start time not reported"}
             </span>
           </div>
 
@@ -156,15 +156,15 @@ export function Champion({
 
           <div className="pfolio-grid">
             <Stat
-              label="Kâğıt sermaye"
+              label="Paper equity"
               value={formatMoney(c.paper_equity)}
-              note="şampiyonun defteri"
+              note="the champion's ledger"
             />
             <Stat
               label="Expectancy"
               value={formatSignedMicroMoney(c.expectancy)}
               cls={tone(c.expectancy) ?? ""}
-              note="işlem başına NET"
+              note="NET per trade"
             />
             <Stat
               label="Max drawdown"
@@ -174,13 +174,13 @@ export function Champion({
                   : formatMoney(-Math.abs(toNum(c.max_drawdown) as number))
               }
               cls={toNum(c.max_drawdown) ? "neg" : ""}
-              note="tepe noktasından"
+              note="from the peak"
             />
-            <Stat label="İşlem" value={formatInt(c.trades)} note="kapanmış tur" />
+            <Stat label="Trades" value={formatInt(c.trades)} note="closed round trips" />
             <Stat
-              label="Sürüm"
+              label="Version"
               value={c.version ?? DASH}
-              note="terfi edilen strateji sürümü"
+              note="the promoted strategy version"
             />
           </div>
         </div>

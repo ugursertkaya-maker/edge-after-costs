@@ -1,40 +1,23 @@
-# Phase report — Crypto Micro-Profit another project
+# Phase report — NetEdge
 
 Date: 2026-09-11 · Mode: **PAPER** · Live orders placed: **0**
 
 ---
 
-## 1. Production safety
+## 1. The system
 
-| Item | Result |
-|---|---|
-| another project worker stopped | **YES** — `other-project-worker` exited 0, `restart=no` |
-| Auto-restart disabled | **YES** — parked behind a compose profile in `docker-compose.override.yml`; `docker compose up -d` no longer starts it |
-| another project source retained | **YES** — `/srv/other-project` untouched |
-| another project data retained | **YES** — 21 tables, **6,596 MB**, 2,445,224 orderbook snapshots, 90,124 sim trades, volumes `other-project-pgdata` / `other-project-redisdata` intact |
-| another project logs retained | **YES** |
-| `/other-project` still reachable | **YES**, with an "ARŞİV / DURDURULDU" banner injected by nginx `sub_filter` — no rebuild of the archived app was needed, and removing four lines reverts it |
-| Rollback possible | **YES** — `docker compose --profile archived up -d worker` |
-| CPU freed | `other-project-worker` **64.6% → 0**, `other-project-db` **17.6% → ~1%** |
-| **another project regression** | **PASS** — all 5 containers healthy, `/api/health` `{"status":"ok","api":true,"database":true,"redis":true}`, `/` 307, `/login` 200. Not modified in any way. |
-
----
-
-## 2. The system
-
-- **URL:** <https://your-domain.example/cryptobot> (Turkish dashboard, login-gated)
-- **Server:** `/srv/netedge`, containers `cryptobot-{web,api,worker,db,redis}`
-- Own network, own Postgres, own Redis, own volumes. Nothing shared with
-  another project or the archived another project stack.
+- **UI:** the dashboard at `{BASE_PATH}` (login-gated)
+- **Deployment:** five containers — `netedge-{web,api,worker,db,redis}`
+- Own network, own Postgres, own Redis, own volumes. The stack shares nothing
+  with anything else running on the host.
 - **10,332 lines** of application Python across 52 modules, **24 test files**,
   **599 automated tests passing** (1 skipped), all offline and deterministic.
 
 ### Exchange selected: **Binance.US**
 
 Chosen on cost, which is the only variable that matters for a micro-profit
-strategy. Full comparison in `docs/EXCHANGE_DECISION.md`; measured from the VPS
-(which is physically in US East — a US IP, so no bypass of any kind was
-needed or used).
+strategy. Full comparison in `docs/EXCHANGE_DECISION.md`; measured from a
+US-hosted server (a US IP, so no bypass of any kind was needed or used).
 
 | | **Binance.US** | Coinbase Advanced | Kraken Pro |
 |---|---|---|---|
@@ -44,8 +27,8 @@ needed or used).
 | Round trip on $100 | **$0.02 – $0.20** | $1.20 | $0.80 |
 | Min notional | **$1.00** | ~$1 | pair-dependent |
 | Sandbox | none | limited | limited |
-| REST latency from VPS | 480 ms | 95 ms | 140 ms |
-| WS TCP RTT from VPS | 165 ms (Tokyo-routed) | 2.3 ms | 1.9 ms |
+| REST latency from the test host | 480 ms | 95 ms | 140 ms |
+| WS TCP RTT from the test host | 165 ms (Tokyo-routed) | 2.3 ms | 1.9 ms |
 
 **Why it won:** targeting +$0.25 on a $100 position (a +0.25% move), Coinbase
 needs +1.45% to break even and Kraken +1.05%. Both are structurally impossible
@@ -78,7 +61,7 @@ targets and stops, none aware of fees, capital or positions.
 
 ---
 
-## 3. THE FINDING
+## 2. THE FINDING
 
 **Binance.US has the fees a micro-profit bot needs and none of the liquidity.
 Coinbase and Kraken have the liquidity and fees 80–120× too high. There is no
@@ -110,7 +93,7 @@ Full analysis: `docs/ECONOMICS.md`.
 
 ---
 
-## 4. Backtest results — all negative
+## 3. Backtest results — all negative
 
 Real Binance.US 1-minute history. Fees **1 bps/side (Tier-0)**, spread modelled
 from the bar range with a 2 bps floor, slippage from a synthesised book, entries
@@ -170,7 +153,7 @@ arithmetically impossible.
 
 ---
 
-## 5. Live paper run
+## 4. Live paper run
 
 Started 2026-09-11 03:0x UTC. Starting capital **$500** (comparison ledgers
 $1,000 / $5,000 run the same decisions at different size).
@@ -238,7 +221,7 @@ is running and will accumulate evidence either way.
 
 ---
 
-## 6. Operational numbers
+## 5. Operational numbers
 
 | | |
 |---|---|
@@ -246,16 +229,15 @@ is running and will accumulate evidence either way.
 | Worker RAM | **61 MB** / 640 MB limit |
 | Whole stack CPU | ~3.3% (worker 2.0, api 0.5, redis 0.7, db 0.1, web 0.0) |
 | Whole stack RAM | ~220 MB |
-| Host load average | 1.08 on 2 vCPU — **lower than before this project**, because stopping another project freed more than we consumed |
 | DB growth | 9.9 MB in the first ~40 min; `market_stats` ages out at 48 h, events at 30 days; trades/positions/equity/backtests never deleted |
 | WS health | connected, 12 updates/s, 0 reconnects, 0 dropped, book age 150–700 ms |
 | Automated tests | **599 passing**, 1 skipped, fully offline |
 
 ---
 
-## 7. Safety posture
+## 6. Safety posture
 
-Live-verified at `GET /cryptobot/api/system/safety`:
+Live-verified at `GET /netedge/api/system/safety`:
 
 ```json
 { "mode": "PAPER", "live_orders_enabled": false,
@@ -274,7 +256,7 @@ Live-verified at `GET /cryptobot/api/system/safety`:
 
 ---
 
-## 8. What the user needs to do next
+## 7. What the user needs to do next
 
 **Nothing is required.** Do not create a Binance.US account yet.
 
@@ -283,13 +265,13 @@ not trade this live**: out-of-sample net expectancy is −$0.26 per trade and
 every strategy is net negative over every period tested. Creating an account now
 would spend effort on a path the data has closed.
 
-If and when a version does clear validation, the flow is: create the account →
-Basic Verification → enable 2FA → create an Exchange API key with **Reading
-only** (not Spot Trading) → restrict it to IP `your-server` → leave
-**withdrawals OFF** → run `sudo /srv/netedge/scripts/configure-exchange.sh`
-on the server, which stores the secret `chmod 600`, root-owned, outside `.env`
-and outside git. **Never paste an API secret into a chat window.** That script
-does not enable live trading; nothing in this repository does.
+If and when a version does clear validation, the flow would be: create the
+account → complete verification → enable 2FA → create an Exchange API key with
+**Reading only** (not Spot Trading) → restrict it to the server's IP → leave
+**withdrawals OFF**. **Never paste an API secret into a chat window, a commit,
+or an issue.** Note that none of this is wired up: this repository contains no
+credential storage, no request signing and no order-submission path, and the
+paper-only guard in `app/safety.py` fails the build if any appears.
 
 ### Recommendation
 

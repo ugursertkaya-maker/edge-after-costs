@@ -27,31 +27,31 @@ import type { FinalistRow, MonteCarloResult, StressResult } from "@/lib/types";
  * screen that never had it.
  */
 const GATES: { n: number; text: string }[] = [
-  { n: 1, text: "Örneklem dışı NET expectancy sıfırın üzerinde" },
+  { n: 1, text: "Out-of-sample NET expectancy above zero" },
   {
     n: 2,
-    text: "Profit factor ≥ 1,20 — 1,00 ile 1,20 arası SINIRDA'dır, finalist değildir",
+    text: "Profit factor >= 1.20 — between 1.00 and 1.20 is MARGINAL, not a finalist",
   },
-  { n: 3, text: "Max drawdown $500'lık hesaba karşı makul" },
+  { n: 3, text: "Max drawdown reasonable against a $500 account" },
   {
     n: 4,
-    text: "Tek işleme bağlı değil — en iyi işlem çıkarıldığında expectancy pozitif kalır",
+    text: "Not dependent on a single trade — expectancy stays positive with the best trade removed",
   },
   {
     n: 5,
-    text: "Birden çok test penceresinde pozitif — walk-forward pencerelerinin çoğunluğu",
+    text: "Positive across multiple test windows — a majority of the walk-forward windows",
   },
   {
     n: 6,
-    text: "Maliyet stresine dayanır — komisyon +%25 ve +%50, kayma ×2, gecikme ×2, daha kötü makas, rastgele emir gecikmesi",
+    text: "Survives cost stress — fees +25% and +50%, slippage x2, latency x2, worse spread, random order delay",
   },
-  { n: 7, text: "Asgari örneklem: en az 30 örneklem dışı işlem" },
+  { n: 7, text: "Minimum sample: at least 30 out-of-sample trades" },
 ];
 
 function GateReference() {
   return (
     <div className="gateref">
-      <p className="gateref-t">Yürürlükteki kapılar — örneklem dışı, hepsi birden</p>
+      <p className="gateref-t">Gates in force — out-of-sample, all of them at once</p>
       <ol className="gateref-l">
         {GATES.map((g) => (
           <li key={g.n}>
@@ -61,8 +61,8 @@ function GateReference() {
         ))}
       </ol>
       <p className="gateref-f">
-        Bir kazanan bulmak için bu eşikler indirilmez. İndirilmiş bir kapıdan geçen
-        strateji kâr değil, uydurulmuş bir geçmiş üretir.
+        These thresholds are not lowered to find a winner. A strategy that passes a
+        lowered gate produces an invented history, not a profit.
       </p>
     </div>
   );
@@ -71,7 +71,7 @@ function GateReference() {
 function Stress({ items }: { items: StressResult[] }) {
   return (
     <div className="stress">
-      <p className="fgroup-t">Maliyet stresi</p>
+      <p className="fgroup-t">Cost stress</p>
       <div className="stress-list">
         {items.map((s, i) => {
           const survived = s.survived;
@@ -83,10 +83,10 @@ function Stress({ items }: { items: StressResult[] }) {
               className={`schip ${cls}`}
               title={
                 survived === true
-                  ? "Bu senaryoda hayatta kaldı"
+                  ? "Survived this scenario"
                   : survived === false
-                    ? "Bu senaryoda düştü"
-                    : "Bu senaryo için hüküm bildirilmedi"
+                    ? "Failed under this scenario"
+                    : "No verdict reported for this scenario"
               }
             >
               <span className="schip-k">{s.label ?? DASH}</span>
@@ -108,7 +108,7 @@ function MonteCarlo({ mc }: { mc: MonteCarloResult }) {
       <p className="fgroup-t">
         Monte Carlo{" "}
         {toNum(mc.samples) !== null && (
-          <span className="fgroup-n">{formatInt(mc.samples)} örnekleme</span>
+          <span className="fgroup-n">{formatInt(mc.samples)} samples</span>
         )}
       </p>
       <dl className="cgrid">
@@ -129,15 +129,15 @@ function MonteCarlo({ mc }: { mc: MonteCarloResult }) {
           </dd>
         </div>
         <div className="citem">
-          <dt>En uzun kayıp serisi</dt>
+          <dt>Longest losing streak</dt>
           <dd className={toNum(mc.worst_loss_streak) === null ? "muted" : ""}>
             {toNum(mc.worst_loss_streak) === null
               ? DASH
-              : `${formatInt(mc.worst_loss_streak)} işlem`}
+              : `${formatInt(mc.worst_loss_streak)} trades`}
           </dd>
         </div>
         <div className="citem">
-          <dt>Başlangıcın altında bitme</dt>
+          <dt>Finishing below the starting equity</dt>
           <dd className={prob === null ? "muted" : prob > 0.3 ? "neg" : prob > 0.1 ? "warn" : ""}>
             {formatRate(prob)}
           </dd>
@@ -158,10 +158,10 @@ function Card({ f, index }: { f: FinalistRow; index: number }) {
     f.passed === true ? "is-pass" : f.passed === false ? "is-fail" : "is-unknown";
   const overallText =
     f.passed === true
-      ? "TÜM KAPILAR GEÇİLDİ"
+      ? "ALL GATES PASSED"
       : f.passed === false
-        ? "KAPILARDAN GEÇEMEDİ"
-        : "HÜKÜM BİLDİRİLMEDİ";
+        ? "FAILED THE GATES"
+        : "NO VERDICT REPORTED";
 
   const identity = [
     f.symbol ? baseAsset(f.symbol) : null,
@@ -186,16 +186,16 @@ function Card({ f, index }: { f: FinalistRow; index: number }) {
       <div className={`fin-body${solo ? " is-solo" : ""}`}>
         <div className="fgroup">
           <p className="fgroup-t">
-            Kapı raporu{" "}
+            Gate report{" "}
             <span className="fgroup-n">
-              {formatInt(reasons.length)} satır · {passed} geçti · {failed} kaldı
+              {formatInt(reasons.length)} rows · {passed} passed · {failed} failed
               {unknown > 0 ? ` · ${unknown} belirsiz` : ""}
             </span>
           </p>
           {reasons.length === 0 ? (
             <p className="xnote">
-              Bu aday için kapı gerekçesi bildirilmedi. Gerekçesiz bir geçiş, geçiş
-              sayılmaz — aşağıdaki kapı listesi hâlâ yürürlüktedir.
+              No gate rationale was reported for this candidate. A pass without a
+              rationale does not count as a pass — the gate list below still stands.
             </p>
           ) : (
             <ul className="gates">
@@ -214,8 +214,8 @@ function Card({ f, index }: { f: FinalistRow; index: number }) {
           )}
           {unknown > 0 && reasons.length > 0 && (
             <p className="xnote">
-              Hükmü kendi metninde yazmayan satırlar nötr çizilir. Panel, kendisine
-              söylenmemiş bir geçişi yeşile boyamaz.
+              Rows that do not state their verdict in their own text are drawn neutral.
+              The panel does not colour a pass green that it was never told about.
             </p>
           )}
         </div>
@@ -251,7 +251,7 @@ export function Finalists({
   const meta =
     rows && rows.length > 0 ? (
       <>
-        <span className="pill is-off">{formatInt(rows.length)} kapı raporu</span>
+        <span className="pill is-off">{formatInt(rows.length)} gate reports</span>
         {passedCount > 0 && (
           <span className="pill is-pos">{formatInt(passedCount)} finalist</span>
         )}
@@ -264,14 +264,14 @@ export function Finalists({
     <Panel
       idx="11"
       title="Finalistler"
-      note="sağlamlık kapılarının tamamını geçen adaylar"
+      note="candidates that cleared every robustness gate"
       meta={meta}
       footer={
         rows === null
-          ? "Kapı raporunun hiç üretilmemesi ile hiçbir adayın kapıları geçememesi aynı şey değildir; bu panel ikisini ayrı ekranlar olarak gösterir."
+          ? "A gate report never being produced and no candidate clearing the gates are not the same thing; this panel shows them as two separate screens."
           : rows.length === 0
-            ? "Finalist listesinin boş olması bir arıza değil, bir ölçüm sonucudur: denenen adayların hiçbiri maliyet sonrası ve örneklem dışı olarak kapıların tamamını geçemedi. Hiçbir şeyin çalışmadığı bir arama da bir sonuçtur ve bu panel onu böyle bildirir."
-            : "Her kapı kendi gerekçe satırıyla birlikte gösterilir; hükmünü kendi metninde yazmayan bir satır nötr çizilir. Kapıların tamamı geçilmeden bir strateji finalist sayılmaz ve terfi edilmez."
+            ? "An empty finalist list is not a fault but a measurement: none of the candidates tried cleared every gate after costs and out of sample. A search in which nothing works is also a result, and this panel reports it as one."
+            : "Every gate is shown with its own rationale row; a row that does not state its verdict in its own text is drawn neutral. A strategy is not a finalist and is not promoted until every gate is passed."
       }
     >
       {loading && rows === null ? (
@@ -280,13 +280,13 @@ export function Finalists({
         <div className="fin-empty">
           <div className="fin-empty-head">
             <span className="state-mark" aria-hidden />
-            <p className="fin-empty-t">Sağlamlık değerlendirmesi henüz çalışmadı</p>
+            <p className="fin-empty-t">The robustness evaluation has not run yet</p>
           </div>
           <p className="fin-empty-x">
-            Kapı raporu üretilmedi. Bu, &ldquo;hiçbir strateji geçemedi&rdquo; demek
-            değildir — henüz kimsenin sınava girmediği anlamına gelir. İkisi farklı
-            ifadelerdir ve bu panel onları birbirinin yerine kullanmaz. Turnuva
-            sonuçları geldiğinde her aday aşağıdaki kapılardan tek tek geçirilecek.
+            No gate report was produced. This does not mean &ldquo;no strategy passed&rdquo;
+            — it means nobody has sat the exam yet. Those are different statements
+            and this panel does not use one for the other. When tournament results
+            arrive, every candidate will be put through the gates below one by one.
           </p>
           <GateReference />
         </div>
@@ -294,13 +294,13 @@ export function Finalists({
         <div className="fin-empty is-none">
           <div className="fin-empty-head">
             <span className="fin-empty-mark" aria-hidden />
-            <p className="fin-empty-t">Hiçbir strateji kapıları geçemedi</p>
+            <p className="fin-empty-t">No strategy cleared the gates</p>
           </div>
           <p className="fin-empty-x">
-            Beklenen sonuç budur ve panelin boş olması değil, aramanın cevabıdır.
-            Denenen adayların hiçbiri maliyet sonrası, örneklem dışı ve stres altında
-            aşağıdaki yedi kapının tamamını geçemedi; dolayısıyla finalist yoktur ve
-            canlı kâğıda terfi edecek bir strateji de yoktur.
+            This is the expected outcome, and an empty panel is the answer to the
+            search rather than a defect. None of the candidates tried cleared all
+            seven gates below after costs, out of sample and under stress; so there
+            is no finalist and no strategy to promote to live paper.
           </p>
           <GateReference />
         </div>

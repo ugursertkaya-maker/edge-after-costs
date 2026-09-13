@@ -12,7 +12,7 @@ import type { Num } from "@/lib/types";
  * The small parts the two cost tables share.
  *
  * They live together because they encode one argument each, and that argument
- * has to read the same in İŞLEM GEÇMİŞİ as it does in AÇIK POZİSYONLAR: a
+ * has to read the same in TRADE HISTORY as it does in OPEN POSITIONS: a
  * maker fill is not a taker fill, 26 minutes is not 4 minutes, and a cost is
  * not income.
  */
@@ -45,7 +45,7 @@ export function MakerTakerBadge({ value }: { value: string | null | undefined })
   return (
     <span
       className={`mt ${key === "MAKER" ? "is-maker" : "is-taker"}`}
-      title={key === "MAKER" ? "Maker dolum — komisyon %0" : "Taker dolum — komisyon ödendi"}
+      title={key === "MAKER" ? "Maker fill — 0% fee" : "Taker fill — fee paid"}
     >
       {makerTakerLabel(key)}
     </span>
@@ -92,7 +92,7 @@ export function StrengthBar({ value }: { value: Num }) {
   const pct = strengthPct(value);
   if (pct === null) return <span className="muted">{DASH}</span>;
   return (
-    <span className="strength" title="Sinyal gücü">
+    <span className="strength" title="Signal strength">
       <span className="strength-track">
         <span className="strength-fill" style={{ width: `${pct}%` }} />
       </span>
@@ -165,14 +165,14 @@ export function NetEquation({
   return (
     <div className="eq">
       <span className="eq-cell">
-        <span className="eq-k">Brüt P&amp;L</span>
+        <span className="eq-k">Gross P&amp;L</span>
         <span className={`eq-v ${grossCls ?? ""}`}>{gross}</span>
       </span>
       <span className="eq-op" aria-hidden>
         −
       </span>
       <span className="eq-cell">
-        <span className="eq-k">Toplam işlem maliyeti</span>
+        <span className="eq-k">Total trading cost</span>
         <span className="eq-v neg">{cost}</span>
       </span>
       <span className="eq-op" aria-hidden>

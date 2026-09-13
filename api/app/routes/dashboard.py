@@ -2,7 +2,7 @@
 
 The worker publishes a complete, pre-rendered payload per ledger.  If the worker
 is not beating we still return the last snapshot but mark it stale, because a
-frozen page that looks live is worse than an honest "veri akışı yok".
+frozen page that looks live is worse than an honest "no data feed".
 """
 
 from __future__ import annotations

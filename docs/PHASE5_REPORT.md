@@ -1,7 +1,7 @@
 # Phase 5 — aggressive capital utilisation
 
 Date: 2026-09-11 · Mode: **PAPER** · Real orders placed: **0**
-Live: <https://your-domain.example/cryptobot> · **1,768 automated tests passing**
+Mode: **PAPER** · **1,768 automated tests passing**
 
 ---
 

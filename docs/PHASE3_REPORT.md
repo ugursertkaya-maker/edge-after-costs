@@ -1,7 +1,7 @@
 # Phase 3 — profitability search / strategy tournament
 
 Date: 2026-09-11 · Mode: **PAPER** · Real orders placed: **0**
-Live: <https://your-domain.example/cryptobot> · 1,167 automated tests passing
+Mode: **PAPER** · 1,167 automated tests passing
 
 ---
 
@@ -54,7 +54,7 @@ all treated as hypotheses and all were searched.
 
 **Best in-sample arm**: irrelevant by construction and deliberately not quoted
 as a result — every in-sample number in the report is rendered desaturated and
-hatched under the heading "ÖRNEKLEM İÇİ — SONUÇ DEĞİLDİR".
+hatched under the heading "IN-SAMPLE — NOT A RESULT".
 
 **Best out-of-sample arm**: none qualified. One arm was *marginal*:
 
@@ -461,7 +461,7 @@ What is **not** ruled out, and is being measured:
 | Automated tests | **1,167 passing**, 1 skipped, all offline and deterministic |
 | Worker CPU / RAM | 2.7% of one core, 62 MB of a 640 MB limit |
 | Host load | 1.55 on 2 vCPU — lower than before this project started |
-| Search compute | ran entirely off-box on the laptop; the VPS was never loaded |
+| Search compute | ran entirely off-box on a workstation; the deployment host was never loaded |
 | **PAPER mode** | **YES** — the only accepted value; API and worker refuse to start otherwise |
 | **Real orders** | **0** |
 | Exchange credentials configured | **NO** |

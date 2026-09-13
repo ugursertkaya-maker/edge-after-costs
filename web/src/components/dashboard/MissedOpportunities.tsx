@@ -16,7 +16,7 @@ import {
 import type { MissedAudit } from "@/lib/types";
 
 /**
- * KAÇIRILAN FIRSATLAR — was the refusal right?
+ * MISSED OPPORTUNITIES — was the refusal right?
  *
  * Every rejection the risk layer makes is a claim: *this candidate was not
  * worth taking.* This panel is the only place that claim is ever checked, by
@@ -54,11 +54,11 @@ function pairOf(value: unknown): [number | null, number | null] {
 function PostHocStrip() {
   return (
     <div className="phoc" role="note">
-      <span className="phoc-tag">GEÇMİŞE DÖNÜK</span>
+      <span className="phoc-tag">RETROSPECTIVE</span>
       <span className="phoc-x">
-        Bu panel, reddedilen adayların sonradan ne yaptığını gelecekteki veriyle ölçer.
-        Bir denetimdir, bir sinyal değildir: buradaki hiçbir satır canlı karara girmez,
-        girebildiği bir kod yolu varsa o bir sızıntı ve kusurdur.
+        This panel measures, with subsequent data, what rejected candidates went on to do.
+        It is an audit, not a signal: no row here enters a live decision, and if a code
+        path exists by which it could, that path is a leak and a defect.
       </span>
     </div>
   );
@@ -76,12 +76,12 @@ function Split({
   const total = missed + correct + unlabelled;
   if (total <= 0) return null;
   return (
-    <div className="mo-split" role="img" aria-label="Doğru retler ile kaçırılan kazançların oranı">
+    <div className="mo-split" role="img" aria-label="Ratio of correct rejections to missed gains">
       {correct > 0 && (
         <span
           className="mo-seg is-correct"
           style={{ flexGrow: correct }}
-          title={`Doğru ret · ${formatInt(correct)} · ${formatRate(correct / total, 0)}`}
+          title={`Correct rejection · ${formatInt(correct)} · ${formatRate(correct / total, 0)}`}
         >
           {formatRate(correct / total, 0)}
         </span>
@@ -90,7 +90,7 @@ function Split({
         <span
           className="mo-seg is-missed"
           style={{ flexGrow: missed }}
-          title={`Kaçırılan kazanç · ${formatInt(missed)} · ${formatRate(missed / total, 0)}`}
+          title={`Missed gain · ${formatInt(missed)} · ${formatRate(missed / total, 0)}`}
         >
           {formatRate(missed / total, 0)}
         </span>
@@ -99,7 +99,7 @@ function Split({
         <span
           className="mo-seg is-other"
           style={{ flexGrow: unlabelled }}
-          title={`Etiketlenmemiş ret · ${formatInt(unlabelled)}`}
+          title={`Unlabelled rejection · ${formatInt(unlabelled)}`}
         >
           {formatRate(unlabelled / total, 0)}
         </span>
@@ -160,7 +160,7 @@ export function MissedOpportunities({
         {verdict.text}
       </span>
       {toNum(m.windows) !== null && (
-        <span className="panel-note" title="İncelenen geçmiş pencere sayısı">
+        <span className="panel-note" title="Historical windows examined">
           {formatInt(m.windows)} pencere
         </span>
       )}
@@ -173,10 +173,10 @@ export function MissedOpportunities({
   return (
     <Panel
       idx="16"
-      title="Kaçırılan fırsatlar"
-      note="reddedilen adaylar sonradan ne yaptı — geçmişe dönük denetim"
+      title="Missed opportunities"
+      note="what rejected candidates went on to do — a retrospective audit"
       meta={meta}
-      footer={`Toplamın işareti hükümdür: negatif bir toplam, reddedilen hareketlerin maliyet sonrası eksiye gittiğini — yani kapının para kazandırdığını — söyler; güçlü pozitif bir toplam, kapının gerçekten orada olan kenarı geri çevirdiğini söyler. Sıfıra yakın değerler (±${MISSED_NOISE_BPS} bps, bir Tier-0 gidiş-dönüşü) kovalanacak bir fark değildir; ${MISSED_ALARM_BPS} bps, Tier-0 dışı bir gidiş-dönüşün tamamıdır. Bu denetim yalnızca kapının kalibrasyonunu ölçer; eşikleri gevşetmek için bir gerekçe değildir, çünkü her gevşetme aynı anda hem kaçırılanı hem de zararı artırır.`}
+      footer={`The sign of the total is the verdict: a negative total says the refused moves went negative after costs — that the gate earned money; a strongly positive total says the gate turned away edge that was genuinely there. Values near zero (+/-${MISSED_NOISE_BPS} bps, one Tier-0 round trip) are not a difference worth chasing; ${MISSED_ALARM_BPS} bps is a whole non-Tier-0 round trip. This audit measures only the gate's calibration; it is not a justification for loosening thresholds, because every loosening raises both the missed gains and the losses at once.`}
     >
       {loading && !m ? (
         <Skeleton rows={4} />
@@ -184,14 +184,14 @@ export function MissedOpportunities({
         <div className="fin-empty">
           <div className="fin-empty-head">
             <span className="state-mark" aria-hidden />
-            <p className="fin-empty-t">Ret denetimi henüz çalışmadı</p>
+            <p className="fin-empty-t">The rejection audit has not run yet</p>
           </div>
           <p className="fin-empty-x">
-            Reddedilen adayların sonradan ne yaptığı ölçülmedi. Bu, &ldquo;hiçbir fırsat
-            kaçırılmadı&rdquo; demek değildir — kimsenin bakmadığı anlamına gelir, ve bu
-            ekranda ölçülmemiş bir denetim temiz bir denetim gibi gösterilmez. Denetim
-            çalıştığında her ret iki kutudan birine düşecek: parayı kurtaran DOĞRU RET ve
-            parayı bırakan KAÇIRILAN KAZANÇ.
+            What rejected candidates went on to do has not been measured. This does not
+            mean &ldquo;no opportunity was missed&rdquo; — it means nobody has looked, and on
+            this screen an unmeasured audit is not shown as a clean one. When the audit
+            runs, every rejection will fall into one of two boxes: a CORRECT REJECTION
+            that saved money, and a MISSED GAIN that left it on the table.
           </p>
           <PostHocStrip />
         </div>
@@ -201,11 +201,11 @@ export function MissedOpportunities({
 
           <div className={`mo-head ${vtone}`}>
             <div className="mo-figure">
-              <span className="mo-k">Toplam kaçırılan hareket</span>
+              <span className="mo-k">Total missed move</span>
               <span className={`mo-v ${bps === null ? "is-empty" : ""}`}>
                 {bps === null ? DASH : `${formatBps(bps)} bps`}
               </span>
-              <span className="mo-n">maliyet sonrası, reddedilen adayların toplamı</span>
+              <span className="mo-n">after costs, summed across rejected candidates</span>
             </div>
             <div className="mo-verdict">
               <span className={`mo-badge ${vtone}`}>{verdict.text}</span>
@@ -218,59 +218,59 @@ export function MissedOpportunities({
           <div className="mo-legend">
             <span className="mo-dot is-correct">
               <i aria-hidden />
-              Doğru ret — zarardan korudu <b>{formatInt(correct)}</b>
+              Correct rejection — avoided a loss <b>{formatInt(correct)}</b>
             </span>
             <span className="mo-dot is-missed">
               <i aria-hidden />
-              Kaçırılan kazanç — para bırakıldı <b>{formatInt(winners)}</b>
+              Missed gain — money left behind <b>{formatInt(winners)}</b>
             </span>
             {unlabelled > 0 && (
               <span className="mo-dot is-other">
                 <i aria-hidden />
-                Etiketlenmemiş — hüküm verilemedi <b>{formatInt(unlabelled)}</b>
+                Unlabelled — no verdict possible <b>{formatInt(unlabelled)}</b>
               </span>
             )}
           </div>
 
           <div className="pfolio-grid">
-            <Stat label="Pencere" value={formatInt(m.windows)} note="incelenen geçmiş dilim" />
+            <Stat label="Windows" value={formatInt(m.windows)} note="historical slices examined" />
             <Stat
-              label="İncelenen ret"
+              label="Rejections examined"
               value={formatInt(m.rejections_examined)}
-              note="denetime giren aday"
+              note="candidates entering the audit"
             />
             <Stat
-              label="Kaçırılan kazanç"
+              label="Missed gain"
               value={formatInt(m.missed_winners)}
               cls={winners === null ? "" : winners > 0 ? "warn" : ""}
-              note="maliyet sonrası kazandıracaktı"
+              note="would have earned after costs"
             />
             <Stat
-              label="Doğru ret"
+              label="Correct rejection"
               value={formatInt(m.correct_rejections)}
               cls={correct === null ? "" : correct > 0 ? "pos" : ""}
-              note="reddedilmesi doğruydu"
+              note="was right to be rejected"
             />
             <Stat
-              label="Doğru ret oranı"
+              label="Correct-rejection rate"
               value={correctShare === null ? DASH : formatRate(correctShare, 1)}
-              note="hüküm verilen retler içinde"
+              note="among rejections with a verdict"
             />
           </div>
 
           {rows.length === 0 ? (
             <DataState
-              title="Ret sebebine göre dağılım bildirilmedi"
-              text="Denetim toplamları geldi ama hangi sebebin para bıraktığı gelmedi. Toplam, hangi kapının fazla sıkı olduğunu söylemez — bunu yalnızca sebep kırılımı söyler."
+              title="No breakdown by rejection reason was reported"
+              text="The audit totals arrived but not which reason left money behind. A total does not say which gate is too tight — only the per-reason breakdown does."
             />
           ) : (
             <ul className="mo-list">
               <li className="mo-row is-head">
                 <span className="mo-rk">Ret sebebi</span>
-                <span className="mo-rb">doğru ret · kaçırılan</span>
-                <span className="mo-rn">Kaçırılan</span>
-                <span className="mo-rn">Doğru</span>
-                <span className="mo-rp">Kaçırma oranı</span>
+                <span className="mo-rb">correct · missed</span>
+                <span className="mo-rn">Missed</span>
+                <span className="mo-rn">Correct</span>
+                <span className="mo-rp">Miss rate</span>
               </li>
               {rows.map((r) => {
                 const tot = r.missed + r.correct;
@@ -308,11 +308,11 @@ export function MissedOpportunities({
 
           {totalsDisagree && (
             <p className="idle-mismatch" role="status">
-              Sebep kırılımı üst toplamlarla uyuşmuyor: kırılımda{" "}
-              <b>{formatInt(rowMissed)}</b> kaçırılan ve <b>{formatInt(rowCorrect)}</b> doğru
-              ret var, üstte ise <b>{formatInt(winners)}</b> ve <b>{formatInt(correct)}</b>{" "}
-              bildirildi. Panel ikisini de gösterir; hangisinin doğru olduğunu bilmediği
-              için birini seçip diğerini gizlemez.
+              The per-reason breakdown does not reconcile with the totals above: the
+              breakdown has <b>{formatInt(rowMissed)}</b> missed and <b>{formatInt(rowCorrect)}</b>
+              correct rejections, while <b>{formatInt(winners)}</b> and <b>{formatInt(correct)}</b>{" "}
+              were reported above. The panel shows both; it does not pick one and hide the
+              other, because it does not know which is right.
             </p>
           )}
         </div>

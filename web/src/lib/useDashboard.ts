@@ -58,11 +58,11 @@ export function useDashboard(ledger: string): DashboardState {
         if (err instanceof ApiError && err.status === 401) {
           // The session died under us. The middleware owns the redirect on
           // the next navigation; here we only stop pretending to have data.
-          setError("Oturum sona erdi. Yeniden giriş yapın.");
+          setError("Session expired. Please sign in again.");
         } else if (err instanceof ApiError) {
           setError(err.message);
         } else {
-          setError("Sunucuya ulaşılamıyor.");
+          setError("Cannot reach the server.");
         }
         setFailures((n) => n + 1);
       } finally {

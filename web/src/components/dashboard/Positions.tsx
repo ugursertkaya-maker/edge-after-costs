@@ -89,30 +89,30 @@ export function Detail({
 
           <div className="xcols">
             <CostGroup
-              title="Maliyet kalemleri"
+              title="Cost components"
               items={[
                 {
-                  k: "Giriş komisyonu",
+                  k: "Entry fee",
                   v: formatCost(d.entryFee),
                   cls: d.entryFee === null ? "muted" : "neg",
                 },
                 {
-                  k: "Beklenen çıkış komisyonu",
+                  k: "Expected exit fee",
                   v: formatCost(r.expected_exit_fee_usd ?? null),
                   cls: (r.expected_exit_fee_usd ?? null) === null ? "muted" : "neg",
                 },
                 {
-                  k: "Makas maliyeti",
+                  k: "Spread cost",
                   v: formatCost(r.spread_cost_usd ?? null),
                   cls: (r.spread_cost_usd ?? null) === null ? "muted" : "neg",
                 },
                 {
-                  k: "Kayma",
+                  k: "Slippage",
                   v: formatCost(r.slippage_usd ?? null),
                   cls: (r.slippage_usd ?? null) === null ? "muted" : "neg",
                 },
                 {
-                  k: "Toplam işlem maliyeti",
+                  k: "Total trading cost",
                   v: formatCost(d.cost),
                   cls: d.cost === null ? "muted" : "neg is-total",
                 },
@@ -120,18 +120,18 @@ export function Detail({
             />
 
             <CostGroup
-              title="Fiyat seviyeleri"
+              title="Price levels"
               items={[
-                { k: "Giriş", v: formatPrice(r.entry_price) },
-                { k: "Güncel", v: formatPrice(r.current_price), cls: "sym" },
+                { k: "Entry", v: formatPrice(r.entry_price) },
+                { k: "Current", v: formatPrice(r.current_price), cls: "sym" },
                 {
-                  k: "Başabaş fiyat",
+                  k: "Break-even price",
                   v: formatPrice(r.break_even_price ?? null),
                   cls: (r.break_even_price ?? null) === null ? "muted" : "warn",
-                  title: "Komisyon, makas ve kayma bu fiyatta geri kazanılır",
+                  title: "Fees, spread and slippage are recovered at this price",
                 },
                 {
-                  k: "NET TP fiyat",
+                  k: "NET TP price",
                   v: formatPrice(r.net_tp_price ?? r.take_profit),
                   cls: (r.net_tp_price ?? r.take_profit) === null ? "muted" : "pos",
                 },
@@ -145,9 +145,9 @@ export function Detail({
             />
 
             <CostGroup
-              title="Pozisyon ve risk"
+              title="Position and risk"
               items={[
-                { k: "Pozisyon büyüklüğü", v: formatMoney(r.notional_usd) },
+                { k: "Position size", v: formatMoney(r.notional_usd) },
                 {
                   k: "Hesap riski",
                   v:
@@ -156,15 +156,15 @@ export function Detail({
                       : formatMoney(-Math.abs(d.accountRisk)),
                   cls: d.accountRisk ? "neg" : "muted",
                   title:
-                    "Pozisyon büyüklüğü değil — stop dolarsa hesaptan gidecek modellenmiş tutar",
+                    "Not the position size — the modelled amount that leaves the account if the stop fills",
                 },
                 {
-                  k: "Dolum tipi",
+                  k: "Fill type",
                   v: makerTakerLabel(r.maker_or_taker ? String(r.maker_or_taker) : null),
                   cls: r.maker_or_taker ? "" : "muted",
                 },
                 {
-                  k: "Sinyal gücü",
+                  k: "Signal strength",
                   v:
                     strengthPct(r.signal_strength ?? null) === null
                       ? DASH
@@ -172,7 +172,7 @@ export function Detail({
                   cls: (r.signal_strength ?? null) === null ? "muted" : "",
                 },
                 {
-                  k: "Strateji",
+                  k: "Strategy",
                   v: r.strategy ? strategyLabel(r.strategy) : DASH,
                   cls: r.strategy ? "" : "muted",
                 },
@@ -183,14 +183,14 @@ export function Detail({
               title="Zaman ufku"
               items={[
                 {
-                  k: "Giriş zamanı",
+                  k: "Entry time",
                   v: formatDateTimeMs(d.entryMs),
                   cls: d.entryMs === null ? "muted" : "dim",
                   title: d.derivedEntry
-                    ? "Yaştan türetildi — worker giriş zamanını ayrıca raporlamıyor"
+                    ? "Derived from age — the worker does not report entry time separately"
                     : undefined,
                 },
-                { k: "Yaş", v: formatDuration(d.age) },
+                { k: "Age", v: formatDuration(d.age) },
                 {
                   k: "Beklenen tutma penceresi",
                   v: formatHoldWindow(r.expected_hold_window),
@@ -223,8 +223,8 @@ export function Detail({
 
           <p className="xnote">
             {d.cost === null
-              ? `Brüt ${formatSignedMicroMoney(d.gross)} — maliyet dökümü henüz raporlanmadığı için bu hareketin net karşılığı bilinmiyor.`
-              : `Brüt ${formatSignedMicroMoney(d.gross)}, ${formatMicroMoney(
+              ? `Gross ${formatSignedMicroMoney(d.gross)} — the net equivalent of this move is unknown because the cost breakdown has not been reported yet.`
+              : `Gross ${formatSignedMicroMoney(d.gross)}, ${formatMicroMoney(
                   Math.abs(toNum(d.cost) ?? 0),
                 )} maliyetten sonra ${formatSignedMicroMoney(d.net)} nettir.`}
           </p>
@@ -245,7 +245,7 @@ export function Detail({
  * Fifteen cost columns in one table would be a horizontal scrollbar pretending
  * to be a report, with the figures that decide anything parked off-screen.
  *
- * Brüt, Maliyet and NET are three separate columns and are never collapsed:
+ * Gross, Cost and NET are three separate columns and are never collapsed:
  * the entire point of V2 is that the first can be positive while the third is
  * negative.
  */
@@ -272,24 +272,24 @@ export function Positions({
   return (
     <Panel
       idx="04"
-      title="Açık pozisyonlar"
-      note="anlık fiyatla değerlenmiş · satıra tıklayın, maliyet dökümü açılır"
+      title="Open positions"
+      note="marked at the current price · click a row for the cost breakdown"
       meta={
         rows && rows.length > 0 ? (
           <span className="panel-note">
-            toplam tutar {formatMoney(exposure)} · hesap riski {formatMoney(risk)}
+            total notional {formatMoney(exposure)} · account risk {formatMoney(risk)}
           </span>
         ) : null
       }
       flush
-      footer="Pozisyon büyüklüğü risk değildir. Brüt P&L fiyat hareketinin kazandırdığıdır; komisyon, makas ve kayma düşülmeden kâr sayılmaz. NET sütunu boşsa worker o pozisyonun maliyet dökümünü henüz raporlamamıştır — sıfır maliyet demek değildir."
+      footer="Position size is not risk. Gross P&L is what the price move earned; it does not count as profit until fees, spread and slippage are deducted. An empty NET column means the worker has not reported that position's cost breakdown yet — it does not mean zero cost."
     >
       {loading && !rows ? (
         <Skeleton rows={3} />
       ) : !rows || rows.length === 0 ? (
         <DataState
-          title="Açık pozisyon yok"
-          text="Sermayenin tamamı nakitte. Bu bir hata değil: net edge eşiğini geçen bir kurulum bulunana kadar bot kasıtlı olarak beklemede kalır."
+          title="No open positions"
+          text="All capital is in cash. This is not an error: the system deliberately waits until it finds a setup that clears the net-edge threshold."
         />
       ) : (
         <div className="tbl-wrap">
@@ -298,19 +298,19 @@ export function Positions({
               <tr>
                 <th className="c x" aria-label="Detay" />
                 <th className="l">Coin</th>
-                <th className="c">Yön</th>
-                <th>Pozisyon $</th>
+                <th className="c">Side</th>
+                <th>Position $</th>
                 <th>Hesap riski $</th>
-                <th>Giriş</th>
-                <th>Güncel</th>
-                <th>Brüt P&amp;L</th>
-                <th>Maliyet</th>
+                <th>Entry</th>
+                <th>Current</th>
+                <th>Gross P&amp;L</th>
+                <th>Cost</th>
                 <th>NET P&amp;L</th>
-                <th className="c">Dolum</th>
-                <th className="l">Yaş · 25/60 dk</th>
+                <th className="c">Fill</th>
+                <th className="l">Age · 25/60m</th>
                 <th className="c">25-dk kontrol</th>
-                <th className="l">Sinyal</th>
-                <th className="l">Strateji</th>
+                <th className="l">Signal</th>
+                <th className="l">Strategy</th>
               </tr>
             </thead>
             <tbody>
@@ -347,14 +347,14 @@ export function Positions({
                         </span>
                       </td>
                       <td>{formatMoney(r.notional_usd)}</td>
-                      <td className="dim" title="Stop dolarsa modellenen kayıp">
+                      <td className="dim" title="Modelled loss if the stop fills">
                         {formatMoney(d.accountRisk)}
                       </td>
                       <td>{formatPrice(r.entry_price)}</td>
                       <td className="sym">{formatPrice(r.current_price)}</td>
                       <td
                         className={tone(d.gross) ?? "muted"}
-                        title="Fiyat hareketinin kazandırdığı — maliyet düşülmemiştir"
+                        title="What the price move earned — costs not deducted"
                       >
                         {formatSignedMicroMoney(d.gross)}
                       </td>

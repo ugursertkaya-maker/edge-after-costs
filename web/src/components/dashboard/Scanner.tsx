@@ -40,7 +40,7 @@ function Imbalance({ value }: { value: Num }) {
       <span
         className="imb"
         role="img"
-        aria-label={`Emir defteri dengesizliği ${v.toFixed(2)}`}
+        aria-label={`Order book imbalance ${v.toFixed(2)}`}
       >
         <span
           className={`imb-fill ${v >= 0 ? "bid" : "ask"}`}
@@ -74,7 +74,7 @@ export function Scanner({
 }) {
   const meta = rows ? (
     <span className="panel-note">
-      {rows.length} sembol · {rows.filter((r) => r.decision === "BUY").length} alım
+      {rows.length} symbols · {rows.filter((r) => r.decision === "BUY").length} buys
       sinyali
     </span>
   ) : null;
@@ -82,22 +82,22 @@ export function Scanner({
   return (
     <Panel
       idx="03"
-      title="Tarayıcı"
-      note="net edge sırasına göre — komisyon, makas ve kayma düşülmüş"
+      title="Scanner"
+      note="ordered by net edge — fees, spread and slippage deducted"
       meta={meta}
       flush
-      footer="Karar hücresi net edge'e göre verilir; brüt pozitif ama net negatif bir kurulum kaybeden kurulumdur. İŞLEM YOK hücresinin üzerine gelin, ret gerekçesi görünür."
+      footer="The decision cell is decided on net edge; a setup that is gross-positive but net-negative is a losing setup. Hover a NO TRADE cell to see the rejection reason."
     >
       {loading && !rows ? (
         <Skeleton rows={8} />
       ) : !rows || rows.length === 0 ? (
         <DataState
           scanning={connected}
-          title="Tarayıcı henüz veri üretmedi"
+          title="The scanner has not produced data yet"
           text={
             connected
-              ? "Evren yükleniyor ve emir defterleri ısınıyor. İlk değerlendirme turu tamamlanınca semboller burada listelenecek."
-              : "Exchange bağlantısı kopuk. Bayat defterle karar üretilmez, bu yüzden tablo kasıtlı olarak boş."
+              ? "The universe is loading and the order books are warming up. Symbols will be listed here once the first evaluation cycle completes."
+              : "The exchange connection is down. No decision is made on a stale book, so this table is deliberately empty."
           }
         />
       ) : (
@@ -106,16 +106,16 @@ export function Scanner({
             <thead>
               <tr>
                 <th className="l">Coin</th>
-                <th>Fiyat</th>
+                <th>Price</th>
                 <th>Long skor</th>
                 <th>Short skor</th>
-                <th className="l">Rejim</th>
+                <th className="l">Regime</th>
                 <th>Momentum</th>
-                <th>Hacim</th>
-                <th>Makas</th>
-                <th className="l">Emir defteri</th>
+                <th>Volume</th>
+                <th>Spread</th>
+                <th className="l">Order book</th>
                 <th>Beklenen net edge</th>
-                <th className="l">Strateji</th>
+                <th className="l">Strategy</th>
                 <th className="c">Karar</th>
               </tr>
             </thead>
@@ -160,11 +160,11 @@ export function Scanner({
                               ? "neg"
                               : "dim"
                       }
-                      title="15 dakikalık bileşik getiri, bps"
+                      title="15-minute compound return, bps"
                     >
                       {formatBps(r.momentum)}
                     </td>
-                    <td title="Son dakikanın hacmi / hareketli ortalaması">
+                    <td title="Last minute's volume / its moving average">
                       {formatRatio(r.volume_ratio)}
                     </td>
                     <td

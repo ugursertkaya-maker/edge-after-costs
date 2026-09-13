@@ -1,7 +1,7 @@
 # Phase 6 — multi-asset selection, strategy-specific holding, capital recycling
 
 Date: 2026-09-12 · Mode: **PAPER** · Real orders placed: **0**
-Live: <https://your-domain.example/cryptobot>
+Mode: **PAPER**
 
 ---
 

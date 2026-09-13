@@ -26,6 +26,7 @@ import { Recycling } from "@/components/dashboard/Recycling";
 import { Concentration } from "@/components/dashboard/Concentration";
 import { HoldingBuckets } from "@/components/dashboard/HoldingBuckets";
 import { Banner } from "@/components/ui/DataState";
+import { PanelBoundary } from "@/components/ui/PanelBoundary";
 import { useApiHealth, useDashboard } from "@/lib/useDashboard";
 
 /**
@@ -68,38 +69,42 @@ export default function DashboardPage() {
         {error && stale && (
           <Banner
             tone="err"
-            tag="Bağlantı"
-            detail={`${failures} ardışık başarısız okuma`}
+            tag="Connection"
+            detail={`${failures} consecutive failed polls`}
           >
-            {error} Aşağıdaki değerler son başarılı okumaya aittir, güncel
-            değildir.{" "}
+            {error} The figures below are from the last successful poll and are
+            not current.{" "}
             {apiOk === false
-              ? "API sürecine hiç ulaşılamıyor."
+              ? "The API process cannot be reached at all."
               : apiOk
-                ? "API ayakta — sorun panel verisini üreten worker tarafında."
+                ? "The API is up — the fault is in the worker that produces the panel data."
                 : ""}
           </Banner>
         )}
 
         {data && data.live_orders_enabled && (
           <Banner tone="err" tag="Kritik">
-            Gerçek emir bayrağı AÇIK görünüyor. V1 kâğıt üzerinde çalışmak
-            zorundadır — bu durum bir kusurdur, işlem yapmadan önce worker
-            durdurulmalıdır.
+            The live-order flag reads ON. This system must run on paper — that
+            state is a defect, and the worker must be stopped before any
+            further trading.
           </Banner>
         )}
 
         {data && !data.header.data_connected && (
           <Banner tone="warn" tag="Besleme">
-            Exchange verisi kopuk. Bayat defterle karar üretilmediği için
-            tarayıcı yeni sinyal açmayacak; açık pozisyonlar son bilinen fiyatla
-            değerlenmektedir.
+            Exchange data is disconnected. Because no decision is made on a stale
+            book, the scanner will open no new signal; open positions are marked
+            at the last known price.
           </Banner>
         )}
 
-        <MetricStrip metrics={data?.metrics ?? null} startingEquity={startingEquity} />
+        <PanelBoundary name="MetricStrip">
+          <MetricStrip metrics={data?.metrics ?? null} startingEquity={startingEquity} />
+        </PanelBoundary>
 
-        <CostSplit metrics={data?.metrics ?? null} />
+        <PanelBoundary name="CostSplit">
+          <CostSplit metrics={data?.metrics ?? null} />
+        </PanelBoundary>
 
         {/* Phase 5 — capital utilisation, at the top of the screen because it
             is the reading the whole phase turns on. §01 says how much of the
@@ -107,97 +112,131 @@ export default function DashboardPage() {
             why the rest is not. They are deliberately the first two panels:
             Phase 3 measured 99.5% idle cash from a portfolio table nobody
             scrolled to. */}
-        <Capital capital={data?.capital ?? null} loading={loading} />
+        <PanelBoundary name="Capital">
+          <Capital capital={data?.capital ?? null} loading={loading} />
+        </PanelBoundary>
 
-        <IdleCapital capital={data?.capital ?? null} loading={loading} />
+        <PanelBoundary name="IdleCapital">
+          <IdleCapital capital={data?.capital ?? null} loading={loading} />
+        </PanelBoundary>
 
         {/* Phase 6 — §22, then §4. The order is the capital's own: §19 says how
             fast a closed position's money comes back to work, and the board
             immediately below it is what that money is choosing between. The
             board sits above the scanner because it is the decision in front of
             the engine, while the scanner is the raw reading behind it. */}
-        <Recycling
-          recycling={data?.recycling ?? null}
-          capital={data?.capital ?? null}
-          portfolio={data?.portfolio ?? null}
-          loading={loading}
-          now={now}
-        />
+        <PanelBoundary name="Recycling">
+          <Recycling
+            recycling={data?.recycling ?? null}
+            capital={data?.capital ?? null}
+            portfolio={data?.portfolio ?? null}
+            loading={loading}
+            now={now}
+          />
+        </PanelBoundary>
 
-        <OpportunityBoard
-          board={data?.opportunities ?? null}
-          scanner={data?.scanner ?? null}
-          loading={loading}
-          connected={data?.header.data_connected ?? false}
-          now={now}
-        />
+        <PanelBoundary name="OpportunityBoard">
+          <OpportunityBoard
+            board={data?.opportunities ?? null}
+            scanner={data?.scanner ?? null}
+            loading={loading}
+            connected={data?.header.data_connected ?? false}
+            now={now}
+          />
+        </PanelBoundary>
 
-        <ScanActivity
-          scan={data?.scan ?? null}
-          watchlist={data?.watchlist ?? null}
-          loading={loading}
-        />
+        <PanelBoundary name="ScanActivity">
+          <ScanActivity
+            scan={data?.scan ?? null}
+            watchlist={data?.watchlist ?? null}
+            loading={loading}
+          />
+        </PanelBoundary>
 
-        <Scanner
-          rows={data?.scanner ?? null}
-          loading={loading}
-          connected={data?.header.data_connected ?? false}
-        />
+        <PanelBoundary name="Scanner">
+          <Scanner
+            rows={data?.scanner ?? null}
+            loading={loading}
+            connected={data?.header.data_connected ?? false}
+          />
+        </PanelBoundary>
 
-        <Portfolio portfolio={data?.portfolio ?? null} loading={loading} />
+        <PanelBoundary name="Portfolio">
+          <Portfolio portfolio={data?.portfolio ?? null} loading={loading} />
+        </PanelBoundary>
 
-        <Positions
-          rows={data?.positions ?? null}
-          loading={loading}
-          now={now}
-          generatedMs={data?.generated_ms ?? null}
-        />
+        <PanelBoundary name="Positions">
+          <Positions
+            rows={data?.positions ?? null}
+            loading={loading}
+            now={now}
+            generatedMs={data?.generated_ms ?? null}
+          />
+        </PanelBoundary>
 
         <div className="col-2">
-          <EquityCurve
-            curve={data?.equity_curve ?? null}
-            startingEquity={startingEquity}
-            loading={loading}
-          />
-          <Health
-            health={data?.health ?? null}
-            mode={data?.mode ?? null}
-            now={now}
-            loading={loading}
-          />
+          <PanelBoundary name="EquityCurve">
+            <EquityCurve
+              curve={data?.equity_curve ?? null}
+              startingEquity={startingEquity}
+              loading={loading}
+            />
+          </PanelBoundary>
+          <PanelBoundary name="Health">
+            <Health
+              health={data?.health ?? null}
+              mode={data?.mode ?? null}
+              now={now}
+              loading={loading}
+            />
+          </PanelBoundary>
         </div>
 
-        <Strategies rows={data?.strategies ?? null} loading={loading} />
+        <PanelBoundary name="Strategies">
+          <Strategies rows={data?.strategies ?? null} loading={loading} />
+        </PanelBoundary>
 
         {/* Phase 6 — §21 and §20, directly under the per-strategy table they
             decompose. Both read the same closed trades from two directions:
             which COIN the account's turns and money went to, and how each
             strategy performed at each holding length. Neither is ever pooled
             with the other. */}
-        <Concentration
-          concentration={data?.concentration ?? null}
-          funnel={data?.funnel ?? null}
-          trades={data?.trades ?? null}
-          loading={loading}
-        />
+        <PanelBoundary name="Concentration">
+          <Concentration
+            concentration={data?.concentration ?? null}
+            funnel={data?.funnel ?? null}
+            trades={data?.trades ?? null}
+            loading={loading}
+          />
+        </PanelBoundary>
 
-        <HoldingBuckets
-          buckets={data?.holding_buckets ?? null}
-          trades={data?.trades ?? null}
-          loading={loading}
-        />
+        <PanelBoundary name="HoldingBuckets">
+          <HoldingBuckets
+            buckets={data?.holding_buckets ?? null}
+            trades={data?.trades ?? null}
+            loading={loading}
+          />
+        </PanelBoundary>
 
-        <Trades rows={data?.trades ?? null} loading={loading} />
+        <PanelBoundary name="Trades">
+          <Trades rows={data?.trades ?? null} loading={loading} />
+        </PanelBoundary>
 
         {/* Phase 3 — the profitability search. These three read as one
             argument and are kept in this order on purpose: every arm that was
             tried, then the handful that survived the gates, then whatever of
             it is actually running in paper. */}
-        <Tournament tournament={data?.tournament ?? null} loading={loading} now={now} />
+        <PanelBoundary name="Tournament">
+          <Tournament tournament={data?.tournament ?? null} loading={loading} now={now} />
+        </PanelBoundary>
 
-        <Finalists finalists={data?.finalists ?? null} loading={loading} />
+        <PanelBoundary name="Finalists">
+          <Finalists finalists={data?.finalists ?? null} loading={loading} />
+        </PanelBoundary>
 
-        <Champion champion={data?.champion ?? null} loading={loading} now={now} />
+        <PanelBoundary name="Champion">
+          <Champion champion={data?.champion ?? null} loading={loading} now={now} />
+        </PanelBoundary>
 
         {/* Phase 4 — the predictive entry engine. Same order as the Phase 3
             block above and for the same reason: what the model says about
@@ -205,21 +244,29 @@ export default function DashboardPage() {
             stored values behind every decision it actually took. The panels
             share one `predictive` object and each one renders its own absent
             state, because that object is expected to be missing. */}
-        <PredictiveEngine predictive={data?.predictive ?? null} loading={loading} />
+        <PanelBoundary name="PredictiveEngine">
+          <PredictiveEngine predictive={data?.predictive ?? null} loading={loading} />
+        </PanelBoundary>
 
-        <ModelQuality predictive={data?.predictive ?? null} loading={loading} />
+        <PanelBoundary name="ModelQuality">
+          <ModelQuality predictive={data?.predictive ?? null} loading={loading} />
+        </PanelBoundary>
 
-        <Explanations predictive={data?.predictive ?? null} loading={loading} now={now} />
+        <PanelBoundary name="Explanations">
+          <Explanations predictive={data?.predictive ?? null} loading={loading} now={now} />
+        </PanelBoundary>
 
         {/* Phase 5 — the post-hoc rejection audit. It sits with the research
             panels rather than next to §02 on purpose: it is computed with
             future data and must never be read as a live signal. */}
-        <MissedOpportunities missed={data?.missed ?? null} loading={loading} />
+        <PanelBoundary name="MissedOpportunities">
+          <MissedOpportunities missed={data?.missed ?? null} loading={loading} />
+        </PanelBoundary>
 
         <p className="footnote">
-          Tüm işlemler simülasyondur. Binance.US herkese açık piyasa verisi
-          kullanılır; imzalı istek, API anahtarı veya emir gönderim yolu yoktur.
-          Tüm zaman damgaları epoch milisaniyedir, tutarlar USD'dir.
+          Every trade is a simulation. Public Binance.US market data is used;
+          there is no signed request, no API key and no order-submission path.
+          All timestamps are epoch milliseconds and all amounts are in USD.
         </p>
       </main>
     </div>

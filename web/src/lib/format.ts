@@ -152,28 +152,28 @@ export function formatMs(value: Numeric): string {
   if (n === null) return DASH;
   if (n < 1000) return `${Math.round(n)} ms`;
   if (n < 60000)
-    return `${(n / 1000).toLocaleString("en-US", { maximumFractionDigits: 2 })} sn`;
-  return `${(n / 60000).toLocaleString("en-US", { maximumFractionDigits: 1 })} dk`;
+    return `${(n / 1000).toLocaleString("en-US", { maximumFractionDigits: 2 })} s`;
+  return `${(n / 60000).toLocaleString("en-US", { maximumFractionDigits: 1 })} m`;
 }
 
-/** A holding time as a duration: 42 sn · 7 dk 12 sn · 1 sa 03 dk. */
+/** A holding time as a duration: 42s · 7m 12s · 1h 03m. */
 export function formatDuration(seconds: Numeric): string {
   const n = toNum(seconds);
   if (n === null) return DASH;
   const s = Math.max(0, Math.round(n));
-  if (s < 60) return `${s} sn`;
+  if (s < 60) return `${s}s`;
   const m = Math.floor(s / 60);
-  if (m < 60) return `${m} dk ${String(s % 60).padStart(2, "0")} sn`;
+  if (m < 60) return `${m}m ${String(s % 60).padStart(2, "0")}s`;
   const h = Math.floor(m / 60);
-  if (h < 24) return `${h} sa ${String(m % 60).padStart(2, "0")} dk`;
-  return `${Math.floor(h / 24)} g ${String(h % 24).padStart(2, "0")} sa`;
+  if (h < 24) return `${h}h ${String(m % 60).padStart(2, "0")}m`;
+  return `${Math.floor(h / 24)}d ${String(h % 24).padStart(2, "0")}h`;
 }
 
 /** An epoch-ms timestamp as a wall clock, to the second. */
 export function formatClockMs(value: Numeric): string {
   const n = toNum(value);
   if (n === null || n <= 0) return DASH;
-  return new Date(n).toLocaleTimeString("tr-TR", {
+  return new Date(n).toLocaleTimeString("en-GB", {
     hour: "2-digit",
     minute: "2-digit",
     second: "2-digit",
@@ -183,7 +183,7 @@ export function formatClockMs(value: Numeric): string {
 export function formatDateTimeMs(value: Numeric): string {
   const n = toNum(value);
   if (n === null || n <= 0) return DASH;
-  return new Date(n).toLocaleString("tr-TR", {
+  return new Date(n).toLocaleString("en-GB", {
     day: "2-digit",
     month: "2-digit",
     hour: "2-digit",
@@ -198,16 +198,16 @@ export function formatRelativeMs(value: Numeric, now: number = Date.now()): stri
   const n = toNum(value);
   if (n === null || n <= 0) return DASH;
   const sec = Math.max(0, Math.round((now - n) / 1000));
-  if (sec < 2) return "şimdi";
-  if (sec < 60) return `${sec} sn önce`;
+  if (sec < 2) return "just now";
+  if (sec < 60) return `${sec}s ago`;
   const min = Math.floor(sec / 60);
-  if (min < 60) return `${min} dk önce`;
+  if (min < 60) return `${min}m ago`;
   const hour = Math.floor(min / 60);
-  if (hour < 24) return `${hour} sa önce`;
-  return `${Math.floor(hour / 24)} gün önce`;
+  if (hour < 24) return `${hour}h ago`;
+  return `${Math.floor(hour / 24)}d ago`;
 }
 
-/** Volume multiples read better as "1,8×" than as a bare number. */
+/** Volume multiples read better as "1.8×" than as a bare number. */
 export function formatRatio(value: Numeric): string {
   const n = toNum(value);
   if (n === null) return DASH;
@@ -228,62 +228,62 @@ export function tone(value: Numeric): "pos" | "neg" | "flat" | undefined {
 
 // --------------------------------------------------------------------------
 // Vocabulary. Every enum in api/app/types.py that the dashboard renders has a
-// Turkish label here; the raw code always survives in a `title` attribute so
+// display label here; the raw code always survives in a `title` attribute so
 // an operator reading a log and an operator reading the screen see the same
 // system.
 // --------------------------------------------------------------------------
 
 export const SIDE_LABELS: Record<string, string> = {
-  LONG: "UZUN",
-  SHORT: "KISA",
+  LONG: "LONG",
+  SHORT: "SHORT",
 };
 
 export const DECISION_LABELS: Record<string, string> = {
-  BUY: "AL",
-  SELL: "SAT",
-  WATCH: "İZLE",
-  NO_TRADE: "İŞLEM YOK",
+  BUY: "BUY",
+  SELL: "SELL",
+  WATCH: "WATCH",
+  NO_TRADE: "NO TRADE",
 };
 
 export const REGIME_LABELS: Record<string, string> = {
-  TRENDING: "TRENDLİ",
-  RANGING: "YATAY",
-  BREAKOUT: "KIRILIM",
-  HIGH_VOLATILITY: "YÜKSEK OYNAKLIK",
-  LOW_VOLATILITY: "DÜŞÜK OYNAKLIK",
-  ABNORMAL: "ANORMAL",
-  UNKNOWN: "BİLİNMİYOR",
+  TRENDING: "TRENDING",
+  RANGING: "RANGING",
+  BREAKOUT: "BREAKOUT",
+  HIGH_VOLATILITY: "HIGH VOLATILITY",
+  LOW_VOLATILITY: "LOW VOLATILITY",
+  ABNORMAL: "ABNORMAL",
+  UNKNOWN: "UNKNOWN",
 };
 
 export const EXIT_REASON_LABELS: Record<string, string> = {
-  TAKE_PROFIT: "KÂR AL",
-  TRAILING_PROFIT: "TAKİPLİ KÂR",
-  STOP_LOSS: "ZARAR KES",
-  TIME_STOP: "SÜRE DOLDU",
-  SIGNAL_REVERSAL: "SİNYAL DÖNDÜ",
-  RISK_EXIT: "RİSK ÇIKIŞI",
+  TAKE_PROFIT: "TAKE PROFIT",
+  TRAILING_PROFIT: "TRAILING PROFIT",
+  STOP_LOSS: "STOP LOSS",
+  TIME_STOP: "TIME STOP",
+  SIGNAL_REVERSAL: "SIGNAL REVERSAL",
+  RISK_EXIT: "RISK EXIT",
 };
 
 /** Why the risk layer refused a candidate (RejectReason in types.py). */
 export const REJECT_REASON_LABELS: Record<string, string> = {
-  STALE_BOOK: "Emir defteri bayat",
-  WIDE_SPREAD: "Makas çok geniş",
-  THIN_DEPTH: "Derinlik yetersiz",
-  NEGATIVE_EDGE: "Net edge negatif",
-  EDGE_BELOW_MIN: "Edge alt sınırın altında",
-  RISK_BUDGET: "Risk bütçesi dolu",
-  MAX_POSITIONS: "Azami pozisyon sayısı",
-  DUPLICATE_SYMBOL: "Bu coinde zaten pozisyon var",
-  DAILY_LOSS_LIMIT: "Günlük zarar limiti",
-  WEEKLY_LOSS_LIMIT: "Haftalık zarar limiti",
-  LOSS_STREAK_COOLDOWN: "Zarar serisi soğuması",
-  ABNORMAL_VOLATILITY: "Anormal oynaklık",
-  DATA_FAILURE: "Veri hatası",
-  KILL_SWITCH: "Acil durdurma açık",
-  BELOW_MIN_NOTIONAL: "Asgari tutarın altında",
-  BAD_REWARD_RISK: "Getiri/risk oranı yetersiz",
-  SLIPPAGE_TOO_HIGH: "Kayma çok yüksek",
-  NOT_SUPPORTED_SHORT: "Kısa yön V1'de kapalı",
+  STALE_BOOK: "Order book is stale",
+  WIDE_SPREAD: "Spread too wide",
+  THIN_DEPTH: "Insufficient depth",
+  NEGATIVE_EDGE: "Net edge is negative",
+  EDGE_BELOW_MIN: "Edge below the minimum",
+  RISK_BUDGET: "Risk budget exhausted",
+  MAX_POSITIONS: "Max concurrent positions",
+  DUPLICATE_SYMBOL: "Already holding this asset",
+  DAILY_LOSS_LIMIT: "Daily loss limit",
+  WEEKLY_LOSS_LIMIT: "Weekly loss limit",
+  LOSS_STREAK_COOLDOWN: "Loss-streak cooldown",
+  ABNORMAL_VOLATILITY: "Abnormal volatility",
+  DATA_FAILURE: "Data failure",
+  KILL_SWITCH: "Kill switch engaged",
+  BELOW_MIN_NOTIONAL: "Below minimum notional",
+  BAD_REWARD_RISK: "Reward/risk ratio too low",
+  SLIPPAGE_TOO_HIGH: "Slippage too high",
+  NOT_SUPPORTED_SHORT: "Short side not supported",
 };
 
 function labelOf(map: Record<string, string>, value: string | null | undefined): string {
@@ -309,7 +309,8 @@ export function strategyLabel(value: string | null | undefined): string {
 
 /** BTCUSD → BTC. The quote leg is always USD here, so printing it in every
     row of every table is noise. */
-export function baseAsset(symbol: string): string {
+export function baseAsset(symbol: string | null | undefined): string {
+  if (!symbol) return DASH;
   return symbol.replace(/(USDT|USDC|USD)$/i, "") || symbol;
 }
 
@@ -319,18 +320,18 @@ export function baseAsset(symbol: string): string {
 // --------------------------------------------------------------------------
 
 export const EXIT_REASON_LABELS_V2: Record<string, string> = {
-  EXIT_WEAK: "ZAYIF ÇIKIŞ",
-  ROTATE_CAPITAL: "SERMAYE ROTASYONU",
+  EXIT_WEAK: "WEAK EXIT",
+  ROTATE_CAPITAL: "CAPITAL ROTATION",
 };
 
 Object.assign(EXIT_REASON_LABELS, EXIT_REASON_LABELS_V2);
 
 Object.assign(REJECT_REASON_LABELS, {
-  NET_TARGET_UNREACHABLE: "NET hedefe ulaşılamaz",
-  CASH_RESERVE: "Nakit rezervi korunuyor",
-  PORTFOLIO_RISK_BUDGET: "Portföy risk bütçesi dolu",
-  CORRELATED_EXPOSURE: "Korelasyonlu maruziyet sınırı",
-  DIRECTIONAL_EXPOSURE: "Yönlü maruziyet sınırı",
+  NET_TARGET_UNREACHABLE: "NET target unreachable",
+  CASH_RESERVE: "Cash reserve protected",
+  PORTFOLIO_RISK_BUDGET: "Portfolio risk budget exhausted",
+  CORRELATED_EXPOSURE: "Correlated exposure limit",
+  DIRECTIONAL_EXPOSURE: "Directional exposure limit",
 });
 
 /** MAKER is 0% on Binance.US — the badge is a cost statement, not a label. */
@@ -340,23 +341,23 @@ export const MAKER_TAKER_LABELS: Record<string, string> = {
 };
 
 export const CHECKPOINT_LABELS: Record<string, string> = {
-  PENDING: "BEKLEMEDE",
-  KEEP: "TUT",
-  TRAIL: "TAKİPLİ",
-  DUE: "KONTROL ZAMANI",
+  PENDING: "PENDING",
+  KEEP: "KEEP",
+  TRAIL: "TRAIL",
+  DUE: "DUE",
 };
 
 export const ALLOCATION_MODE_LABELS: Record<string, string> = {
-  FEW_LARGE: "AZ SAYIDA BÜYÜK",
-  MANY_SMALL: "ÇOK SAYIDA KÜÇÜK",
-  DYNAMIC: "DİNAMİK",
+  FEW_LARGE: "FEW / LARGE",
+  MANY_SMALL: "MANY / SMALL",
+  DYNAMIC: "DYNAMIC",
 };
 
 export const NET_TP_PROFILE_LABELS: Record<string, string> = {
-  MICRO: "MICRO · %0,25",
-  BASE: "BASE · %0,50",
-  FAST: "FAST · %0,75",
-  EXTENDED: "EXTENDED · %1,00",
+  MICRO: "MICRO · 0.25%",
+  BASE: "BASE · 0.50%",
+  FAST: "FAST · 0.75%",
+  EXTENDED: "EXTENDED · 1.00%",
 };
 
 export function makerTakerLabel(v: string | null | undefined): string {
@@ -380,7 +381,7 @@ export function netTpProfileLabel(v: string | null | undefined): string {
 }
 
 /**
- * The expected hold window may arrive as a label the worker chose ("25–60 dk")
+ * The expected hold window may arrive as a label the worker chose ("25-60m")
  * or as a plain number of seconds. Both are rendered as a window; neither is
  * guessed at when absent.
  */
@@ -403,8 +404,8 @@ export function formatCountdownMs(value: Numeric, now: number): string {
   const n = toNum(value);
   if (n === null || n <= 0) return DASH;
   const left = Math.round((n - now) / 1000);
-  if (left <= 0) return "süre doldu";
-  return `${formatDuration(left)} kaldı`;
+  if (left <= 0) return "expired";
+  return `${formatDuration(left)} left`;
 }
 
 /**
@@ -440,31 +441,31 @@ export function strengthPct(value: Numeric): number | null {
 Object.assign(REGIME_LABELS, {
   TRENDING_UP: "TREND ↑",
   TRENDING_DOWN: "TREND ↓",
-  VOLATILITY_EXPANSION: "OYNAKLIK GENİŞLEMESİ",
-  PANIC: "PANİK",
+  VOLATILITY_EXPANSION: "VOLATILITY EXPANSION",
+  PANIC: "PANIC",
 });
 
 /**
  * Where an arm stands against the out-of-sample gates.
  *
- * These are verdicts, not descriptions. "SINIRDA" exists so a profit factor
+ * These are verdicts, not descriptions. "MARGINAL" exists so a profit factor
  * between 1.0 and 1.2 can be reported without ever being called a finalist,
- * and "ÖRNEKLEM YETERSİZ" exists so an arm with nine lucky trades is not
+ * and "INSUFFICIENT SAMPLE" exists so an arm with nine lucky trades is not
  * mistaken for one that failed — it has not been judged at all.
  */
 export const OOS_STATUS_LABELS: Record<string, string> = {
-  FINALIST: "FİNALİST",
-  MARGINAL: "SINIRDA",
-  FAILED: "ELENDİ",
-  INSUFFICIENT_SAMPLE: "ÖRNEKLEM YETERSİZ",
+  FINALIST: "FINALIST",
+  MARGINAL: "MARGINAL",
+  FAILED: "ELIMINATED",
+  INSUFFICIENT_SAMPLE: "INSUFFICIENT SAMPLE",
 };
 
 export const OOS_STATUS_NOTES: Record<string, string> = {
-  FINALIST: "Örneklem dışı tüm kapıları geçti",
-  MARGINAL: "Pozitif ama profit factor 1,20 barajının altında — finalist değildir",
-  FAILED: "Örneklem dışı kapılardan en az birini geçemedi",
+  FINALIST: "Cleared every out-of-sample gate",
+  MARGINAL: "Positive but below the 1.20 profit-factor bar — not a finalist",
+  FAILED: "Failed at least one out-of-sample gate",
   INSUFFICIENT_SAMPLE:
-    "30 örneklem dışı işlemin altında — bu aday henüz değerlendirilemez, elenmiş değildir",
+    "Fewer than 30 out-of-sample trades — this arm cannot be judged yet, it has not been eliminated",
 };
 
 export function oosStatusLabel(v: string | null | undefined): string {
@@ -548,8 +549,8 @@ export function gateVerdict(line: string): "pass" | "fail" | "unknown" {
   if (/^\[\s*\]/.test(s)) return "fail";
   if (/^(?:fail|failed|reject|rejected)\b/i.test(s)) return "fail";
   if (/^(?:pass|passed|ok)\b/i.test(s)) return "pass";
-  if (/\b(?:FAIL|FAILED|GEÇEMEDİ|KALDI)\b/.test(s)) return "fail";
-  if (/\b(?:PASS|PASSED|GEÇTİ)\b/.test(s)) return "pass";
+  if (/\b(?:FAIL|FAILED)\b/.test(s)) return "fail";
+  if (/\b(?:PASS|PASSED)\b/.test(s)) return "pass";
   return "unknown";
 }
 
@@ -566,15 +567,15 @@ export function gateVerdict(line: string): "pass" | "fail" | "unknown" {
 
 /** Why the predictive engine refused a candidate (Phase 4 spec, item 34). */
 export const PREDICT_REJECT_REASON_LABELS: Record<string, string> = {
-  LOW_PROBABILITY: "Olasılık eşiğin altında",
-  NEGATIVE_EV: "Beklenen değer negatif",
-  COST_TOO_HIGH: "İcra maliyeti beklentiyi yiyor",
-  MODEL_UNCERTAIN: "Model kararsız",
-  CORRELATED_RISK: "Korelasyonlu risk sınırı",
-  SPREAD_TOO_WIDE: "Makas çok geniş",
-  NO_LIQUIDITY: "Likidite yok",
-  STALE_DATA: "Veri bayat",
-  REGIME_NOT_SUPPORTED: "Rejim modelin kapsamı dışında",
+  LOW_PROBABILITY: "Probability below threshold",
+  NEGATIVE_EV: "Expected value is negative",
+  COST_TOO_HIGH: "Execution cost consumes the expectancy",
+  MODEL_UNCERTAIN: "Model is uncertain",
+  CORRELATED_RISK: "Correlated risk limit",
+  SPREAD_TOO_WIDE: "Spread too wide",
+  NO_LIQUIDITY: "No liquidity",
+  STALE_DATA: "Data is stale",
+  REGIME_NOT_SUPPORTED: "Regime outside the model's scope",
 };
 
 Object.assign(REJECT_REASON_LABELS, PREDICT_REJECT_REASON_LABELS);
@@ -603,18 +604,18 @@ export const PREDICT_REJECT_FAMILY: Record<string, RejectFamily> = {
 };
 
 export const REJECT_FAMILY_LABELS: Record<RejectFamily, string> = {
-  model: "Model kenar bulamadı",
-  venue: "Piyasa koşulu ve maliyet",
-  scope: "Kapsam ve portföy sınırı",
+  model: "Model found no edge",
+  venue: "Venue conditions and cost",
+  scope: "Scope and portfolio limits",
 };
 
 export const REJECT_FAMILY_NOTES: Record<RejectFamily, string> = {
   model:
-    "Model baktı ve yeterli olasılık ya da pozitif beklenen değer bulamadı. Bu, motorun çalıştığı ve piyasada kenar olmadığı okumasıdır.",
+    "The model looked and found neither sufficient probability nor positive expected value. This is the engine working and reading no edge in the market.",
   venue:
-    "Model kararına hiç gelemedi: makas, derinlik, maliyet veya veri tazeliği adayı daha önce eledi. Bu, kenarın yokluğu değil, ölçülememesidir.",
+    "The model never got to decide: spread, depth, cost or data freshness eliminated the candidate first. This is not the absence of edge, it is the inability to measure it.",
   scope:
-    "Aday, modelin eğitildiği rejimin veya portföyün taşıyabileceği korelasyonlu riskin dışında kaldı. Kenar hakkında hiçbir şey söylemez.",
+    "The candidate fell outside the regime the model was trained on, or outside the correlated risk the portfolio can carry. It says nothing about edge.",
 };
 
 export function predictRejectLabel(v: string | null | undefined): string {
@@ -636,22 +637,22 @@ export function rejectFamily(code: string): RejectFamily | null {
 export const CALIBRATION_MAX_ABS_ERROR = 0.1;
 
 export const CALIBRATION_STATUS_LABELS: Record<string, string> = {
-  CALIBRATED: "KALİBRE",
-  UNCALIBRATED: "KALİBRE DEĞİL",
-  POOR: "KALİBRASYON ZAYIF",
-  BAD: "KALİBRASYON ZAYIF",
-  FAILED: "KALİBRASYON BAŞARISIZ",
-  UNMEASURED: "ÖLÇÜLMEDİ",
-  NOT_MEASURED: "ÖLÇÜLMEDİ",
-  PENDING: "ÖLÇÜLMEDİ",
-  UNKNOWN: "ÖLÇÜLMEDİ",
+  CALIBRATED: "CALIBRATED",
+  UNCALIBRATED: "NOT CALIBRATED",
+  POOR: "POOR CALIBRATION",
+  BAD: "POOR CALIBRATION",
+  FAILED: "CALIBRATION FAILED",
+  UNMEASURED: "NOT MEASURED",
+  NOT_MEASURED: "NOT MEASURED",
+  PENDING: "NOT MEASURED",
+  UNKNOWN: "NOT MEASURED",
 };
 
 export const CALIBRATION_METHOD_LABELS: Record<string, string> = {
-  isotonic: "izotonik",
+  isotonic: "isotonic",
   platt: "Platt",
   sigmoid: "Platt",
-  none: "yok",
+  none: "none",
 };
 
 export function calibrationMethodLabel(v: string | null | undefined): string {
@@ -680,13 +681,13 @@ export interface ConfidenceReading {
 }
 
 const UNMEASURED_NOTE =
-  "Kalibrasyon ölçülmedi. Ölçülmemiş bir kalibrasyon, geçmiş bir kalibrasyon değildir — modelin olasılıkları bu hâliyle olasılık sayılmaz.";
+  "Calibration was never measured. An unmeasured calibration is not a passing one — as it stands, this model's outputs do not count as probabilities.";
 const UNCALIBRATED_NOTE =
-  "Model kalibre edilmedi. Çıktısı sıralama üretebilir ama %70 dediğinde %70 kazandığının hiçbir güvencesi yoktur.";
-const POOR_NOTE = `Kalibrasyon ölçüldü ve geçemedi: azami mutlak güvenilirlik hatası ${CALIBRATION_MAX_ABS_ERROR
-  .toLocaleString("en-US", { minimumFractionDigits: 2 })} sınırının üzerinde. Bu çıktı bir sayıdır, olasılık değildir.`;
+  "The model was not calibrated. Its output can still produce a ranking, but there is no guarantee that a stated 70% wins 70% of the time.";
+const POOR_NOTE = `Calibration was measured and failed: the maximum absolute reliability error is above the ${CALIBRATION_MAX_ABS_ERROR
+  .toLocaleString("en-US", { minimumFractionDigits: 2 })} limit. This output is a number, not a probability.`;
 const TRUSTED_NOTE =
-  "Kalibrasyon ölçüldü ve sınırın içinde: modelin verdiği olasılık, gerçekleşme sıklığıyla uyumlu.";
+  "Calibration was measured and is inside the limit: the probability the model reports matches the frequency it is realised at.";
 
 const UNMEASURED_STATUSES = new Set(["UNMEASURED", "NOT_MEASURED", "PENDING", "UNKNOWN"]);
 const POOR_STATUSES = new Set(["POOR", "BAD", "FAILED"]);
@@ -711,7 +712,7 @@ export function calibrationReading(
 ): ConfidenceReading {
   const unmeasured: ConfidenceReading = {
     kind: "unmeasured",
-    text: "ÖLÇÜLMEDİ",
+    text: "NOT MEASURED",
     note: UNMEASURED_NOTE,
     usable: false,
   };
@@ -723,20 +724,20 @@ export function calibrationReading(
   if (cal.calibrated === false) {
     return {
       kind: "uncalibrated",
-      text: "KALİBRE DEĞİL",
+      text: "NOT CALIBRATED",
       note: UNCALIBRATED_NOTE,
       usable: false,
     };
   }
   if (status && UNMEASURED_STATUSES.has(status)) return unmeasured;
   if (err !== null && err > CALIBRATION_MAX_ABS_ERROR) {
-    return { kind: "poor", text: "KALİBRASYON ZAYIF", note: POOR_NOTE, usable: false };
+    return { kind: "poor", text: "POOR CALIBRATION", note: POOR_NOTE, usable: false };
   }
   if (status && POOR_STATUSES.has(status)) {
-    return { kind: "poor", text: "KALİBRASYON ZAYIF", note: POOR_NOTE, usable: false };
+    return { kind: "poor", text: "POOR CALIBRATION", note: POOR_NOTE, usable: false };
   }
   if (cal.calibrated === true && err !== null) {
-    return { kind: "trusted", text: "KALİBRE", note: TRUSTED_NOTE, usable: true };
+    return { kind: "trusted", text: "CALIBRATED", note: TRUSTED_NOTE, usable: true };
   }
   return unmeasured;
 }
@@ -760,8 +761,8 @@ export function confidenceReading(
   if (known === false) {
     return {
       kind: "unmeasured",
-      text: "BİLİNMİYOR",
-      note: "Model bu aday için güven bildirmedi. Bildirilmemiş güven, düşük güven değildir.",
+      text: "UNKNOWN",
+      note: "The model reported no confidence for this candidate. An unreported confidence is not a low confidence.",
       usable: false,
     };
   }
@@ -770,7 +771,7 @@ export function confidenceReading(
     return {
       kind: "absent",
       text: DASH,
-      note: "Bu aday için güven değeri gelmedi.",
+      note: "No confidence figure arrived for this candidate.",
       usable: false,
     };
   }
@@ -828,7 +829,7 @@ export function formatPeriod(period: [number, number] | null | undefined): strin
   const b = toNum(period[1]);
   if (a === null || b === null || a <= 0 || b <= 0) return DASH;
   const day = (ms: number) =>
-    new Date(ms).toLocaleDateString("tr-TR", {
+    new Date(ms).toLocaleDateString("en-GB", {
       day: "2-digit",
       month: "2-digit",
       year: "2-digit",
@@ -848,18 +849,18 @@ export function periodDays(period: [number, number] | null | undefined): number 
 export function formatDays(value: Numeric): string {
   const n = toNum(value);
   if (n === null) return DASH;
-  return `${n.toLocaleString("en-US", { maximumFractionDigits: n < 10 ? 1 : 0 })} gün`;
+  return `${n.toLocaleString("en-US", { maximumFractionDigits: n < 10 ? 1 : 0 })} d`;
 }
 
 /** Liquidity arrives either as a label the worker chose or as a depth figure. */
 export const LIQUIDITY_LABELS: Record<string, string> = {
-  STRONG: "güçlü",
-  GOOD: "iyi",
-  ADEQUATE: "yeterli",
-  OK: "yeterli",
-  THIN: "ince",
-  WEAK: "zayıf",
-  NONE: "yok",
+  STRONG: "strong",
+  GOOD: "good",
+  ADEQUATE: "adequate",
+  OK: "adequate",
+  THIN: "thin",
+  WEAK: "weak",
+  NONE: "none",
   UNKNOWN: DASH,
 };
 
@@ -873,18 +874,18 @@ export function liquidityLabel(value: string | number | null | undefined): strin
 
 /** `spread_ok` is a boolean gate, and an unreported gate is not a passed one. */
 export function spreadLabel(ok: boolean | null | undefined): string {
-  if (ok === true) return "uygun";
-  if (ok === false) return "geniş";
+  if (ok === true) return "acceptable";
+  if (ok === false) return "wide";
   return DASH;
 }
 
 Object.assign(DECISION_LABELS, {
-  ENTER: "AÇTI",
-  OPEN: "AÇTI",
-  ACCEPT: "AÇTI",
-  REJECT: "REDDETTİ",
-  REJECTED: "REDDETTİ",
-  SKIP: "İŞLEM YOK",
+  ENTER: "OPENED",
+  OPEN: "OPENED",
+  ACCEPT: "OPENED",
+  REJECT: "REJECTED",
+  REJECTED: "REJECTED",
+  SKIP: "NO TRADE",
 });
 
 // --------------------------------------------------------------------------
@@ -915,27 +916,27 @@ export const IDLE_REASONS: readonly string[] = [
 ];
 
 export const IDLE_REASON_LABELS: Record<string, string> = {
-  NO_QUALIFIED_SIGNAL: "Nitelikli sinyal yok",
-  CORRELATION_LIMIT: "Korelasyon sınırı",
-  RISK_LIMIT: "Risk bütçesi dolu",
-  LIQUIDITY_LIMIT: "Likidite sınırı",
-  EXECUTION_COST: "İcra maliyeti",
-  CASH_RESERVE: "Nakit rezervi",
+  NO_QUALIFIED_SIGNAL: "No qualified signal",
+  CORRELATION_LIMIT: "Correlation limit",
+  RISK_LIMIT: "Risk budget exhausted",
+  LIQUIDITY_LIMIT: "Liquidity limit",
+  EXECUTION_COST: "Execution cost",
+  CASH_RESERVE: "Cash reserve",
 };
 
 export const IDLE_REASON_NOTES: Record<string, string> = {
   NO_QUALIFIED_SIGNAL:
-    "Tarayıcı baktı ve kapıları geçen tek bir aday bulamadı. Bu para, alınacak bir şey olmadığı için boşta.",
+    "The scanner looked and found no candidate that cleared the gates. This capital is idle because there was nothing to buy.",
   CORRELATION_LIMIT:
-    "Aday vardı ve nitelikliydi; portföy onu zaten taşıdığı bahsin aynısı saydığı için almadı.",
+    "There was a qualified candidate; the portfolio declined it because it counts as the same bet it already holds.",
   RISK_LIMIT:
-    "Aday vardı; açık risk bütçesi dolu olduğu için üstüne pozisyon eklenmedi.",
+    "There was a candidate; no position was added on top because the open risk budget is exhausted.",
   LIQUIDITY_LIMIT:
-    "Aday vardı; defterin derinliği istenen büyüklüğü taşımadığı için tutar kısıldı veya iptal edildi.",
+    "There was a candidate; book depth could not carry the intended size, so the notional was cut or cancelled.",
   EXECUTION_COST:
-    "Aday vardı ve reddedilmedi çünkü zayıftı — komisyon, makas ve kayma toplamı beklenen hareketin tamamını yediği için reddedildi.",
+    "There was a candidate, and it was not rejected for being weak — it was rejected because fees, spread and slippage together consumed the entire expected move.",
   CASH_RESERVE:
-    "Bu para kasıtlı olarak bekletiliyor. Rezerv bir kusur değil, bir karardır ve diğer beş sebeple aynı anlama gelmez.",
+    "This capital is held back deliberately. A reserve is a decision, not a defect, and does not mean the same thing as the other five reasons.",
 };
 
 /**
@@ -963,35 +964,35 @@ export const IDLE_REASON_GROUP: Record<string, IdleGroup> = {
 export const IDLE_GROUP_ORDER: readonly IdleGroup[] = ["supply", "venue", "policy", "defect"];
 
 export const IDLE_GROUP_LABELS: Record<IdleGroup, string> = {
-  supply: "ALINACAK BİR ŞEY YOKTU",
-  venue: "ADAY VARDI, KENDİ MALİYETİNE DEĞMEDİ",
-  policy: "ADAY VARDI, BİLEREK ALINMADI",
+  supply: "THERE WAS NOTHING TO BUY",
+  venue: "CANDIDATES EXISTED, NOT WORTH THEIR OWN COST",
+  policy: "CANDIDATES EXISTED, DELIBERATELY DECLINED",
   // Phase 6. The first three are readings about the market or about a
   // decision; this one is a defect report and must not be mistaken for either.
-  defect: "PARA BİZİM KUSURUMUZDAN BOŞTA",
+  defect: "CAPITAL IDLE BECAUSE OF OUR OWN DEFECT",
 };
 
 /** The one-line conclusion each group licenses about widening the universe. */
 export const IDLE_GROUP_VERDICTS: Record<IdleGroup, string> = {
   defect:
-    "Evreni genişletmek bunu düzeltmez; bu satır sıfırlanana kadar diğer sebeplerin okuması da güvenilmezdir.",
+    "Widening the universe does not fix this; until this row is zero, the reading of every other reason is unreliable too.",
   supply:
-    "Daha fazla piyasa taramak bu parayı çalıştırır: kısıt evrenin darlığıdır.",
+    "Scanning more markets WOULD put this capital to work: the constraint is a narrow universe.",
   venue:
-    "Daha fazla piyasa taramak bu parayı ÇALIŞTIRMAZ: kısıt maliyettir ve yeni çiftler daha pahalıdır (~20 bps, Tier-0'da ~2 bps).",
+    "Scanning more markets would NOT put this capital to work: the constraint is cost, and new pairs are more expensive (~20 bps against ~2 bps on Tier-0).",
   policy:
-    "Bu para bir arama sorunu yüzünden değil, portföy kararı yüzünden boşta. Evreni genişletmek bunu değiştirmez.",
+    "This capital is idle because of a portfolio decision, not a search problem. Widening the universe does not change it.",
 };
 
 export const IDLE_GROUP_NOTES: Record<IdleGroup, string> = {
   defect:
-    "Sermaye, piyasa ya da portföy kararı yüzünden değil, sistemin kendi gecikmesi veya muhasebe hatası yüzünden çalışmıyor. Bu grup bir piyasa okuması değildir.",
+    "Capital is not working because of the system's own latency or an accounting error — not because of the market and not because of a portfolio decision. This group is not a market reading.",
   supply:
-    "Tarayıcı çalıştı ve kapıları geçen aday üretemedi — kenarın yokluğu değil, arzın yokluğu.",
+    "The scanner ran and produced no candidate that cleared the gates — an absence of supply, not an absence of edge.",
   venue:
-    "Adaylar üretildi ve icra maliyeti ya da defter derinliği onları eledi. Kenar ölçüldü ve maliyetin altında kaldı.",
+    "Candidates were produced and execution cost or book depth eliminated them. Edge was measured and came in under cost.",
   policy:
-    "Adaylar üretildi ve nitelikliydi; korelasyon, risk bütçesi veya nakit rezervi onları kasıtlı olarak dışarıda bıraktı.",
+    "Candidates were produced and qualified; correlation, the risk budget or the cash reserve deliberately kept them out.",
 };
 
 export function idleReasonLabel(v: string | null | undefined): string {
@@ -1042,35 +1043,35 @@ export function missedVerdict(value: Numeric): MissedVerdict {
   if (n === null) {
     return {
       kind: "absent",
-      text: "ÖLÇÜLMEDİ",
-      note: "Toplam kaçırılan hareket bildirilmedi. Ölçülmemiş bir denetim, temiz bir denetim değildir.",
+      text: "NOT MEASURED",
+      note: "No aggregate missed move was reported. An unmeasured audit is not a clean audit.",
     };
   }
   if (n <= -MISSED_NOISE_BPS) {
     return {
       kind: "saved",
-      text: "KAPI PARA KAZANDIRDI",
-      note: "Reddedilen hareketler maliyet sonrası eksiye gitti: bu retler zarardan korudu, fırsat kaçırmadı.",
+      text: "THE GATE SAVED MONEY",
+      note: "The refused moves went negative after costs: these rejections avoided losses rather than missing opportunities.",
     };
   }
   if (Math.abs(n) < MISSED_NOISE_BPS) {
     return {
       kind: "noise",
-      text: "GÜRÜLTÜ SINIRINDA",
-      note: `Toplam, tek bir Tier-0 gidiş-dönüş maliyetinin (~${MISSED_NOISE_BPS} bps) altında. Bu farkı kovalamak, kovalamanın maliyetinden ucuz değildir.`,
+      text: "WITHIN NOISE",
+      note: `The aggregate is below a single Tier-0 round-trip cost (~${MISSED_NOISE_BPS} bps). Chasing this difference does not cost less than the chase itself.`,
     };
   }
   if (n < MISSED_ALARM_BPS) {
     return {
       kind: "leaking",
-      text: "KAPI PARA BIRAKIYOR",
-      note: "Reddedilen hareketler maliyet sonrası artıya gitti: kapı, gerçekten orada olan bir kenarı geri çeviriyor.",
+      text: "THE GATE IS LEAVING MONEY",
+      note: "The refused moves went positive after costs: the gate is turning away edge that was genuinely there.",
     };
   }
   return {
     kind: "bleeding",
-    text: "KAPI FAZLA SIKI",
-    note: `Reddedilen hareketler tam bir Tier-0 dışı gidiş-dönüş maliyetinden (~${MISSED_ALARM_BPS} bps) fazlasını kazandırmış. Bu ölçekte eleme, korunma değil kayıptır.`,
+    text: "THE GATE IS TOO TIGHT",
+    note: `The refused moves earned more than a full non-Tier-0 round-trip cost (~${MISSED_ALARM_BPS} bps). At this magnitude, filtering is a loss rather than a protection.`,
   };
 }
 
@@ -1090,14 +1091,14 @@ export function missedVerdictTone(kind: MissedVerdictKind): string {
   }
 }
 
-/** Percentage points, as a difference rather than as a level: "75,8 puan". */
+/** Percentage points, as a difference rather than as a level: "75.8 pts". */
 export function formatPoints(value: Numeric, digits = 1): string {
   const n = toNum(value);
   if (n === null) return DASH;
   return `${n.toLocaleString("en-US", {
     minimumFractionDigits: digits,
     maximumFractionDigits: digits,
-  })} puan`;
+  })} pts`;
 }
 
 // --------------------------------------------------------------------------
@@ -1120,21 +1121,21 @@ export const IDLE_REASONS_V6: readonly string[] = [
 ];
 
 Object.assign(IDLE_REASON_LABELS, {
-  COOLDOWN: "Soğuma penceresi",
-  SCANNER_DELAY: "Tarayıcı gecikmesi",
-  CAPITAL_STATE_BUG: "Sermaye durumu kusuru",
-  OTHER: "Diğer",
+  COOLDOWN: "Cooldown window",
+  SCANNER_DELAY: "Scanner delay",
+  CAPITAL_STATE_BUG: "Capital-state defect",
+  OTHER: "Other",
 });
 
 Object.assign(IDLE_REASON_NOTES, {
   COOLDOWN:
-    "Zarar serisi veya bir risk olayı sonrası giriş kasıtlı olarak duraklatıldı. Bu para bir karar yüzünden boşta, bir eksiklik yüzünden değil.",
+    "Entry was deliberately paused after a loss streak or a risk event. This capital is idle because of a decision, not a shortfall.",
   SCANNER_DELAY:
-    "Sermaye serbest kaldı ama tarama turu henüz dönmedi. Aday var mıydı bilinmiyor — bilinen tek şey, sorulmadığıdır. Bu bir altyapı gecikmesidir, bir piyasa okuması değil.",
+    "Capital was released but the scan cycle had not come back round yet. Whether a candidate existed is unknown — the only thing known is that it was never asked. This is an infrastructure delay, not a market reading.",
   CAPITAL_STATE_BUG:
-    "Muhasebe, serbest olması gereken parayı serbest görmedi. Bu bir kusurdur: piyasa hakkında hiçbir şey söylemez ve düzeltilene kadar diğer sekiz sebebin tamamını kirletir.",
+    "Accounting did not see money as free that should have been free. This is a defect: it says nothing about the market, and until it is fixed it contaminates all eight of the other reasons.",
   OTHER:
-    "Worker bu doları sınıflandıramadı. Sınıflandırılamamış bir dolar, açıklanmış bir dolar değildir; bu satırın büyümesi ayrıştırmanın kendisinin eksildiği anlamına gelir.",
+    "The worker could not classify this dollar. An unclassified dollar is not an explained dollar; growth in this row means the attribution itself is degrading.",
 });
 
 /**
@@ -1164,20 +1165,20 @@ export const IDLE_REASONS_ALL: readonly string[] = [
 
 /** `STAGES` from `app/research/funnel.py` — frozen, in ladder order. */
 export const FUNNEL_STAGE_LABELS: Record<string, string> = {
-  discovered: "Borsada listeli",
-  subscribed: "Veri aboneliği",
-  data_healthy: "Veri sağlıklı",
-  features: "Özellik üretildi",
-  strategy_evaluated: "Strateji değerlendirdi",
-  model_evaluated: "Model değerlendirdi",
-  candidate: "Aday oldu",
-  cost_gate: "Maliyet kapısı",
-  liquidity_gate: "Likidite kapısı",
-  risk_gate: "Risk kapısı",
-  correlation_gate: "Korelasyon kapısı",
-  ranked: "Sıralandı",
-  selected: "Seçildi",
-  traded: "İşlem gördü",
+  discovered: "Listed on the venue",
+  subscribed: "Data subscribed",
+  data_healthy: "Data healthy",
+  features: "Features computed",
+  strategy_evaluated: "Strategy evaluated",
+  model_evaluated: "Model evaluated",
+  candidate: "Became a candidate",
+  cost_gate: "Cost gate",
+  liquidity_gate: "Liquidity gate",
+  risk_gate: "Risk gate",
+  correlation_gate: "Correlation gate",
+  ranked: "Ranked",
+  selected: "Selected",
+  traded: "Traded",
 };
 
 export function funnelStageLabel(v: string | null | undefined): string {
@@ -1190,28 +1191,28 @@ export function funnelStageLabel(v: string | null | undefined): string {
 /**
  * The diagnostic's vocabulary.
  *
- * "İZLENİYOR" is the resting state and it is a measurement, not a blank: it
+ * "NOT ACTIVE" is the resting state and it is a measurement, not a blank: it
  * means the share was computed over a real sample and came in under the
  * threshold. It is worded and toned as a finished reading for exactly that
  * reason — today BTC is 41.7% of 139 trades and this flag should look
  * deliberately quiet, not broken.
  */
 export const CONCENTRATION_VERDICT_LABELS: Record<string, string> = {
-  flagged: "BTC_CONCENTRATION · ETKİN",
-  clear: "BTC_CONCENTRATION · ETKİN DEĞİL",
-  thin: "BTC_CONCENTRATION · ÖRNEKLEM YETERSİZ",
-  unmeasured: "BTC_CONCENTRATION · ÖLÇÜLMEDİ",
+  flagged: "BTC_CONCENTRATION · ACTIVE",
+  clear: "BTC_CONCENTRATION · NOT ACTIVE",
+  thin: "BTC_CONCENTRATION · INSUFFICIENT SAMPLE",
+  unmeasured: "BTC_CONCENTRATION · NOT MEASURED",
 };
 
 export const CONCENTRATION_VERDICT_NOTES: Record<string, string> = {
   flagged:
-    "Tek bir coin işlemlerin %70'inden fazlasını aldı. Bu bir teşhistir: bayrak hiçbir şeyi bastırmaz, hiçbir coini cezalandırmaz ve sıralamayı değiştirmez. Net EV'de BTC kazanıyorsa BTC işlem görür. Bayrağın istediği tek şey, sebebin huniden okunmasıdır.",
+    "A single asset took more than 70% of the trades. This is a diagnosis: the flag suppresses nothing, penalises no asset and does not change the ranking. If BTC wins on net EV, BTC trades. All the flag asks is that the reason be read off the funnel.",
   clear:
-    "Lider coinin payı eşiğin altında — ölçüldü ve geçti. Yoğunlaşma varsa sıralamada değil, neyin aday olmasına izin verildiğindedir: onu bu panelin huni sütunları söyler.",
+    "The leading asset's share is under the threshold — measured, and it passed. If concentration exists it is not in the ranking but in what was allowed to become a candidate, and this panel's funnel columns are what say so.",
   thin:
-    "Pay hesaplandı ama örneklem bir sonuç çıkarmaya yetmiyor. Az sayıda işlemde %100 pay, yoğunlaşma değil az sayıda işlemdir; bu ikisi burada birbirinin yerine geçmez.",
+    "The share was computed but the sample is too small to conclude anything from. A 100% share across a handful of trades is a small sample, not concentration; the two are not interchangeable here.",
   unmeasured:
-    "Pay hesaplanmadı: ne işlem sayısı ne de huni bu ekrana ulaştı. Ölçülmemiş bir yoğunlaşma, olmayan bir yoğunlaşma değildir.",
+    "The share was not computed: neither the trade count nor the funnel reached this screen. An unmeasured concentration is not an absent one.",
 };
 
 export function concentrationTone(kind: string): string {
@@ -1269,16 +1270,16 @@ export function formatSeconds(value: Numeric, digits = 1): string {
   return `${n.toLocaleString("en-US", {
     minimumFractionDigits: digits,
     maximumFractionDigits: digits,
-  })} sn`;
+  })}s`;
 }
 
 // -------------------------------------------------------- opportunity board
 
 export const OPPORTUNITY_STATUS_LABELS: Record<string, string> = {
-  QUEUED: "SIRADA",
-  SELECTED: "SEÇİLDİ",
-  EXPIRED: "SÜRESİ DOLDU",
-  REJECT: "REDDEDİLDİ",
+  QUEUED: "QUEUED",
+  SELECTED: "SELECTED",
+  EXPIRED: "EXPIRED",
+  REJECT: "REJECTED",
 };
 
 export function opportunityStatusLabel(v: string | null | undefined): string {

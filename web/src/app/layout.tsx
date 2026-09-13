@@ -7,9 +7,9 @@ import "./globals.css";
 // open all day. A downloaded face would buy nothing and add a flash.
 
 export const metadata: Metadata = {
-  title: "Kripto Micro-Profit Trader",
+  title: "NetEdge",
   description:
-    "Kripto mikro-kâr scalping terminali — yalnızca kâğıt üzerinde işlem, gerçek emir gönderilmez.",
+    "Quantitative market research and execution-simulation terminal — paper only, no real order is ever submitted.",
 };
 
 export const viewport: Viewport = {
@@ -24,7 +24,7 @@ export default function RootLayout({
   children: React.ReactNode;
 }) {
   return (
-    <html lang="tr">
+    <html lang="en">
       <body>{children}</body>
     </html>
   );

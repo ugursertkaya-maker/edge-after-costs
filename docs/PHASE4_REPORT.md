@@ -1,7 +1,7 @@
 # Phase 4 — predictive entry engine
 
 Date: 2026-09-11 · Mode: **PAPER** · Real orders placed: **0**
-Live: <https://your-domain.example/cryptobot> · **1,556 automated tests passing**
+Mode: **PAPER** · **1,556 automated tests passing**
 
 ---
 
@@ -314,7 +314,7 @@ rather than an assumption.
 |---|---|
 | **Paper champion exists** | **NO** |
 | Automated tests | **1,556 passing**, 1 skipped |
-| Research compute | entirely off-box; the VPS was never loaded |
+| Research compute | entirely off-box; the deployment host was never loaded |
 | Worker CPU / RAM | 5.2% of one core, 78 MB of 640 MB |
 | Host load | 0.51 on 2 vCPU |
 | **PAPER mode** | **YES** |

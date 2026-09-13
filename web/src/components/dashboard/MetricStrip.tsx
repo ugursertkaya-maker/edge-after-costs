@@ -51,12 +51,12 @@ export function MetricStrip({
   const equityNote =
     m?.cash === null || m?.cash === undefined
       ? undefined
-      : `nakit ${formatMoney(m.cash)}`;
+      : `cash ${formatMoney(m.cash)}`;
 
   return (
     <div className="metrics">
       <Metric
-        label="Mevcut sermaye"
+        label="Current equity"
         value={formatMoney(m?.equity)}
         note={equityNote}
         sign={
@@ -66,33 +66,33 @@ export function MetricStrip({
         }
       />
       <Metric
-        label="Bugünkü net P&L"
+        label="Net P&L today"
         value={formatSignedMicroMoney(m?.pnl_today)}
-        note="komisyon ve kayma dahil"
+        note="fees and slippage included"
         sign={m?.pnl_today}
       />
       <Metric
-        label="Toplam net P&L"
+        label="Total net P&L"
         value={formatSignedMicroMoney(m?.pnl_total)}
-        note="tüm defter ömrü"
+        note="whole life of the ledger"
         sign={m?.pnl_total}
       />
-      <Metric label="Açık pozisyon" value={formatInt(m?.open_positions)} />
-      <Metric label="İşlem sayısı" value={formatInt(m?.trades)} note="kapanmış" />
+      <Metric label="Open positions" value={formatInt(m?.open_positions)} />
+      <Metric label="Trades" value={formatInt(m?.trades)} note="closed" />
       <Metric
         label="Win rate"
         value={formatRate(m?.win_rate)}
-        note="tek başına anlamsız"
+        note="meaningless on its own"
       />
       <Metric
         label="Profit factor"
         value={formatFactor(m?.profit_factor)}
-        note="brüt kâr / brüt zarar"
+        note="gross profit / gross loss"
       />
       <Metric
-        label="Expectancy / işlem"
+        label="Expectancy / trade"
         value={formatMicroMoney(m?.expectancy)}
-        note="net, işlem başına"
+        note="net, per trade"
         sign={m?.expectancy}
       />
       <Metric
@@ -100,18 +100,18 @@ export function MetricStrip({
         value={m?.max_drawdown === null || m?.max_drawdown === undefined
           ? DASH
           : formatMoney(-Math.abs(m.max_drawdown))}
-        note="zirveden en derin düşüş"
+        note="deepest fall from peak"
         sign={m?.max_drawdown === null || m?.max_drawdown === undefined
           ? undefined
           : -Math.abs(m.max_drawdown)}
       />
       <Metric
-        label="Sermaye devri"
+        label="Capital turnover"
         value={formatRatio(m?.capital_turnover)}
-        note="işlem hacmi / sermaye"
+        note="traded notional / equity"
       />
       <Metric
-        label="Ort. tutma süresi"
+        label="Avg. holding time"
         value={formatDuration(m?.avg_holding_seconds)}
       />
     </div>

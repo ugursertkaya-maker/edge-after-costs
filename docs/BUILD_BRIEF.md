@@ -28,12 +28,12 @@ data only.** Anything that could place a real order is a defect.
   those pairs, because at the standard tier an ATR-sized target is structurally
   unprofitable — see docs/ECONOMICS.md. Every result is also reported under
   `FEE_MODEL=standard` as a stress case.
-- Measured from our VPS: REST ~480 ms, WS TCP RTT ~165 ms (stream.binance.us is
+- Measured from the test host: REST ~480 ms, WS TCP RTT ~165 ms (stream.binance.us is
   routed to ap-northeast-1). Treat 250 ms as the default execution latency.
 
 ## Host constraints — these are hard
 
-Production VPS has **2 vCPU / 8 GB shared with ~20 other containers**. The
+The reference deployment is a small **2 vCPU / 8 GB** host. The
 worker container gets `cpus: 1.0`, `mem_limit: 768m`.
 
 - Bounded concurrency, incremental feature updates, batched DB writes.
@@ -66,7 +66,7 @@ api/app/
   features.py    regime.py     ranker.py     risk.py  exits.py     universe.py
   worker/main.py
 api/tests/
-web/             (Next.js 15 dashboard, basePath=/cryptobot, Turkish UI)
+web/             (Next.js 15 dashboard, basePath=/netedge, Turkish UI)
 ```
 
 ## Non-negotiables

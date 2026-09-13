@@ -74,27 +74,27 @@ export function Detail({ t }: { t: TradeRow }) {
 
   const costItems: CostItem[] = [
     {
-      k: "Giriş komisyonu",
+      k: "Entry fee",
       v: formatCost(d.entryFee),
       cls: toNum(d.entryFee) === null ? "muted" : "neg",
     },
     {
-      k: d.exitFeeActual ? "Gerçekleşen çıkış komisyonu" : "Beklenen çıkış komisyonu",
+      k: d.exitFeeActual ? "Realised exit fee" : "Expected exit fee",
       v: formatCost(d.exitFee),
       cls: toNum(d.exitFee) === null ? "muted" : "neg",
     },
     {
-      k: "Makas maliyeti",
+      k: "Spread cost",
       v: formatCost(t.spread_cost_usd ?? null),
       cls: toNum(t.spread_cost_usd ?? null) === null ? "muted" : "neg",
     },
-    { k: "Kayma", v: formatCost(t.slippage_usd), cls: toNum(t.slippage_usd) === null ? "muted" : "neg" },
+    { k: "Slippage", v: formatCost(t.slippage_usd), cls: toNum(t.slippage_usd) === null ? "muted" : "neg" },
     {
-      k: "Toplam işlem maliyeti",
+      k: "Total trading cost",
       v: formatCost(d.cost),
       cls: d.cost === null ? "muted" : "neg is-total",
       title: d.costDerived
-        ? "Brüt − NET kimliğinden türetildi; worker ayrı bir toplam maliyet alanı raporlamıyor"
+        ? "Derived from the Gross - NET identity; the worker does not report a separate total-cost field"
         : undefined,
     },
   ];
@@ -103,10 +103,10 @@ export function Detail({ t }: { t: TradeRow }) {
   // measurement and is shown as what it is rather than being dropped.
   if (!d.splitKnown) {
     costItems.splice(2, 0, {
-      k: "Toplam komisyon (V1)",
+      k: "Total fees (V1)",
       v: formatCost(t.fees_usd),
       cls: toNum(t.fees_usd) === null ? "muted" : "neg",
-      title: "Worker giriş/çıkış ayrımını henüz raporlamıyor",
+      title: "The worker does not report the entry/exit split yet",
     });
   }
 
@@ -123,21 +123,21 @@ export function Detail({ t }: { t: TradeRow }) {
           />
 
           <div className="xcols">
-            <CostGroup title="Maliyet kalemleri" items={costItems} />
+            <CostGroup title="Cost components" items={costItems} />
 
             <CostGroup
-              title="Fiyat seviyeleri"
+              title="Price levels"
               items={[
-                { k: "Giriş", v: formatPrice(t.entry_price) },
-                { k: "Çıkış", v: formatPrice(t.exit_price), cls: "sym" },
+                { k: "Entry", v: formatPrice(t.entry_price) },
+                { k: "Exit", v: formatPrice(t.exit_price), cls: "sym" },
                 {
-                  k: "Başabaş fiyat",
+                  k: "Break-even price",
                   v: formatPrice(t.break_even_price ?? null),
                   cls: toNum(t.break_even_price ?? null) === null ? "muted" : "warn",
-                  title: "Bu fiyatta işlem maliyetini tam olarak geri kazanıyordu",
+                  title: "At this price it exactly recovered its trading cost",
                 },
                 {
-                  k: "NET TP fiyat",
+                  k: "NET TP price",
                   v: formatPrice(t.net_tp_price ?? null),
                   cls: toNum(t.net_tp_price ?? null) === null ? "muted" : "pos",
                 },
@@ -155,10 +155,10 @@ export function Detail({ t }: { t: TradeRow }) {
             />
 
             <CostGroup
-              title="Pozisyon ve risk"
+              title="Position and risk"
               items={[
                 {
-                  k: "Pozisyon büyüklüğü",
+                  k: "Position size",
                   v: formatMoney(t.notional_usd ?? null),
                   cls: toNum(t.notional_usd ?? null) === null ? "muted" : "",
                 },
@@ -169,20 +169,20 @@ export function Detail({ t }: { t: TradeRow }) {
                       ? DASH
                       : formatMoney(-Math.abs(toNum(t.risk_usd) as number)),
                   cls: toNum(t.risk_usd ?? null) === null ? "muted" : "neg",
-                  title: "Pozisyon büyüklüğü değil — stop dolsaydı kaybedilecek tutar",
+                  title: "Not the position size — the amount that would have been lost had the stop filled",
                 },
                 {
-                  k: "Dolum tipi",
+                  k: "Fill type",
                   v: makerTakerLabel(t.maker_or_taker ? String(t.maker_or_taker) : null),
                   cls: t.maker_or_taker ? "" : "muted",
                 },
                 {
-                  k: "Strateji",
+                  k: "Strategy",
                   v: t.strategy ? strategyLabel(t.strategy) : DASH,
                   cls: t.strategy ? "" : "muted",
                 },
                 {
-                  k: "Çıkış nedeni",
+                  k: "Exit reason",
                   v: exitReasonLabel(t.exit_reason),
                   cls: t.exit_reason ? "" : "muted",
                   title: t.exit_reason ?? undefined,
@@ -193,10 +193,10 @@ export function Detail({ t }: { t: TradeRow }) {
             <CostGroup
               title="Zaman"
               items={[
-                { k: "Giriş zamanı", v: formatDateTimeMs(t.entry_ms), cls: "dim" },
-                { k: "Çıkış zamanı", v: formatDateTimeMs(t.exit_ms), cls: "dim" },
+                { k: "Entry time", v: formatDateTimeMs(t.entry_ms), cls: "dim" },
+                { k: "Exit time", v: formatDateTimeMs(t.exit_ms), cls: "dim" },
                 {
-                  k: "Tutma süresi",
+                  k: "Holding time",
                   v: formatDuration(d.hold),
                   cls: d.hold === null ? "muted" : "",
                   title: "Hedef pencere 25–60 dk",
@@ -207,8 +207,8 @@ export function Detail({ t }: { t: TradeRow }) {
 
           <p className="xnote">
             {d.cost === null
-              ? `Brüt ${formatSignedMicroMoney(d.gross)} — maliyet dökümü raporlanmadı.`
-              : `Brüt ${formatSignedMicroMoney(d.gross)}, ${formatMicroMoney(
+              ? `Gross ${formatSignedMicroMoney(d.gross)} — no cost breakdown was reported.`
+              : `Gross ${formatSignedMicroMoney(d.gross)}, ${formatMicroMoney(
                   Math.abs(d.cost),
                 )} maliyetten sonra ${formatSignedMicroMoney(d.net)} nettir.`}
           </p>
@@ -221,7 +221,7 @@ export function Detail({ t }: { t: TradeRow }) {
 /**
  * Closed round trips, newest first, with every cost itemised.
  *
- * Brüt, Toplam maliyet and NET are three separate columns and the expanded row
+ * Gross, Total cost and NET are three separate columns and the expanded row
  * shows what made up the middle one — entry fee, exit fee, spread and
  * slippage. The thesis of this bot is that a gross-positive trade can be a net
  * loss, so folding the costs into one number would hide exactly the thing the
@@ -262,12 +262,12 @@ export function Trades({
   return (
     <Panel
       idx="05"
-      title="İşlem geçmişi"
-      note="kapanmış turlar · en yeni üstte · satıra tıklayın, maliyet dökümü açılır"
+      title="Trade history"
+      note="closed round trips · newest first · click a row for the cost breakdown"
       meta={
         total > 0 ? (
           <span className="panel-note">
-            bu sayfa · brüt {formatSignedMicroMoney(pageGross)} · net{" "}
+            this page · gross {formatSignedMicroMoney(pageGross)} · net{" "}
             {formatSignedMicroMoney(pageNet)}
           </span>
         ) : null
@@ -275,7 +275,7 @@ export function Trades({
       flush
       footer={
         total > 0
-          ? "Brüt P&L komisyon, makas ve kaymadan önceki tutardır ve kâr değildir. Karar verici sütun NET P&L'dir; aradaki fark satır açıldığında kalem kalem görünür."
+          ? "Gross P&L is the figure before fees, spread and slippage, and it is not profit. The deciding column is NET P&L; the difference appears line by line when a row is expanded."
           : undefined
       }
     >
@@ -283,8 +283,8 @@ export function Trades({
         <Skeleton rows={6} />
       ) : total === 0 ? (
         <DataState
-          title="Henüz işlem yok"
-          text="Kapanmış tur bulunmuyor. Bot bir kurulumu ancak net beklenen edge eşiği aştığında açar; ilk tur kapandığında bu tablo dolmaya başlar."
+          title="No trades yet"
+          text="There are no closed round trips. The system opens a setup only when the net expected edge clears the threshold; this table starts filling once the first round trip closes."
         />
       ) : (
         <>
@@ -294,17 +294,17 @@ export function Trades({
                 <tr>
                   <th className="c x" aria-label="Detay" />
                   <th className="l">Coin</th>
-                  <th className="l">Strateji</th>
-                  <th>Çıkış zamanı</th>
-                  <th>Pozisyon $</th>
-                  <th>Giriş</th>
-                  <th>Çıkış</th>
-                  <th>Brüt P&amp;L</th>
-                  <th>Toplam maliyet</th>
+                  <th className="l">Strategy</th>
+                  <th>Exit time</th>
+                  <th>Position $</th>
+                  <th>Entry</th>
+                  <th>Exit</th>
+                  <th>Gross P&amp;L</th>
+                  <th>Total cost</th>
                   <th>NET P&amp;L</th>
-                  <th className="c">Dolum</th>
+                  <th className="c">Fill</th>
                   <th>Tutma</th>
-                  <th className="l">Çıkış nedeni</th>
+                  <th className="l">Exit reason</th>
                 </tr>
               </thead>
               <tbody>
@@ -343,7 +343,7 @@ export function Trades({
                         <td>{formatPrice(r.exit_price)}</td>
                         <td
                           className={tone(d.gross) ?? "muted"}
-                          title="Fiyat hareketinin kazandırdığı — maliyet düşülmemiştir"
+                          title="What the price move earned — costs not deducted"
                         >
                           {formatSignedMicroMoney(d.gross)}
                         </td>
@@ -351,8 +351,8 @@ export function Trades({
                           className={d.cost === null ? "muted" : "neg"}
                           title={
                             d.costDerived
-                              ? "Brüt − NET kimliğinden türetildi"
-                              : "Komisyon + makas + kayma"
+                              ? "Derived from the Gross - NET identity"
+                              : "Fees + spread + slippage"
                           }
                         >
                           {formatCost(d.cost)}
@@ -397,7 +397,7 @@ export function Trades({
               onClick={() => setPage((p) => Math.max(0, p - 1))}
               disabled={page === 0}
             >
-              ← Önceki
+              ← Previous
             </button>
             <button
               type="button"
@@ -405,11 +405,11 @@ export function Trades({
               onClick={() => setPage((p) => Math.min(pages - 1, p + 1))}
               disabled={page >= pages - 1}
             >
-              Sonraki →
+              Next →
             </button>
             <span className="pager-info">
               {page * PAGE_SIZE + 1}–{Math.min(total, (page + 1) * PAGE_SIZE)} / {total}{" "}
-              işlem · sayfa {page + 1}/{pages}
+              trades · page {page + 1}/{pages}
             </span>
           </div>
         </>

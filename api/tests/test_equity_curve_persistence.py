@@ -1,6 +1,6 @@
 """The equity curve must survive a restart and an idle account.
 
-Reported as "sayfada grafikler vardı şu anda yok". The data was never lost:
+Reported as "the page used to have charts and now it does not". The data was never lost:
 2,827 snapshots spanning 47.7 hours sat in `equity_snapshots` while the
 dashboard served `Ledger.equity_points()`, an in-memory list that starts empty
 on every boot. The rows had been written since the first commit and read by

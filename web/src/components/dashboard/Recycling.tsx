@@ -20,7 +20,7 @@ import {
 import type { CapitalState, PortfolioState, RecycleEvent, RecyclingState } from "@/lib/types";
 
 /**
- * SERMAYE DEVİR ZİNCİRİ — §22.
+ * CAPITAL RECYCLING CHAIN — §22.
  *
  * One question: when a position closes, how long before that money is working
  * again? For a strategy whose median hold is ~32 seconds, a 40-second gap
@@ -48,18 +48,18 @@ const STEPS: {
   label: string;
   note: string;
 }[] = [
-  { key: "closed_ms", label: "Pozisyon kapandı", note: "Turun bittiği an" },
+  { key: "closed_ms", label: "Position closed", note: "The moment the round trip ended" },
   {
     key: "capital_released_ms",
-    label: "Sermaye serbest",
-    note: "Muhasebenin parayı yeniden kullanılabilir saydığı an",
+    label: "Capital released",
+    note: "The moment accounting counted the money as reusable",
   },
   {
     key: "rescan_triggered_ms",
-    label: "Yeniden tarama",
-    note: "Tarayıcının yeni aday araması için tetiklendiği an",
+    label: "Rescan",
+    note: "The moment the scanner was triggered to look for a new candidate",
   },
-  { key: "next_entry_ms", label: "Sonraki giriş", note: "Paranın yeniden piyasaya girdiği an" },
+  { key: "next_entry_ms", label: "Next entry", note: "The moment the money re-entered the market" },
 ];
 
 /** One interval, with its own tone band. The bands are set against the hold,
@@ -119,13 +119,13 @@ function Chain({ ev, now }: { ev: RecycleEvent; now: number }) {
       })}
       {toNum(ev.next_entry_ms) === null && closed !== null && (
         <li className="rcy-open">
-          Bu zincir henüz kapanmadı: kapanıştan bu yana{" "}
-          <b>{formatDuration((now - closed) / 1000)}</b> geçti ve yeni bir giriş olmadı.{" "}
+          This chain has not closed yet: <b>{formatDuration((now - closed) / 1000)}</b>
+          {" "}has passed since the close with no new entry.{" "}
           {ev.qualified_candidate_existed === true
-            ? "Sermaye serbest kaldığında nitelikli bir aday VARDI — bu durumda gecikme piyasanın değil, devir mekanizmasının hanesine yazılır."
+            ? "A qualified candidate DID exist when capital was released — in that case the delay is charged to the recycling mechanism, not to the market."
             : ev.qualified_candidate_existed === false
-              ? "Sermaye serbest kaldığında nitelikli aday YOKTU — gecikme burada NO_QUALIFIED_SIGNAL'dır, bir devir kusuru değildir."
-              : "Nitelikli aday olup olmadığı bildirilmedi; bu bilgi olmadan gecikmenin piyasadan mı yoksa mekanizmadan mı geldiği söylenemez."}
+              ? "No qualified candidate existed when capital was released — here the delay is NO_QUALIFIED_SIGNAL, not a recycling defect."
+              : "Whether a qualified candidate existed was not reported; without that, it cannot be said whether the delay came from the market or from the mechanism."}
         </li>
       )}
     </ol>
@@ -160,11 +160,11 @@ export function Recycling({
     toNum(portfolio?.available_cash) ??
     null;
   const cashSource = toNum(r?.available_cash_usd) !== null
-    ? "devir bloğu"
+    ? "recycling block"
     : toNum(capital?.idle_usd) !== null
-      ? "§02 boşta bakiye"
+      ? "§02 idle balance"
       : toNum(portfolio?.available_cash) !== null
-        ? "§09 kullanılabilir nakit"
+        ? "§09 available cash"
         : null;
 
   const idleSeconds =
@@ -189,10 +189,10 @@ export function Recycling({
 
   const meta = (
     <>
-      <span className="pill is-off" title="Medyanların hesaplandığı kapanış sayısı">
-        {sample === null ? "örneklem yok" : `${formatInt(sample)} kapanış`}
+      <span className="pill is-off" title="Closes the medians were computed from">
+        {sample === null ? "no sample" : `${formatInt(sample)} closes`}
       </span>
-      <span className="pill is-pos" title="Tüm devir zinciri simülasyondur.">
+      <span className="pill is-pos" title="The entire recycling chain is a simulation.">
         PAPER
       </span>
     </>
@@ -201,12 +201,12 @@ export function Recycling({
   return (
     <Panel
       idx="19"
-      title="Sermaye devir zinciri"
-      note="kapanış → serbest kalma → yeniden tarama → sonraki giriş"
+      title="Capital recycling chain"
+      note="close → release → rescan → next entry"
       meta={meta}
       footer={
-        "KAPANIŞ→TARAMA milisaniye, KAPANIŞ→GİRİŞ saniye cinsindendir; medyan sıralamaları da eşlik eden kapanış sayısıyla birlikte okunur, tek bir zincir bir dağılım değildir. Boşta sermayenin SEBEP dağılımı bu panelde tekrarlanmaz: bu ekranda tek bir ayrıştırma vardır ve §02'dedir — aynı doları iki yerde ayrı ayrı açıklamak, panonun kendisiyle çelişmesinin yoludur. " +
-        `Eşikler tutma süresine göredir: ${formatExactMs(RECYCLE_FAST_MS)} altı anlık, ${formatExactMs(RECYCLE_SLOW_MS)} altı kabul edilebilir, ${formatExactMs(RECYCLE_BAD_MS)} üstü medyan tutma süresinden uzun bir gecikmedir ve çoğu turun kazancından fazlasına mal olur.`
+        "CLOSE→SCAN is in milliseconds and CLOSE→ENTRY in seconds; the median ordering is read together with the accompanying close count, since a single chain is not a distribution. The REASON distribution for idle capital is not repeated on this panel: this screen has exactly one attribution and it is in §02 — explaining the same dollar separately in two places is how a dashboard contradicts itself. " +
+        `The thresholds are relative to holding time: under ${formatExactMs(RECYCLE_FAST_MS)} is instantaneous, under ${formatExactMs(RECYCLE_SLOW_MS)} is acceptable, and over ${formatExactMs(RECYCLE_BAD_MS)} is a delay longer than the median holding time, costing more than most round trips earn.`
       }
     >
       {loading && !r ? (
@@ -215,55 +215,55 @@ export function Recycling({
         <div className="rcy">
           <div className="rcy-ints">
             <Interval
-              label="Kapanış → yeniden tarama"
+              label="Close → rescan"
               value={toRescan}
               text={formatExactMs(toRescan)}
-              hint="Para serbest kaldıktan sonra tarayıcının sorulma süresi"
+              hint="Time until the scanner is asked, after the money is released"
             />
             <Interval
-              label="Kapanış → sonraki giriş"
+              label="Close → next entry"
               value={toEntryMs}
               text={toEntryMs === null ? DASH : formatSeconds(toEntryMs / 1000)}
-              hint="Paranın yeniden piyasada olması için geçen süre"
+              hint="Time until the money is back in the market"
             />
             <Interval
-              label="Medyan kapanış → tarama"
+              label="Median close → scan"
               value={toNum(r?.median_close_to_rescan_ms)}
               text={formatExactMs(r?.median_close_to_rescan_ms ?? null)}
-              hint={sample === null ? "örneklem bildirilmedi" : `${formatInt(sample)} kapanış üzerinden`}
+              hint={sample === null ? "sample not reported" : `over ${formatInt(sample)} closes`}
             />
             <Interval
-              label="Medyan kapanış → giriş"
+              label="Median close → entry"
               value={toNum(r?.median_close_to_entry_ms)}
               text={
                 toNum(r?.median_close_to_entry_ms) === null
                   ? DASH
                   : formatSeconds((toNum(r?.median_close_to_entry_ms) as number) / 1000)
               }
-              hint={sample === null ? "örneklem bildirilmedi" : `${formatInt(sample)} kapanış üzerinden`}
+              hint={sample === null ? "sample not reported" : `over ${formatInt(sample)} closes`}
             />
           </div>
 
           <div className="pfolio-grid">
             <Stat
-              label="Kullanılabilir nakit"
+              label="Available cash"
               value={formatMoney(cash)}
               note={cashSource ? `kaynak: ${cashSource}` : "bildirilmedi"}
               cls={cash === null ? "flat" : undefined}
-              title="Şu anda yeni bir pozisyona girebilecek nakit"
+              title="Cash that could enter a new position right now"
             />
             <Stat
-              label="Boşta kalma süresi"
+              label="Time idle"
               value={idleSeconds === null ? DASH : formatDuration(idleSeconds)}
-              note={idleSeconds === null ? "ölçülmedi" : "son serbest kalmadan bu yana"}
+              note={idleSeconds === null ? "not measured" : "since the last release"}
               cls={idleSeconds === null ? "flat" : idleSeconds > 60 ? "warn" : undefined}
             />
             <Stat
-              label="Nitelikli fırsat"
+              label="Qualified opportunities"
               value={formatInt(qualified)}
-              note={qualified === null ? "bildirilmedi" : "bu turda kapıları geçen aday"}
+              note={qualified === null ? "not reported" : "candidates clearing the gates this cycle"}
               cls={qualified === null ? "flat" : qualified > 0 ? "pos" : undefined}
-              title="Sermaye serbestken kaç aday tüm kapıları geçmişti"
+              title="How many candidates had cleared every gate while capital was free"
             />
             <Stat
               label="Kapanan son tur"
@@ -271,12 +271,12 @@ export function Recycling({
               note={
                 last?.closed_trade_id
                   ? `tur ${last.closed_trade_id.slice(0, 8)}`
-                  : "kapanış kaydı yok"
+                  : "no close records"
               }
               cls={closedSymbol ? undefined : "flat"}
             />
             <Stat
-              label="Sonraki nitelikli aday"
+              label="Next qualified candidate"
               value={
                 nextSymbol
                   ? baseAsset(nextSymbol)
@@ -288,39 +288,39 @@ export function Recycling({
                 last?.next_strategy
                   ? strategyLabel(last.next_strategy)
                   : last?.qualified_candidate_existed === false
-                    ? "serbest kalma anında aday yoktu"
+                    ? "no candidate at the moment of release"
                     : "bildirilmedi"
               }
               cls={nextSymbol ? undefined : "flat"}
             />
             <Stat
-              label="Nitelikli ama alınmadı"
+              label="Qualified but not taken"
               value={formatInt(notTaken)}
               note={
                 notTaken === null
                   ? "bildirilmedi"
                   : notTaken > 0
-                    ? "kapanışta aday vardı, sermaye yine de bekledi"
-                    : "böyle bir kapanış olmadı"
+                    ? "a candidate existed at the close and capital still waited"
+                    : "no such close occurred"
               }
               cls={notTaken === null ? "flat" : notTaken > 0 ? "neg" : "pos"}
-              title="Bu sayı sıfırdan büyükse gecikme piyasanın değil, devir mekanizmasının hanesindedir"
+              title="If this number is above zero, the delay is charged to the recycling mechanism rather than to the market"
             />
             <Stat
-              label="Mutabakatsız nakit"
+              label="Unreconciled cash"
               value={stateBug === null ? DASH : formatMoney(stateBug)}
               note={
                 stateBug === null
                   ? "bildirilmedi"
                   : stateBug > 0
-                    ? "CAPITAL_STATE_BUG — §02'de de görünür"
-                    : "nakit, maruziyet ve özkaynak uyuşuyor"
+                    ? "CAPITAL_STATE_BUG — also visible in §02"
+                    : "cash, exposure and equity reconcile"
               }
               cls={stateBug === null ? "flat" : stateBug > 0 ? "neg" : undefined}
-              title="Nakit, maruziyet ve özkaynağın uyuşmadığı tutar. Bir kusurdur, piyasa okuması değildir."
+              title="The amount by which cash, exposure and equity fail to reconcile. It is a defect, not a market reading."
             />
             <Stat
-              label="Aday var mıydı"
+              label="Was a candidate available"
               value={
                 last?.qualified_candidate_existed === true
                   ? "VARDI"
@@ -328,7 +328,7 @@ export function Recycling({
                     ? "YOKTU"
                     : DASH
               }
-              note="uzun gecikmenin kusur mu piyasa mı olduğunu ayıran tek alan"
+              note="the one field that separates a defect from a market in a long delay"
               cls={
                 last?.qualified_candidate_existed === true && toEntryMs !== null && toEntryMs > RECYCLE_BAD_MS
                   ? "neg"
@@ -346,17 +346,17 @@ export function Recycling({
             <div className="fin-empty">
               <div className="fin-empty-head">
                 <span className="state-mark" aria-hidden />
-                <p className="fin-empty-t">Devir zinciri henüz ölçülmüyor</p>
+                <p className="fin-empty-t">The recycling chain is not being measured yet</p>
               </div>
               <p className="fin-empty-x">
-                Portföy katmanı bu ekrana tek bir kapanış zinciri bildirmiyor. Bu, sermayenin
-                anında devrettiği anlamına gelmez — kapanış ile sonraki giriş arasındaki sürenin
-                hiç ölçülmediği anlamına gelir, ve bu iki ifade burada birbirinin yerine
-                kullanılmaz. Yukarıdaki nakit ve boşta süre değerleri, ölçülebilen yerlerden
-                okunmuştur; zincirin kendisi gelene kadar kapanış→tarama gecikmesi bilinmiyor.
+                The portfolio layer is not reporting a single close chain to this screen. That
+                does not mean capital recycles instantly — it means the time between a close and
+                the next entry has never been measured, and those two statements are not used
+                interchangeably here. The cash and idle-time figures above are read from where
+                they can be measured; until the chain itself arrives, the close→scan delay is unknown.
               </p>
               <p className="xnote">
-                Beklenen alanlar: <code>recycling.last</code> ve <code>recycling.events[]</code>{" "}
+                Fields expected: <code>recycling.last</code> and <code>recycling.events[]</code>{" "}
                 — her biri <code>closed_trade_id</code>, <code>closed_ms</code>,{" "}
                 <code>capital_released_ms</code>, <code>rescan_triggered_ms</code>,{" "}
                 <code>next_entry_ms</code>, <code>qualified_candidate_existed</code>,{" "}
@@ -371,11 +371,11 @@ export function Recycling({
                 <thead>
                   <tr>
                     <th className="l">Kapanan tur</th>
-                    <th>Kapanış</th>
-                    <th title="milisaniye">Kapanış → tarama</th>
-                    <th title="saniye">Kapanış → giriş</th>
-                    <th className="c">Aday var mıydı</th>
-                    <th className="l">Sonraki giriş</th>
+                    <th>Close</th>
+                    <th title="milliseconds">Close → scan</th>
+                    <th title="seconds">Close → entry</th>
+                    <th className="c">Candidate available</th>
+                    <th className="l">Next entry</th>
                   </tr>
                 </thead>
                 <tbody>

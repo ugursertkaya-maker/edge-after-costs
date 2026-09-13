@@ -1,9 +1,9 @@
 # Exchange selection — Binance.US
 
-Decided 2026-09-10. Every number below was measured from the production VPS
-(your-server, a cloud provider, **physically in US East — a US IP**, which is why
-all three candidates are reachable without any bypass) or read from the
-exchange's own documentation. No VPN, proxy or offshore venue was considered.
+Decided 2026-09-10. Every number below was measured from a **US-hosted**
+server (a US IP, which is why all three candidates are reachable without any
+bypass) or read from the exchange's own documentation. No VPN, proxy or
+offshore venue was considered.
 
 ## The decision in one line
 
@@ -28,8 +28,8 @@ alternatives at our account size. Nothing else came close enough to matter.
 | Tradable pairs (TRADING status) | 265 (202 USDT, 54 USD) | — | — |
 | REST rate limit | 6,000 weight/min; 61,000 raw req/5 min | tighter | tiered |
 | Sandbox / testnet | **No** | Limited | Limited |
-| Measured REST latency from VPS | 480 ms (`api.binance.us` → AWS us-east) | **95 ms** | 140 ms |
-| Measured WS TCP RTT from VPS | **165 ms** (`stream.binance.us` resolves to an AWS ap-northeast-1 address, AWS **ap-northeast-1/Tokyo**) | **2.3 ms** (Cloudflare) | **1.9 ms** (Cloudflare) |
+| Measured REST latency from the test host | 480 ms (`api.binance.us` → AWS us-east) | **95 ms** | 140 ms |
+| Measured WS TCP RTT from the test host | **165 ms** (`stream.binance.us` resolves to an AWS ap-northeast-1 address, AWS **ap-northeast-1/Tokyo**) | **2.3 ms** (Cloudflare) | **1.9 ms** (Cloudflare) |
 | API key permission isolation | Read / Spot / Withdraw separable, IP whitelist | Yes | Yes |
 | Withdrawal isolation | Yes — withdrawal is a separate toggle, left OFF | Yes | Yes |
 

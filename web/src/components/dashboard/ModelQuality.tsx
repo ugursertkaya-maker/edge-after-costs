@@ -26,7 +26,7 @@ import {
 import type { PeriodMs, PredictiveState } from "@/lib/types";
 
 /**
- * MODEL KALİTESİ — item 32.
+ * MODEL QUALITY — item 32.
  *
  * The three split periods are drawn as one timeline rather than as three
  * rows of dates, because the ordering is the claim being made. "Test comes
@@ -85,7 +85,7 @@ function Timeline({ legs }: { legs: Leg[] }) {
               <span className="tline-k">{l.label}</span>
               <span className="tline-v">{formatPeriod(l.period)}</span>
               <span className="tline-n">
-                {span === null ? "süre bildirilmedi" : formatDays(span)}
+                {span === null ? "span not reported" : formatDays(span)}
               </span>
             </div>
           );
@@ -103,23 +103,23 @@ function Timeline({ legs }: { legs: Leg[] }) {
 
       {ordered === false && (
         <p className="tline-warn">
-          Bildirilen pencereler kronolojik değil: doğrulama veya test penceresi
-          kendinden öncekinin bitişinden daha erken başlıyor. Etiketler ufka kadar
-          ileriye baktığı için bu, sızıntı anlamına gelir ve buradaki örneklem dışı
-          rakamlar bu hâliyle bir ölçüm sayılmaz.
+          The reported windows are not chronological: a validation or test window starts
+          earlier than the end of the one before it. Because labels look forward as far
+          as the horizon, that means leakage, and the out-of-sample figures here do not
+          count as a measurement in this state.
         </p>
       )}
       {ordered === null && (
         <p className="tline-note">
-          Üç pencerenin tamamı bildirilmeden sıralama doğrulanamaz. Zaman çizgisi
-          yalnızca gelen pencereleri çizer; gelmeyeni tahmin etmez.
+          The ordering cannot be verified until all three windows are reported. The
+          timeline draws only the windows that arrived; it does not guess the rest.
         </p>
       )}
       {ordered === true && (
         <p className="tline-note">
-          Pencereler kronolojik: eğitim, doğrulama ve test bu sırayla ve örtüşmeden
+          The windows are chronological: training, validation and test in that order and
           ilerliyor. Test penceresine bir kez dokunulur — parametreler ona
-          bakılmadan dondurulur.
+          without overlap, frozen before the test window is ever looked at.
         </p>
       )}
     </div>
@@ -142,14 +142,14 @@ export function ModelQuality({
   const legs: Leg[] = [
     {
       key: "train",
-      label: "EĞİTİM",
-      note: "eğitim — model bu veriyi gördü ve ona uydu",
+      label: "TRAINING",
+      note: "training — the model saw this data and was fitted to it",
       period: p?.train_period,
     },
     {
       key: "validate",
-      label: "DOĞRULAMA",
-      note: "doğrulama — model ve eşikler burada seçildi",
+      label: "VALIDATION",
+      note: "validation — the model and its thresholds were chosen here",
       period: p?.validate_period,
     },
     {
@@ -167,8 +167,8 @@ export function ModelQuality({
         {c?.status ? calibrationStatusLabel(c.status) : cal.text}
       </span>
       {toNum(p.trained_to_ms) !== null && (
-        <span className="panel-note" title="Modelin görmesine izin verilen son bar">
-          {formatDateTimeMs(p.trained_to_ms)} itibarıyla eğitildi
+        <span className="panel-note" title="The last bar the model was allowed to see">
+          trained to {formatDateTimeMs(p.trained_to_ms)}
         </span>
       )}
     </>
@@ -178,9 +178,9 @@ export function ModelQuality({
     <Panel
       idx="14"
       title="Model kalitesi"
-      note="eğitim/doğrulama/test pencereleri, kalibrasyon ve örneklem dışı karne"
+      note="training/validation/test windows, calibration and the out-of-sample scorecard"
       meta={meta}
-      footer="Kalibrasyon bir ayrıntı değil, bu panelin var oluş sebebidir: %70 diyen bir model işlemlerin yaklaşık %70'ini kazanmıyorsa çıktısı bir olasılık değil, bir sayıdır ve üzerine kurulan beklenen değer hesabı da öyledir. Örneklem dışı sütunlar donmuş parametrelerin hiç görmediği veriden gelir; örneklem içi performans hiçbir şeyi terfi ettirmez."
+      footer="Calibration is not a detail, it is why this panel exists: if a model that says 70% does not win about 70% of its trades, its output is a number rather than a probability — and so is any expected-value calculation built on it. The out-of-sample columns come from data the frozen parameters never saw; in-sample performance promotes nothing."
     >
       {loading && !p ? (
         <Skeleton rows={4} />
@@ -188,16 +188,16 @@ export function ModelQuality({
         <div className="pred-empty">
           <div className="fin-empty-head">
             <span className="state-mark" aria-hidden />
-            <p className="fin-empty-t">Ölçülecek bir model yok</p>
+            <p className="fin-empty-t">There is no model to measure</p>
           </div>
           <p className="fin-empty-x">
-            Eğitilmiş ve dondurulmuş bir çıkarım paketi bildirilmedi, dolayısıyla
-            ölçülecek bir Brier skoru, kalibrasyon eğrisi veya örneklem dışı karne de
-            yok. Bu bir arıza değil, bu fazın çıkış noktasıdır: Phase 3 sıfır
-            şampiyonla kapandı. Bir model eğitildiğinde üç pencere — eğitim, doğrulama
-            ve test — burada zaman çizgisi olarak, kalibrasyonu ise geçtiği ya da
-            geçemediği sınırla birlikte görünecek. Ölçülmemiş bir kalibrasyon, bu
-            ekranda hiçbir zaman geçmiş bir kalibrasyon gibi gösterilmez.
+            No trained and frozen inference bundle was reported, so there is no Brier
+            score, no reliability curve and no out-of-sample scorecard to measure
+            either. That is not a fault, it is this phase's starting point: Phase 3
+            closed with zero champions. When a model is trained, its three windows —
+            training, validation and test — will appear here as a timeline, and its
+            calibration alongside the limit it either cleared or failed. An unmeasured
+            calibration is never shown on this screen as a passing one.
           </p>
         </div>
       ) : (
@@ -207,11 +207,11 @@ export function ModelQuality({
           <div className="mq-cols">
             <div className="fgroup">
               <p className="fgroup-t">
-                Kimlik <span className="fgroup-n">donmuş çıkarım paketi</span>
+                Identity <span className="fgroup-n">frozen inference bundle</span>
               </p>
               <dl className="cgrid">
                 <div className="citem">
-                  <dt>Model sürümü</dt>
+                  <dt>Model version</dt>
                   <dd className={p.model_version ? "" : "muted"}>
                     {p.model_version ?? DASH}
                   </dd>
@@ -221,31 +221,31 @@ export function ModelQuality({
                   <dd className={p.model_name ? "" : "muted"}>{p.model_name ?? DASH}</dd>
                 </div>
                 <div className="citem">
-                  <dt>Öznitelik sürümü</dt>
+                  <dt>Feature version</dt>
                   <dd className={p.feature_version ? "dim" : "muted"}>
                     {p.feature_version ?? DASH}
                   </dd>
                 </div>
                 <div className="citem">
-                  <dt>Etiket anahtarı</dt>
+                  <dt>Label key</dt>
                   <dd className={p.spec_key ? "dim" : "muted"} title={p.spec_key ?? undefined}>
                     {p.spec_key ?? DASH}
                   </dd>
                 </div>
                 <div className="citem">
-                  <dt>Eğitim sonu</dt>
+                  <dt>End of training</dt>
                   <dd className={toNum(p.trained_to_ms) === null ? "muted" : "dim"}>
                     {formatDateTimeMs(p.trained_to_ms)}
                   </dd>
                 </div>
                 <div className="citem">
-                  <dt>Olasılık eşiği</dt>
+                  <dt>Probability threshold</dt>
                   <dd className={toNum(p.probability_threshold) === null ? "muted" : ""}>
                     {formatProbability(p.probability_threshold)}
                   </dd>
                 </div>
                 <div className="citem">
-                  <dt>EV eşiği</dt>
+                  <dt>EV threshold</dt>
                   <dd className={toNum(p.ev_threshold_usd) === null ? "muted" : ""}>
                     {toNum(p.ev_threshold_usd) === null
                       ? DASH
@@ -259,7 +259,7 @@ export function ModelQuality({
               <p className="fgroup-t">
                 Kalibrasyon{" "}
                 <span className="fgroup-n">
-                  {c?.method ? calibrationMethodLabel(c.method) : "yöntem bildirilmedi"}
+                  {c?.method ? calibrationMethodLabel(c.method) : "method not reported"}
                 </span>
               </p>
 
@@ -275,7 +275,7 @@ export function ModelQuality({
                   <dt>Brier</dt>
                   <dd
                     className={toNum(c?.brier) === null ? "muted" : ""}
-                    title="Olasılık tahmininin karesel hatası — düşük iyidir, 0,25 yazı tura demektir"
+                    title="Squared error of the probability forecast — lower is better, 0.25 is a coin flip"
                   >
                     {formatScore(c?.brier)}
                   </dd>
@@ -299,16 +299,16 @@ export function ModelQuality({
                   </dd>
                 </div>
                 <div className="citem is-wide">
-                  <dt>Azami güvenilirlik hatası</dt>
+                  <dt>Max reliability error</dt>
                   <dd
                     className={
                       err === null ? "muted" : err > CALIBRATION_MAX_ABS_ERROR ? "neg" : "pos"
                     }
-                    title={`Terfi kapısı: ≤ ${CALIBRATION_MAX_ABS_ERROR}`}
+                    title={`Promotion gate: <= ${CALIBRATION_MAX_ABS_ERROR}`}
                   >
                     {err === null
                       ? DASH
-                      : `${formatRate(err, 1)} / sınır ${formatRate(
+                      : `${formatRate(err, 1)} / limit ${formatRate(
                           CALIBRATION_MAX_ABS_ERROR,
                           0,
                         )}`}
@@ -320,23 +320,23 @@ export function ModelQuality({
 
           <div className="fgroup">
             <p className="fgroup-t">
-              Örneklem dışı karne{" "}
+              Out-of-sample scorecard{" "}
               <span className="fgroup-n">
-                donmuş parametreler · test penceresi · karar bu satırda
+                frozen parameters · test window · the decision is on this row
               </span>
             </p>
             {!oos ? (
               <p className="xnote">
-                Örneklem dışı karne bildirilmedi. Karnesiz bir model terfi edemez; bu
-                satırların boş olması, sıfır sonuç değil, ölçülmemiş sonuç demektir.
+                No out-of-sample scorecard was reported. A model without a scorecard cannot
+                be promoted; these rows being empty means an unmeasured result, not a zero one.
               </p>
             ) : (
               <div className="pfolio-grid">
-                <Stat label="İşlem" value={formatInt(oos.trades)} note="örneklem dışı tur" />
+                <Stat label="Trades" value={formatInt(oos.trades)} note="out-of-sample round trips" />
                 <Stat
-                  label="Kazanma oranı"
+                  label="Win rate"
                   value={formatRate(oos.win_rate)}
-                  note="tek başına bir sonuç değil"
+                  note="not a result on its own"
                 />
                 <Stat
                   label="Profit factor"
@@ -350,19 +350,19 @@ export function ModelQuality({
                           ? "warn"
                           : "neg"
                   }
-                  note="terfi barajı 1,20"
+                  note="promotion bar 1.20"
                 />
                 <Stat
                   label="Expectancy"
                   value={formatSignedMicroMoney(oos.expectancy)}
                   cls={tone(oos.expectancy) ?? ""}
-                  note="işlem başına NET"
+                  note="NET per trade"
                 />
                 <Stat
                   label="NET P&L"
                   value={formatSignedMicroMoney(oos.net_pnl)}
                   cls={tone(oos.net_pnl) ?? ""}
-                  note="maliyet sonrası"
+                  note="after costs"
                 />
                 <Stat
                   label="Max drawdown"
@@ -372,7 +372,7 @@ export function ModelQuality({
                       : formatMoney(-Math.abs(toNum(oos.max_drawdown) as number))
                   }
                   cls={toNum(oos.max_drawdown) ? "neg" : ""}
-                  note="tepe noktasından"
+                  note="from the peak"
                 />
               </div>
             )}

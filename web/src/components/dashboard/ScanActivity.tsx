@@ -9,7 +9,7 @@ const STALL_SECONDS = 30;
 const NEAR_MISS = 0.3;
 
 /**
- * TARAMA VE BANKO — the panel that answers "is this thing alive".
+ * SCAN AND BENCH — the panel that answers "is this thing alive".
  *
  * Added after the terminal was reported dead three times while the worker was
  * evaluating about once a second and the API was serving payloads a second
@@ -44,11 +44,11 @@ export function ScanActivity({
   return (
     <Panel
       idx="07"
-      title="TARAMA VE BANKO"
-      note="motor çalışıyor mu, kaç çift değerlendiriliyor, kalanlar neden bankta"
+      title="SCAN AND BENCH"
+      note="is the engine running, how many pairs are being evaluated, why the rest are benched"
       meta={
         <span className={`pill ${alive ? "is-pos" : stalled ? "is-neg" : "is-warn"}`}>
-          {alive ? "TARAMA AKTİF" : stalled ? "TARAMA DURDU" : "BEKLENİYOR"}
+          {alive ? "SCAN ACTIVE" : stalled ? "SCAN STALLED" : "WAITING"}
         </span>
       }
     >
@@ -56,39 +56,39 @@ export function ScanActivity({
         <Skeleton rows={3} />
       ) : !scan ? (
         <DataState
-          title="Tarama verisi henüz yayınlanmadı"
-          text="Worker bu bloğu yayınlamıyor. Bu, taramanın durduğu anlamına gelmez — yalnızca ekranın onu görecek bir alanı olmadığı anlamına gelir, ki bu paneli var eden sorun tam olarak buydu."
+          title="Scan data has not been published yet"
+          text="The worker is not publishing this block. That does not mean scanning has stopped — only that the screen has no field to see it in, which is exactly the problem this panel exists to fix."
           scanning
         />
       ) : (
         <>
             <div className="metrics">
               <Metric
-                k="Değerlendirme"
+                k="Evaluations"
                 v={evals === null ? "—" : evals.toLocaleString("tr-TR")}
-                note="süreç başından beri"
+                note="since process start"
               />
               <Metric
-                k="Tarama hızı"
+                k="Scan rate"
                 v={rate === null ? "—" : `${rate.toFixed(2)}/sn`}
-                note="saniyedeki değerlendirme"
+                note="evaluations per second"
                 tone={alive ? "pos" : undefined}
               />
               <Metric
-                k="Son tarama"
+                k="Last scan"
                 v={since === null ? "—" : `${since.toFixed(1)} sn`}
-                note={stalled ? `${STALL_SECONDS} sn üstü — durmuş` : "önce"}
+                note={stalled ? `over ${STALL_SECONDS}s — stalled` : "ago"}
                 tone={stalled ? "neg" : undefined}
               />
               <Metric
-                k="Değerlendirilen"
+                k="Evaluated"
                 v={String(evaluated.length)}
                 note={evaluated.join(", ") || "—"}
               />
               <Metric
                 k="Bankta"
                 v={String(benched.length)}
-                note="sıralandı, eşiği geçemedi"
+                note="ranked, did not clear the threshold"
               />
             </div>
 
@@ -98,10 +98,10 @@ export function ScanActivity({
                   <thead>
                     <tr>
                       <th>Sembol</th>
-                      <th className="num">Kenar oranı</th>
-                      <th className="num">Eşik</th>
+                      <th className="num">Edge ratio</th>
+                      <th className="num">Threshold</th>
                       <th className="num">Eksik</th>
-                      <th className="num">Gidiş-dönüş</th>
+                      <th className="num">Round trip</th>
                       <th className="num">Beklenen hareket</th>
                       <th className="num">Kapasite</th>
                     </tr>
@@ -143,11 +143,11 @@ export function ScanActivity({
             )}
 
             <p className="panel-note">
-              Kenar oranı = çiftin beklenen hareketi ÷ gidiş-dönüş maliyeti.{" "}
-              {warmBar === null ? "1,50" : warmBar.toFixed(2)} altındaki bir çift
-              kendi icrasını ödeyemez, bu yüzden taranmaz — bu bir arıza değil,
-              bir ölçümdür. Eşiği {NEAR_MISS.toFixed(2)} veya daha az farkla
-              kaçıran satırlar vurgulanır.
+              Edge ratio = the pair's expected move ÷ its round-trip cost.{" "}
+              {warmBar === null ? "1.50" : warmBar.toFixed(2)} — a pair below that
+              cannot pay for its own execution, so it is not scanned. That is a
+              measurement, not a fault. Rows that miss the threshold by
+              {" "}{NEAR_MISS.toFixed(2)} or less are highlighted.
             </p>
         </>
       )}

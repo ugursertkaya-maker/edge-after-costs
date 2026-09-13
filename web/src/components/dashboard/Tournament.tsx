@@ -36,12 +36,12 @@ const PAGE_SIZE = 50;
  * project exists to guard against. So the three readings never share a column
  * group, never share a tone, and never share a heading:
  *
- *   ÖRNEKLEM DIŞI   — the only half a promotion decision may read. Placed
+ *   OUT-OF-SAMPLE — the only half a promotion decision may read. Placed
  *                     first, immediately after the candidate's identity, so it
  *                     is what is on screen before any horizontal scrolling.
- *   ÖRNEKLEM İÇİ    — dimmed and hatched, under a heading that says in words
+ *   IN-SAMPLE     — dimmed and hatched, under a heading that says in words
  *                     that it is not a result.
- *   TÜM ÖRNEKLEM    — the raw log of everything the arm did, kept because the
+ *   FULL SAMPLE   — the raw log of everything the arm did, kept because the
  *                     brief requires every arm tested to appear, losers
  *                     included, and dropped arms are how a search lies.
  */
@@ -62,27 +62,27 @@ interface Col {
 }
 
 const GROUPS: { group: Group; label: string; note: string }[] = [
-  { group: "id", label: "Aday", note: "aile · coin · rejim · ufuk" },
+  { group: "id", label: "Candidate", note: "family · asset · regime · horizon" },
   {
     group: "oos",
-    label: "Örneklem dışı — karar bu sütunlarda",
-    note: "parametreler bu veriye bakılmadan donduruldu",
+    label: "Out-of-sample — the decision is in these columns",
+    note: "parameters were frozen without looking at this data",
   },
   {
     group: "is",
-    label: "Örneklem içi — sonuç değildir",
-    note: "parametreler bu veride seçildi; burada iyi görünmek zorundadır",
+    label: "In-sample — not a result",
+    note: "parameters were chosen on this data; it has to look good here",
   },
   {
     group: "all",
-    label: "Tüm örneklem — ham araştırma kaydı",
-    note: "in + out birlikte; sıralama ölçütü değildir",
+    label: "Full sample — the raw research log",
+    note: "in + out together; not a ranking criterion",
   },
 ];
 
 const IS_TITLE =
-  "Örneklem içi: parametreler bu veri üzerinde seçildi. Bu bir sonuç değil, uyumun kendisidir.";
-const OOS_TITLE = "Örneklem dışı: parametreler donduruldu, bu veri hiç görülmedi.";
+  "In-sample: the parameters were selected on this data. This is not a result, it is the fit itself.";
+const OOS_TITLE = "Out-of-sample: the parameters were frozen and this data was never seen.";
 
 function sampleCell(
   pick: (s: SampleStats) => Num,
@@ -111,7 +111,7 @@ function splitColumns(group: Group, get: (a: TournamentArm) => SampleStats | nul
   return [
     {
       key: `${group}.trades`,
-      label: "İşlem",
+      label: "Trades",
       group,
       hint: title,
       sort: trades,
@@ -138,7 +138,7 @@ function splitColumns(group: Group, get: (a: TournamentArm) => SampleStats | nul
       key: `${group}.expectancy`,
       label: "Expectancy",
       group,
-      hint: `İşlem başına NET beklenti · ${title}`,
+      hint: `NET expectancy per trade · ${title}`,
       sort: exp,
       render: (a) => ({
         text: formatSignedMicroMoney(exp(a)),
@@ -150,7 +150,7 @@ function splitColumns(group: Group, get: (a: TournamentArm) => SampleStats | nul
       key: `${group}.net`,
       label: "NET P&L",
       group,
-      hint: `Maliyet sonrası net · ${title}`,
+      hint: `Net after costs · ${title}`,
       sort: net,
       render: (a) => ({
         text: formatSignedMicroMoney(net(a)),
@@ -164,7 +164,7 @@ function splitColumns(group: Group, get: (a: TournamentArm) => SampleStats | nul
 const COLUMNS: Col[] = [
   {
     key: "family",
-    label: "Strateji",
+    label: "Strategy",
     group: "id",
     left: true,
     stick: true,
@@ -173,7 +173,7 @@ const COLUMNS: Col[] = [
       cls: a.family ? "sym" : "muted",
       title: [
         a.key ? `anahtar: ${a.key}` : null,
-        a.exit_profile ? `çıkış profili: ${a.exit_profile}` : null,
+        a.exit_profile ? `exit profile: ${a.exit_profile}` : null,
         a.stop_profile ? `stop profili: ${a.stop_profile}` : null,
       ]
         .filter(Boolean)
@@ -193,20 +193,20 @@ const COLUMNS: Col[] = [
   },
   {
     key: "regime",
-    label: "Rejim",
+    label: "Regime",
     group: "id",
     left: true,
     render: (a) => ({
-      text: a.regime ? regimeLabel(a.regime) : "TÜM REJİMLER",
+      text: a.regime ? regimeLabel(a.regime) : "ALL REGIMES",
       cls: a.regime ? "dim" : "muted",
-      title: a.regime ?? "Rejime göre ayrılmamış aday",
+      title: a.regime ?? "Candidate not split by regime",
     }),
   },
   {
     key: "horizon",
     label: "Tutma ufku",
     group: "id",
-    hint: "Pozisyonun hedeflenen tutma süresi",
+    hint: "The position's intended holding time",
     sort: (a) => toNum(a.horizon_seconds),
     render: (a) => ({ text: formatHorizon(a.horizon_seconds), cls: "dim" }),
   },
@@ -216,7 +216,7 @@ const COLUMNS: Col[] = [
     key: "oos_status",
     label: "OOS durumu",
     group: "oos",
-    hint: "Örneklem dışı terfi kapılarına göre verilen hüküm",
+    hint: "Verdict against the out-of-sample promotion gates",
     render: () => ({ text: "" }),
   },
 
@@ -224,7 +224,7 @@ const COLUMNS: Col[] = [
 
   {
     key: "trades",
-    label: "İşlem",
+    label: "Trades",
     group: "all",
     sort: (a) => toNum(a.trades),
     render: (a) => ({ text: formatInt(a.trades) }),
@@ -238,7 +238,7 @@ const COLUMNS: Col[] = [
   },
   {
     key: "avg_win",
-    label: "Ort. kazanç",
+    label: "Avg. win",
     group: "all",
     sort: (a) => toNum(a.avg_win),
     render: (a) => ({
@@ -248,7 +248,7 @@ const COLUMNS: Col[] = [
   },
   {
     key: "avg_loss",
-    label: "Ort. kayıp",
+    label: "Avg. loss",
     group: "all",
     sort: (a) => toNum(a.avg_loss),
     render: (a) => {
@@ -280,16 +280,16 @@ const COLUMNS: Col[] = [
   },
   {
     key: "fees",
-    label: "Komisyon",
+    label: "Fees",
     group: "all",
     sort: (a) => toNum(a.fees),
     render: (a) => ({ text: formatMicroMoney(a.fees), cls: "dim" }),
   },
   {
     key: "slippage",
-    label: "Kayma",
+    label: "Slippage",
     group: "all",
-    hint: "V1'de her kaybı domine eden kalem komisyon değil kaymaydı",
+    hint: "In V1 the item that dominated every loss was slippage, not fees",
     sort: (a) => toNum(a.slippage),
     render: (a) => ({ text: formatMicroMoney(a.slippage), cls: "dim" }),
   },
@@ -320,7 +320,7 @@ const COLUMNS: Col[] = [
 
 /** Default order: out-of-sample NET expectancy per trade — the objective
     function named in the Phase 3 brief. Profit factor and drawdown are gates
-    in the FİNALİSTLER panel, not terms in this ranking. */
+    in the FINALISTS panel, not terms in this ranking. */
 const DEFAULT_SORT = "oos.expectancy";
 
 const ALL = "__all__";
@@ -454,18 +454,18 @@ export function Tournament({
   const meta = tournament ? (
     <>
       {toNum(tournament.candidates_evaluated) !== null && (
-        <span className="pill" title="Değerlendirilen aday sayısı">
-          {formatInt(tournament.candidates_evaluated)} aday
+        <span className="pill" title="Candidates evaluated">
+          {formatInt(tournament.candidates_evaluated)} candidates
         </span>
       )}
       {tournament.period && (
-        <span className="panel-note" title="Aramanın koştuğu veri penceresi">
+        <span className="panel-note" title="The data window the search ran over">
           {tournament.period}
         </span>
       )}
       {toNum(tournament.fee_bps) !== null && (
-        <span className="panel-note" title="Tüm arama bu komisyon varsayımıyla maliyetlendirildi">
-          komisyon {formatBpsAbs(tournament.fee_bps)} bps
+        <span className="panel-note" title="The whole search was costed with this fee assumption">
+          fees {formatBpsAbs(tournament.fee_bps)} bps
         </span>
       )}
       {toNum(tournament.wall_clock_seconds) !== null && (
@@ -480,26 +480,26 @@ export function Tournament({
   return (
     <Panel
       idx="10"
-      title="Strateji turnuvası"
-      note="her denenen aday · kaybedenler dahil"
+      title="Strategy tournament"
+      note="every candidate tried · losers included"
       meta={meta}
       flush
-      footer="Sıralama varsayılan olarak ÖRNEKLEM DIŞI expectancy'ye göre yapılır; Phase 3'ün amaç fonksiyonu budur. Örneklem içi sütunlar parametrelerin seçildiği veriden gelir ve orada iyi görünmek zorundadırlar — bu yüzden sönük çizilir ve hiçbir kararın dayanağı değildir. Kaybeden adaylar tablodan çıkarılmaz: bir aramanın yalan söylemesinin en kolay yolu, denediklerini göstermemesidir."
+      footer="The ranking is by OUT-OF-SAMPLE expectancy by default; that is Phase 3's objective function. The in-sample columns come from the data the parameters were chosen on and are obliged to look good there — which is why they are drawn dimmed and are the basis of no decision. Losing candidates are not removed from the table: the easiest way for a search to lie is to not show what it tried."
     >
       {loading && !arms ? (
         <Skeleton rows={6} />
       ) : !tournament ? (
         <DataState
-          title="Turnuva henüz çalışmadı"
-          text="Arama, sunucuya yük bindirmemek için önbelleğe alınmış veri üzerinde ayrıca koşar; sonuç üretildiğinde denenen her aday burada örneklem içi ve örneklem dışı karnesiyle listelenecek. Panelin boş olması bir hata değildir — ölçülmemiş bir sonuç sıfır olarak gösterilmez."
+          title="The tournament has not run yet"
+          text="The search runs separately over cached data so as not to load the server; when a result is produced, every candidate tried will be listed here with its in-sample and out-of-sample scorecard. An empty panel is not an error — an unmeasured result is not shown as zero."
         />
       ) : !arms || arms.length === 0 ? (
         <DataState
-          title="Değerlendirilmiş aday yok"
+          title="No evaluated candidates"
           text={
             toNum(tournament.candidates_evaluated) !== null
-              ? `Turnuva kaydı ${formatInt(tournament.candidates_evaluated)} aday bildiriyor ancak tabloya hiçbir satır gelmedi. Bu bir veri eksiği olarak gösterilir, boş bir sonuç olarak değil.`
-              : "Turnuva kaydı var ama içinde hiçbir aday yok. Bu bir arama sonucu değil, eksik bir çıktıdır."
+              ? `The tournament record reports ${formatInt(tournament.candidates_evaluated)} candidates but no row reached the table. This is shown as missing data, not as an empty result.`
+              : "There is a tournament record but it contains no candidate at all. That is a missing output, not a search result."
           }
         />
       ) : (
@@ -526,7 +526,7 @@ export function Tournament({
               render={familyLabel}
             />
             <Select
-              label="Rejim"
+              label="Regime"
               value={regime}
               onChange={(v) => {
                 setRegime(v);
@@ -560,15 +560,15 @@ export function Tournament({
                 ) : null,
               )}
               <span className="tally-n">
-                {formatInt(total)} / {formatInt(arms.length)} aday
+                {formatInt(total)} / {formatInt(arms.length)} candidates
               </span>
             </span>
           </div>
 
           {total === 0 ? (
             <DataState
-              title="Filtreye uyan aday yok"
-              text="Seçili coin, aile, rejim ve durum birleşiminde denenmiş bir aday bulunmuyor. Bu, hiçbir adayın olmadığı anlamına gelmez — filtreleri temizleyin."
+              title="No candidate matches the filter"
+              text="No candidate was tried for the selected combination of asset, family, regime and status. That does not mean no candidate exists — clear the filters."
             />
           ) : (
             <>
@@ -603,7 +603,7 @@ export function Tournament({
                           ]
                             .filter(Boolean)
                             .join(" ")}
-                          title={c.hint ?? (c.sort ? `${c.label} sütununa göre sırala` : undefined)}
+                          title={c.hint ?? (c.sort ? `Sort by the ${c.label} column` : undefined)}
                           onClick={c.sort ? () => setSortKey(c.key) : undefined}
                         >
                           {c.label}
@@ -654,7 +654,7 @@ export function Tournament({
                     onClick={() => setPage((p) => Math.max(0, p - 1))}
                     disabled={page === 0}
                   >
-                    ← Önceki
+                    ← Previous
                   </button>
                   <button
                     type="button"
@@ -662,11 +662,11 @@ export function Tournament({
                     onClick={() => setPage((p) => Math.min(pages - 1, p + 1))}
                     disabled={page >= pages - 1}
                   >
-                    Sonraki →
+                    Next →
                   </button>
                   <span className="pager-info">
                     {page * PAGE_SIZE + 1}–{Math.min(total, (page + 1) * PAGE_SIZE)} /{" "}
-                    {formatInt(total)} aday · sayfa {page + 1}/{pages}
+                    {formatInt(total)} candidates · page {page + 1}/{pages}
                   </span>
                 </div>
               )}

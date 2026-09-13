@@ -100,8 +100,8 @@ def main() -> int:
             "median_hold_s": statistics.median([x.holding_seconds for x in t]) if t else 0,
         })
 
-    print(f"\n{'profil':<15}{'kurulum/gün':>13}{'işlem/gün':>11}{'devir/gün':>11}"
-          f"{'NET $':>11}{'PF':>7}{'beklenti':>11}{'isabet':>8}{'maks DD':>10}")
+    print(f"\n{'profile':<15}{'setups/day':>13}{'trades/day':>11}{'turnover/d':>11}"
+          f"{'NET $':>11}{'PF':>7}{'expectancy':>11}{'hit':>8}{'max DD':>10}")
     print("-" * 97)
     for r in rows:
         pf = r["profit_factor"]
@@ -110,15 +110,15 @@ def main() -> int:
               f"{(pf if pf != float('inf') else 999):>7.2f}{r['expectancy']:>11.4f}"
               f"{r['win_rate']*100:>7.1f}%{r['max_drawdown']:>10.2f}")
 
-    print("\nKURAL: en aktif profil, pozitif NET beklenti ve PF > 1 koruyanlar arasından.")
+    print("\nRULE: pick the most active profile among those that keep a positive\n      NET expectancy AND a profit factor above 1.")
     ok = [r for r in rows if r["expectancy"] > 0 and r["profit_factor"] > 1.0]
     if ok:
         best = max(ok, key=lambda r: r["trades_per_day"])
-        print(f"  -> {best['profile']}: {best['trades_per_day']:.2f} işlem/gün, "
-              f"PF {best['profit_factor']:.2f}, beklenti {best['expectancy']:+.4f}")
+        print(f"  -> {best['profile']}: {best['trades_per_day']:.2f} trades/day, "
+              f"PF {best['profit_factor']:.2f}, expectancy {best['expectancy']:+.4f}")
     else:
-        print("  -> HİÇBİRİ. Pozitif NET beklentisi olan profil yok; aktiviteyi")
-        print("     artırmak bu veri üzerinde kaybı büyütmekten başka bir şey yapmıyor.")
+        print("  -> NONE. No profile has a positive NET expectancy; on this data,")
+        print("     raising activity does nothing but enlarge the loss.")
 
     p = Path(args.out); p.parent.mkdir(parents=True, exist_ok=True)
     p.write_text(json.dumps(rows, indent=1, default=str))

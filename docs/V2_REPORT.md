@@ -1,7 +1,7 @@
 # V2 report — fee-aware net targets + multi-position capital rotation
 
 Date: 2026-09-11 · Mode: **PAPER** · Live orders placed: **0**
-Live: <https://your-domain.example/cryptobot> · 798 automated tests passing
+Mode: **PAPER** · 798 automated tests passing
 
 Read `docs/FINAL_REPORT.md` first — V1's result is the reason V2 exists.
 
@@ -21,7 +21,7 @@ Read `docs/FINAL_REPORT.md` first — V1's result is the reason V2 exists.
 | Position size ≠ risk | Enforced and tested: a $20 position with a 1% stop reports ~$0.20 of account risk |
 | Correlation control | Quadratic aggregation `sqrt(w′Rw)` over the risk vector, plus BTC beta and directional exposure caps — eight correlated longs aggregate to roughly one large position's risk, not one eighth |
 | 25/60 minute horizon | 25 min is a checkpoint (`KEEP` / `TAKE_PROFIT` / `TRAIL_PROFIT` / `EXIT_WEAK` / `ROTATE_CAPITAL`), 60 min is a time stop. Early profit is taken; a stop at minute two is honoured at minute two; **a loser is never extended** |
-| Dashboard | Full per-trade cost breakdown, `MALİYET ÖNCESİ KÂR − TOPLAM MALİYET = GERÇEK NET KÂR`, a PORTFÖY panel with correlated exposure, and the 25/60-minute lifecycle per position |
+| Dashboard | Full per-trade cost breakdown, `PROFIT BEFORE COSTS − TOTAL COST = TRUE NET PROFIT`, a PORTFOLIO panel with correlated exposure, and the 25/60-minute lifecycle per position |
 | Experiment harness | Sweeps profiles, allocation modes and the risk × reserve grid; `winner()` refuses to name one when nothing is net-positive or the sample is too small |
 
 Four bugs were found and fixed while wiring, each of which would have quietly
@@ -147,8 +147,7 @@ clearing the liquidity filters). Cash reserve $100 of $500 held back, $400
 deployable, risk budget 3%, allocation mode `dynamic`, NET profile
 `venue_base`.
 
-Worker CPU ~2% of one core, 61 MB RAM. The whole stack costs less than the
-another project worker it replaced.
+Worker CPU ~2% of one core, 61 MB RAM.
 
 ## Recommendation, unchanged and now better supported
 

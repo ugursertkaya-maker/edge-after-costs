@@ -1,0 +1,10 @@
+// The test runner compiles JSX itself, which the Next build does not: Next
+// keeps `jsx: "preserve"` and hands the syntax to its own compiler, so a test
+// that renders a component through `react-dom/server` would otherwise be
+// handed untransformed JSX. Nothing else about the project's settings changes.
+{
+  "extends": "./tsconfig.json",
+  "compilerOptions": {
+    "jsx": "react-jsx"
+  }
+}

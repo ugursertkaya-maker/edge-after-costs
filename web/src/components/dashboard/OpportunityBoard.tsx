@@ -18,7 +18,7 @@ import { opportunityRows } from "@/lib/phase6";
 import type { OpportunityBoard as BoardState, ScannerRow } from "@/lib/types";
 
 /**
- * CANLI FIRSAT PANOSU — what the allocator is choosing between, right now.
+ * LIVE OPPORTUNITY BOARD — what the allocator is choosing between, right now.
  *
  * This is the trader's primary screen and it is deliberately the first table
  * on the page. Every other panel here explains something that already
@@ -32,7 +32,7 @@ import type { OpportunityBoard as BoardState, ScannerRow } from "@/lib/types";
  *     shows only what survived cannot tell you why the book is empty.
  *
  *   * A rejected candidate has NO RANK. Rank is a position in the queue the
- *     allocator was choosing from, and printing "7th" beside REDDEDİLDİ would
+ *     allocator was choosing from, and printing "7th" beside REJECTED would
  *     claim it was in a queue it never entered.
  *
  *   * The EV column is labelled in bps and the notional it was sized against
@@ -68,10 +68,10 @@ export function OpportunityBoard({
 
   const meta = (
     <>
-      <span className="pill is-off" title="Bu turda değerlendirilen sembol sayısı">
-        {formatInt(evaluated)} aday
+      <span className="pill is-off" title="Symbols evaluated in this cycle">
+        {formatInt(evaluated)} candidates
       </span>
-      <span className="pill is-pos" title="Her satır simülasyondur; gerçek emir yoktur.">
+      <span className="pill is-pos" title="Every row is a simulation; there is no real order.">
         PAPER
       </span>
     </>
@@ -80,14 +80,14 @@ export function OpportunityBoard({
   return (
     <Panel
       idx="17"
-      title="Canlı fırsat panosu"
-      note="tahsisçinin seçim yaptığı sıra — beklenen NET EV'ye göre"
+      title="Live opportunity board"
+      note="the queue the allocator chose from — ordered by expected NET EV"
       meta={meta}
       flush
       footer={
         derived
-          ? "KAYNAK: tarayıcı satırları. Worker henüz kendi kuyruğunu (`opportunities.entries`) yayınlamıyor, bu yüzden sıra tarayıcının net edge okumasından TÜRETİLMİŞTİR — tahsisçinin gerçek kuyruğu değildir ve ikisi ayrıldığında fark tam olarak bir seçim kusurunun yaşayacağı yerdir. EV sütunu BASIS POINT'tir (1 bps = %0,01), dolar değildir; pozisyon büyüklüğü gelmeden dolar karşılığı hesaplanamaz. Reddedilen adayın sırası yoktur: hiç girmediği bir kuyrukta yer göstermek olurdu. Tüm satırlar kâğıt üzerindedir, gerçek emir sayısı sıfırdır."
-          : "EV sütunu BASIS POINT'tir (1 bps = %0,01). Dolar karşılığı, yalnızca adayın nominal büyüklüğü de bildirildiğinde gösterilir — denominatörü olmayan bir beklenti adaylar arasında karşılaştırılamaz. Reddedilen adayın sırası yoktur. Tüm satırlar kâğıt üzerindedir, gerçek emir sayısı sıfırdır."
+          ? "SOURCE: scanner rows. The worker is not publishing its own queue (`opportunities.entries`) yet, so this ordering is DERIVED from the scanner's net-edge reading — it is not the allocator's real queue, and where the two diverge is exactly where a selection defect would live. The EV column is in BASIS POINTS (1 bps = 0.01%), not dollars; a dollar figure cannot be computed until position size arrives. A rejected candidate has no rank: showing one would place it in a queue it never entered. Every row is on paper; the real order count is zero."
+          : "The EV column is in BASIS POINTS (1 bps = 0.01%). A dollar figure is shown only when the candidate's notional is reported too — an expectancy without a denominator cannot be compared across candidates. A rejected candidate has no rank. Every row is on paper; the real order count is zero."
       }
     >
       {loading && rows.length === 0 ? (
@@ -95,11 +95,11 @@ export function OpportunityBoard({
       ) : rows.length === 0 ? (
         <DataState
           scanning={connected}
-          title="Panoda aday yok"
+          title="No candidates on the board"
           text={
             connected
-              ? "Tarayıcı çalışıyor ama hiçbir sembol henüz aday üretmedi. Bu boş bir tablo değil, bir okumadır: şu anda tahsisçinin önünde seçilecek bir şey yok."
-              : "Exchange bağlantısı kopuk. Bayat defterle aday sıralanmaz, bu yüzden pano kasıtlı olarak boş."
+              ? "The scanner is running but no symbol has produced a candidate yet. This is not an empty table, it is a reading: right now there is nothing in front of the allocator to choose."
+              : "The exchange connection is down. Candidates are not ranked on a stale book, so this board is deliberately empty."
           }
         />
       ) : (
@@ -107,17 +107,17 @@ export function OpportunityBoard({
           <div className="obar">
             <span className="obar-k">Bu turda</span>
             <span className="obar-i is-selected">
-              <b>{formatInt(selected)}</b> seçildi
+              <b>{formatInt(selected)}</b> selected
             </span>
             <span className="obar-i is-queued">
-              <b>{formatInt(queued)}</b> sırada
+              <b>{formatInt(queued)}</b> queued
             </span>
             <span className="obar-i is-reject">
               <b>{formatInt(rejected)}</b> reddedildi
             </span>
             <span className="obar-n">
-              {formatInt(evaluated)} aday değerlendirildi
-              {derived ? " · tarayıcıdan türetildi" : ""}
+              {formatInt(evaluated)} candidates evaluated
+              {derived ? " · derived from the scanner" : ""}
               {toNum(board?.max_size) === null
                 ? ""
                 : ` · pano kapasitesi ${formatInt(board?.max_size ?? null)}`}
@@ -126,10 +126,10 @@ export function OpportunityBoard({
 
           {dropped.length > 0 && (
             <p className="obar-drop">
-              Panodan düşen adaylar:{" "}
-              {dropped.map(([k, v]) => `${k} ${formatInt(v)}`).join(" · ")}. Düşmek
-              reddedilmek değildir — bir aday süresi dolduğu, daha iyisine yenildiği veya
-              artık geçerli olmadığı için de panodan çıkar.
+              Candidates dropped from the board:{" "}
+              {dropped.map(([k, v]) => `${k} ${formatInt(v)}`).join(" · ")}. Being
+              dropped is not being rejected — a candidate also leaves the board when it
+              expires, is beaten by a better one, or is no longer valid.
             </p>
           )}
 
@@ -137,22 +137,22 @@ export function OpportunityBoard({
             <table className="tbl">
               <thead>
                 <tr>
-                  <th className="c" title="Tahsisçinin sırası. Reddedilen adayda yoktur.">
-                    Sıra
+                  <th className="c" title="The allocator's rank. A rejected candidate has none.">
+                    Rank
                   </th>
                   <th className="l">Coin</th>
-                  <th className="l">Strateji</th>
-                  <th title="Beklenen NET beklenen değer, basis point">Beklenen net EV</th>
-                  <th title="Adayın nominal büyüklüğü — EV'nin denominatörü">Nominal</th>
-                  <th title="EV'nin dolar karşılığı, yalnızca worker büyüklükle birlikte bildirdiğinde">
+                  <th className="l">Strategy</th>
+                  <th title="Expected NET expected value, in basis points">Expected net EV</th>
+                  <th title="The candidate's notional — the denominator of EV">Notional</th>
+                  <th title="EV in dollars, only when the worker reports it together with size">
                     Net EV ($)
                   </th>
-                  <th className="l" title="Episode kimliği — aynı impuls yeni bir giriş üretemez">
+                  <th className="l" title="Episode id — the same impulse cannot produce a second entry">
                     Episode
                   </th>
-                  <th title="Sıradaki adayın geçerlilik süresi">Geçerlilik</th>
-                  <th className="c">Durum</th>
-                  <th className="l">Ret gerekçesi</th>
+                  <th title="How long a queued candidate stays valid">Validity</th>
+                  <th className="c">Status</th>
+                  <th className="l">Rejection reason</th>
                 </tr>
               </thead>
               <tbody>
@@ -184,7 +184,7 @@ export function OpportunityBoard({
                           ? DASH
                           : formatMicroMoney(r.net_ev_usd ?? null)}
                       </td>
-                      <td className="l dim ep" title={r.episode_id ?? "Episode kimliği bildirilmedi"}>
+                      <td className="l dim ep" title={r.episode_id ?? "Episode id not reported"}>
                         {r.episode_id ? r.episode_id.slice(0, 8) : DASH}
                       </td>
                       <td className={toNum(r.expires_ms) === null ? "muted" : "dim"}>

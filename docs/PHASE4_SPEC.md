@@ -84,7 +84,7 @@ recomputed.**
 
 ## Production constraint — inference must be light
 
-Research trains with scikit-learn on the laptop. The worker container must not
+Research trains with scikit-learn on a workstation. The worker container must not
 need it. Therefore the champion artifact is a **numpy-only inference bundle**:
 
 * linear models export coefficients and the scaler;

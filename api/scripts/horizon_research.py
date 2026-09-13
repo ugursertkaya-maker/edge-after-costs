@@ -182,7 +182,7 @@ def main() -> int:
 
     results = []
     # Baseline: the shipped short-horizon configuration.
-    print("\n[baseline] mevcut kısa ufuk", flush=True)
+    print("\n[baseline] current short horizon", flush=True)
     results.append({**run_arm(bars_all, horizon_s=0, tp=0, sl=0,
                               cfg_kwargs=cfg_kwargs, label="baseline"),
                     "arm": "baseline (mevcut)"})
@@ -203,8 +203,8 @@ def main() -> int:
     out.parent.mkdir(parents=True, exist_ok=True)
     out.write_text(json.dumps(results, indent=1, default=str))
 
-    print(f"\n{'arm':<22}{'işlem':>7}{'NET $':>10}{'PF':>7}{'beklenti':>10}"
-          f"{'isabet':>8}{'medyan tutuş':>14}{'maks DD':>10}")
+    print(f"\n{'arm':<22}{'trades':>7}{'NET $':>10}{'PF':>7}{'expectancy':>10}"
+          f"{'hit':>8}{'median hold':>14}{'max DD':>10}")
     print("-" * 88)
     for r in results:
         if not r.get("trades"):

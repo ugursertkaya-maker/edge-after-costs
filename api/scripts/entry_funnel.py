@@ -110,15 +110,15 @@ def main() -> int:
 
     out = {}
     print(f"\n{'='*84}")
-    print("GİRİŞ HUNİSİ — İLK BAĞLAYICI KOŞUL")
+    print("ENTRY FUNNEL — FIRST BINDING CONDITION")
     print("="*84)
     for name in sorted(evaluated, key=lambda k: -evaluated[k]):
         ev = evaluated[name]
         sg = signals[name]
-        print(f"\n{name}   değerlendirme {ev:,}   sinyal {sg:,} "
+        print(f"\n{name}   evaluations {ev:,}   signals {sg:,} "
               f"({sg/ev*100:.3f}%)")
-        print(f"  {'koşul':<20}{'kez':>9}{'pay':>8}{'eşik':>10}"
-              f"{'medyan':>10}{'p75':>10}{'p90':>10}{'p95':>10}{'geçme':>8}")
+        print(f"  {'condition':<20}{'count':>9}{'share':>8}{'threshold':>10}"
+              f"{'median':>10}{'p75':>10}{'p90':>10}{'p95':>10}{'pass':>8}")
         print("  " + "-"*93)
         rows = []
         for cond, n in counts[name].most_common():
@@ -146,7 +146,7 @@ def main() -> int:
         out[name] = {"evaluations": ev, "signals": sg, "conditions": rows}
 
     print("\n" + "="*84)
-    print("AŞIRI KISITLAYICI KOŞULLAR (p90 gözlem eşiği geçemiyor)")
+    print("OVER-RESTRICTIVE CONDITIONS (the observed p90 does not clear the threshold)")
     print("="*84)
     flagged = []
     for name, d in out.items():
@@ -157,8 +157,8 @@ def main() -> int:
             # Only meaningful for "value must exceed threshold" conditions.
             if p90 < thr and r["share"] > 0.05:
                 flagged.append((name, r))
-                print(f"  {name}.{r['condition']:<18} eşik {thr:>8.3f}  "
-                      f"p90 {p90:>8.3f}  adayların %{r['share']*100:.1f}'ini kesiyor")
+                print(f"  {name}.{r['condition']:<18} threshold {thr:>8.3f}  "
+                      f"p90 {p90:>8.3f}  rejects {r['share']*100:.1f}% of candidates")
     if not flagged:
         print("  (yok)")
 

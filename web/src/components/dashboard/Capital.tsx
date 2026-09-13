@@ -18,7 +18,7 @@ import {
 import type { CapitalState } from "@/lib/types";
 
 /**
- * SERMAYE KULLANIMI — the headline panel.
+ * CAPITAL UTILISATION — the headline panel.
  *
  * Phase 3 measured a peak of two concurrent positions with 99.5% of capital
  * idle, and that reading was buried inside a portfolio table nobody scrolls
@@ -61,11 +61,11 @@ const KIND_CLASS: Record<DeployKind, string> = {
 };
 
 const KIND_TEXT: Record<DeployKind, string> = {
-  empty: "Kullanım oranı ölçülmedi.",
-  under: `Kullanım, hedef bandın (%${BAND_LO}–${BAND_HI}) altında: sermayenin büyük bölümü çalışmıyor.`,
-  in: `Kullanım hedef bandın (%${BAND_LO}–${BAND_HI}) içinde.`,
-  over: `Kullanım hedef bandın üzerinde: nakit tamponu inceldi, yeni bir aday için yer kalmamış olabilir.`,
-  full: `Sermayenin neredeyse tamamı piyasada. Bu noktada rotasyon değil, maruziyet riski konuşulur.`,
+  empty: "Utilisation was not measured.",
+  under: `Utilisation is below the target band (${BAND_LO}-${BAND_HI}%): most of the capital is not working.`,
+  in: `Utilisation is inside the target band (${BAND_LO}-${BAND_HI}%).`,
+  over: `Utilisation is above the target band: the cash buffer has thinned and there may be no room left for a new candidate.`,
+  full: `Almost all the capital is in the market. At this point the subject is exposure risk, not rotation.`,
 };
 
 /**
@@ -88,25 +88,25 @@ function Meter({
   const fill = deployedPct === null ? 0 : clampPct(deployedPct);
   const label =
     deployedPct === null
-      ? "Kullanım oranı ölçülmedi"
-      : `Sermayenin ${formatPct(deployedPct)} kadarı kullanımda, ${
-          idlePct === null ? "geri kalanı" : formatPct(idlePct)
-        } boşta`;
+      ? "Utilisation was not measured"
+      : `${formatPct(deployedPct)} of capital is deployed, ${
+          idlePct === null ? "the rest" : formatPct(idlePct)
+        } is idle`;
 
   return (
     <div className={`cap-meter ${KIND_CLASS[kind]}`}>
       <div className="cap-legend">
         <span className="cap-leg is-dep">
           <i aria-hidden />
-          Kullanılan <b>{deployedPct === null ? DASH : formatPct(deployedPct)}</b>
+          Deployed <b>{deployedPct === null ? DASH : formatPct(deployedPct)}</b>
         </span>
         <span className="cap-leg is-idle">
           <i aria-hidden />
-          Boşta <b>{idlePct === null ? DASH : formatPct(idlePct)}</b>
+          Idle <b>{idlePct === null ? DASH : formatPct(idlePct)}</b>
         </span>
         <span className="cap-leg is-band">
           <i aria-hidden />
-          Hedef bandı <b>%{BAND_LO}–{BAND_HI}</b>
+          Target band <b>{BAND_LO}-{BAND_HI}%</b>
         </span>
         {targetPct !== null && (
           <span className="cap-leg is-target">
@@ -120,7 +120,7 @@ function Meter({
         <span
           className="cap-band"
           style={{ left: `${BAND_LO}%`, width: `${BAND_HI - BAND_LO}%` }}
-          title={`Faz 5 hedef bandı: sermayenin %${BAND_LO}–${BAND_HI} kadarı piyasada`}
+          title={`Phase 5 target band: ${BAND_LO}-${BAND_HI}% of capital in the market`}
         />
         <span
           className={`cap-fill ${deployedPct === null ? "is-unknown" : ""}`}
@@ -206,17 +206,17 @@ export function Capital({
         className={`pill ${
           kind === "in" ? "is-pos" : kind === "full" ? "is-neg" : kind === "empty" ? "is-off" : "is-warn"
         }`}
-        title="Piyasada çalışan sermayenin payı"
+        title="Share of capital working in the market"
       >
-        {deployedPct === null ? "kullanım ölçülmedi" : `${formatPct(deployedPct)} kullanımda`}
+        {deployedPct === null ? "utilisation not measured" : `${formatPct(deployedPct)} deployed`}
       </span>
       {targetPct !== null && (
-        <span className="panel-note" title="Bu koşunun hedeflediği kullanım oranı">
+        <span className="panel-note" title="The utilisation this run targets">
           hedef {formatPct(targetPct)}
         </span>
       )}
       {toNum(c.open_positions) !== null && (
-        <span className="panel-note">{formatInt(c.open_positions)} açık pozisyon</span>
+        <span className="panel-note">{formatInt(c.open_positions)} open positions</span>
       )}
     </>
   ) : null;
@@ -224,50 +224,50 @@ export function Capital({
   return (
     <Panel
       idx="01"
-      title="Sermaye kullanımı"
-      note="ne kadarı çalışıyor, ne kadarı boşta, hedefin neresindeyiz"
+      title="Capital utilisation"
+      note="how much is working, how much is idle, and where the target sits"
       meta={meta}
-      footer="Kullanım oranı bir performans ölçüsü değildir: boşta duran para kaybetmez, sadece kazanmaz. Bu panel oranı hedefle birlikte gösterir çünkü asıl soru şudur — sermaye, işlem üretilemediği için mi boşta, yoksa üretilen işlemler kendi maliyetini çıkaramadığı için mi. Cevap §02'dedir. Kullanımı hedefe yaklaştırmak için eşikler indirilmez; negatif beklenen değerli bir işlem hâlâ İŞLEM YOK'tur."
+      footer="Utilisation is not a performance measure: idle money does not lose, it merely does not earn. This panel shows the ratio alongside the target because the real question is this — is capital idle because no trade could be produced, or because the trades produced could not cover their own cost? The answer is in §02. Thresholds are not lowered to push utilisation towards the target; a trade with negative expected value is still NO TRADE."
     >
       {loading && !c ? (
         <Skeleton rows={5} />
       ) : !c ? (
         <DataState
-          title="Sermaye kullanımı henüz ölçülmedi"
-          text="Worker bu ekrana kullanım alanlarını bildirmiyor. Bu, sermayenin tamamının boşta olduğu anlamına gelmez — hiç ölçülmediği anlamına gelir, ve bu panel ölçülmemiş bir oranı sıfır olarak çizmez. Portföy katmanı boşta sermaye ayrıştırmasını üretmeye başladığında kullanılan tutar, boşta tutar ve hedef bandı burada tek bir çubuk üzerinde görünecek."
+          title="Capital utilisation has not been measured yet"
+          text="The worker is not reporting utilisation fields to this screen. That does not mean all the capital is idle — it means it was never measured, and this panel does not draw an unmeasured ratio as zero. Once the portfolio layer starts producing the idle-capital attribution, deployed notional, idle notional and the target band will appear here on a single bar."
         />
       ) : (
         <div className="cap">
           <div className="cap-heads">
             <div className="cap-cell">
-              <span className="cap-k">Sermaye</span>
+              <span className="cap-k">Equity</span>
               <span className={`cap-v ${equity === null ? "is-empty" : ""}`}>
                 {formatMoney(equity)}
               </span>
-              <span className="cap-n">hesabın tamamı</span>
+              <span className="cap-n">the whole account</span>
             </div>
 
             <div className="cap-cell is-dep">
-              <span className="cap-k">Kullanılan sermaye</span>
+              <span className="cap-k">Deployed capital</span>
               <span className={`cap-v ${deployedUsd === null ? "is-empty" : "pos"}`}>
                 {formatMoney(deployedUsd)}
               </span>
               <span className="cap-n">
                 {deployedPct === null
-                  ? "piyasada çalışan tutar"
-                  : `${formatPct(deployedPct)} · piyasada çalışan tutar`}
+                  ? "notional at work in the market"
+                  : `${formatPct(deployedPct)} · notional at work in the market`}
               </span>
             </div>
 
             <div className={`cap-cell is-idle ${KIND_CLASS[kind]}`}>
-              <span className="cap-k">Boşta sermaye</span>
+              <span className="cap-k">Idle capital</span>
               <span className={`cap-v ${idleUsd === null ? "is-empty" : ""}`}>
                 {formatMoney(idleUsd)}
               </span>
               <span className="cap-n">
                 {idlePct === null
-                  ? "hiçbir pozisyonda değil"
-                  : `${formatPct(idlePct)} · hiçbir pozisyonda değil`}
+                  ? "in no position at all"
+                  : `${formatPct(idlePct)} · in no position at all`}
               </span>
             </div>
           </div>
@@ -282,76 +282,76 @@ export function Capital({
           <p className={`cap-read ${KIND_CLASS[kind]}`}>
             {KIND_TEXT[kind]}{" "}
             {targetPct === null
-              ? `Bu koşu için hedef bildirilmedi; çubuktaki tarama Faz 5'in %${BAND_LO}–${BAND_HI} bandıdır.`
+              ? `No target was reported for this run; the shading on the bar is Phase 5's ${BAND_LO}-${BAND_HI}% band.`
               : shareOfTarget === null
                 ? `Hedef ${formatPct(targetPct)}.`
-                : `Hedef ${formatPct(targetPct)}, ölçülen ${formatPct(
+                : `Target ${formatPct(targetPct)}, measured ${formatPct(
                     deployedPct as number,
-                  )} — yani hedefin ${formatPct(shareOfTarget, 0)} kadarı. Aradaki ${formatPoints(
+                  )} — that is ${formatPct(shareOfTarget, 0)} of target. The ${formatPoints(
                     gapPoints,
                   )}${gapUsd === null ? "" : `, ${formatMoney(Math.abs(gapUsd))} demektir`}.`}
           </p>
 
           {identityBroken && (
             <p className="cap-warn">
-              Tutarsızlık: kullanılan {formatMoney(deployedUsd)} artı boşta{" "}
-              {formatMoney(idleUsd)}, bildirilen {formatMoney(equity)} sermayeye eşit
-              değil — fark {formatMoney(identityGap)}. Panel bu farkı yuvarlayıp
-              gizlemez; çubuk bildirilen oranlarla çizilmiştir.
+              Inconsistency: deployed {formatMoney(deployedUsd)} plus idle{" "}
+              {formatMoney(idleUsd)} does not equal the reported {formatMoney(equity)} of
+              equity — a gap of {formatMoney(identityGap)}. The panel does not round this
+              away; the bar is drawn from the reported ratios.
             </p>
           )}
 
           <div className="pfolio-grid">
             <Stat
-              label="Açık pozisyon"
+              label="Open positions"
               value={formatInt(c.open_positions)}
               note="adet · hedef 8–15"
             />
             <Stat
-              label="Nitelikli fırsat"
+              label="Qualified opportunities"
               value={formatInt(c.qualified_opportunities)}
-              note="kapıları geçen aday"
+              note="candidates that cleared the gates"
             />
             <Stat
-              label="Reddedilen fırsat"
+              label="Rejected opportunities"
               value={formatInt(c.rejected_opportunities)}
-              note="kapılarda elenen aday"
+              note="candidates eliminated at the gates"
             />
             <Stat
-              label="Günlük sermaye devri"
+              label="Daily capital turnover"
               value={formatRatio(c.turnover_per_day)}
-              note="işlem hacmi / sermaye"
+              note="traded notional / equity"
             />
             <Stat
-              label="Ort. pozisyon"
+              label="Avg. position"
               value={formatMoney(c.avg_position_usd)}
               note="hedef $10–50"
             />
             <Stat
-              label="Ort. tutma süresi"
+              label="Avg. holding time"
               value={formatDuration(c.avg_holding_seconds)}
-              note="pozisyon başına"
+              note="per position"
             />
             <Stat
-              label="Bugünkü NET P&L"
+              label="NET P&L today"
               value={formatSignedMicroMoney(c.net_pnl_today)}
               cls={tone(c.net_pnl_today) ?? ""}
-              note="maliyetler düşülmüş"
+              note="costs deducted"
             />
             <Stat
-              label="$100 kullanılan başına NET"
+              label="NET per $100 deployed"
               value={formatSignedMicroMoney(c.net_pnl_per_100_deployed)}
               cls={tone(c.net_pnl_per_100_deployed) ?? ""}
-              note="çalışan sermayenin verimi"
-              title="Boşta duran para bu oranı bozmaz; yalnızca piyasaya konan sermaye üzerinden ölçülür."
+              note="yield on working capital"
+              title="Idle money does not distort this ratio; it is measured only over capital actually put into the market."
             />
           </div>
 
           {derived && (
             <p className="cap-note">
-              Bildirilmeyen kullanım oranları tutarlardan türetildi (kullanılan ÷
-              sermaye). Türetilmiş bir oran, ölçülmüş bir oranla aynı kanıt değildir;
-              worker oranları bildirdiğinde bu satır kaybolur.
+              Utilisation ratios that were not reported have been derived from the
+              notionals (deployed ÷ equity). A derived ratio is not the same evidence as
+              a measured one; this line disappears once the worker reports the ratios.
             </p>
           )}
         </div>

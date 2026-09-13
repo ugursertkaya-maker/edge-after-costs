@@ -20,7 +20,7 @@ import type { BucketCell, BucketGrid } from "@/lib/phase6";
 import type { HoldingBucketState, TradeRow } from "@/lib/types";
 
 /**
- * TUTMA SÜRESİ KOVALARI — §20.
+ * HOLDING-TIME BUCKETS — §20.
  *
  * Net performance by holding bucket, one row per STRATEGY, never pooled.
  *
@@ -94,8 +94,8 @@ function Cell({ cell }: { cell: BucketCell | undefined }) {
     // Deliberately empty. See the panel docstring: this is "never held here",
     // which is a different statement from "held here and made nothing".
     return (
-      <td className="hb-cell is-none" title="Bu strateji bu kovada hiç işlem kapatmadı">
-        <span className="hb-empty" aria-label="işlem yok">
+      <td className="hb-cell is-none" title="This strategy closed no trade in this bucket">
+        <span className="hb-empty" aria-label="no trades">
           ·
         </span>
       </td>
@@ -108,16 +108,16 @@ function Cell({ cell }: { cell: BucketCell | undefined }) {
     <td
       className={`hb-cell${thin ? " is-thin" : ""}`}
       title={
-        `${cell.trades} işlem` +
+        `${cell.trades} trades` +
         (cell.unmeasured > 0 ? ` (${cell.unmeasured} tanesinin net P&L'i bildirilmedi)` : "") +
         (measured > 0 ? ` · win rate ${formatRate(cell.wins / measured, 0)}` : "") +
-        (thin ? " · örneklem bir performans okuması için ince" : "")
+        (thin ? " · sample too thin for a performance reading" : "")
       }
     >
       <span className={`hb-net ${tone(net) ?? "muted"}`}>
         {net === null ? DASH : formatSignedMicroMoney(net)}
       </span>
-      <span className="hb-n">{formatInt(cell.trades)} işlem</span>
+      <span className="hb-n">{formatInt(cell.trades)} trades</span>
     </td>
   );
 }
@@ -147,11 +147,11 @@ export function HoldingBuckets({
 
   const meta = (
     <>
-      <span className="pill is-off" title="Kovaların hesaplandığı kapanmış işlem sayısı">
-        {formatInt(sample)} işlem
+      <span className="pill is-off" title="Closed trades the buckets were computed from">
+        {formatInt(sample)} trades
       </span>
-      <span className="pill is-off" title="Satır sayısı — hiçbir satır diğeriyle toplanmaz">
-        {formatInt(grid.strategies.length)} strateji
+      <span className="pill is-off" title="Row count — no row is ever summed with another">
+        {formatInt(grid.strategies.length)} strategies
       </span>
     </>
   );
@@ -159,24 +159,24 @@ export function HoldingBuckets({
   return (
     <Panel
       idx="20"
-      title="Tutma süresi kovaları"
-      note="maliyet sonrası net performans — strateji strateji, asla havuzlanmadan"
+      title="Holding-time buckets"
+      note="net performance after costs — per strategy, never pooled"
       meta={meta}
       flush
       footer={
-        "Satırlar ASLA toplanmaz. flow_impulse medyan ~32 saniye, momentum_scalp ~71 saniye tutar; tek bir «30–60 sn» satırı, kasıtlı olarak hızlı bir stratejiyi yavaş bir stratejinin kuyruğuyla ortalar ve ortalamayı sonuç diye sunar. 30 saniyelik bir flow_impulse turu, impuls tükendiyse DOĞRU turdur. " +
-        "Boş bir hücre (·) o stratejinin o kovada hiç tur kapatmadığı anlamına gelir; sıfır dolar anlamına gelmez — bu ikisi burada aynı şekilde çizilmez. Her hücre kendi işlem sayısını taşır: denominatörü olmayan bir net rakam bir performans okuması değildir, beş işlemlik bir hücre de öyle. " +
+        "Rows are NEVER summed. flow_impulse holds for a median of ~32 seconds and momentum_scalp for ~71; a single «30-60s» row would deliberately average a fast strategy against the tail of a slow one and present the mean as a result. A 30-second flow_impulse round trip is the RIGHT round trip if the impulse is spent. " +
+        "An empty cell (·) means that strategy closed no round trip in that bucket; it does not mean zero dollars — the two are not drawn the same way here. Every cell carries its own trade count: a net figure without a denominator is not a performance reading, and neither is a five-trade cell. " +
         (derived
-          ? "KAYNAK: kapanmış işlem listesi (API son 200 turu yayınlar). Worker kendi kova bloğunu (`holding_buckets.rows`) yayınlamaya başladığında bu tablo ondan beslenir."
-          : "KAYNAK: worker'ın kendi kova bloğu.")
+          ? "SOURCE: the closed-trade list (the API publishes the last 200 round trips). Once the worker starts publishing its own bucket block (`holding_buckets.rows`), this table will be fed from that."
+          : "SOURCE: the worker's own bucket block.")
       }
     >
       {loading && grid.strategies.length === 0 ? (
         <Skeleton rows={5} />
       ) : grid.strategies.length === 0 ? (
         <DataState
-          title="Kova dağılımı yok"
-          text="Hiçbir strateji henüz kapanmış tur üretmedi, bu yüzden hiçbir kovada ölçüm yok. Boş bir tablo sıfır performans değildir: ölçülecek bir tur olmadığı okumasıdır."
+          title="No bucket distribution"
+          text="No strategy has produced a closed round trip yet, so no bucket has a measurement. An empty table is not zero performance: it is the reading that there is no round trip to measure."
         />
       ) : (
         <>
@@ -184,8 +184,8 @@ export function HoldingBuckets({
             <table className="tbl hb">
               <thead>
                 <tr>
-                  <th className="l">Strateji</th>
-                  <th className="l" title="Bu stratejinin medyan tutma süresi — satırların neden ayrı olduğunun kanıtı">
+                  <th className="l">Strategy</th>
+                  <th className="l" title="This strategy's median holding time — the evidence for why rows are kept separate">
                     Medyan tutma
                   </th>
                   {HOLDING_BUCKETS.map((b) => (
@@ -193,8 +193,8 @@ export function HoldingBuckets({
                       {b.label}
                     </th>
                   ))}
-                  <th title="Satır toplamı — yalnızca bu stratejinin kendi kovaları">Toplam net</th>
-                  <th title="Bu stratejinin kapanmış tur sayısı">İşlem</th>
+                  <th title="Row total — only this strategy's own buckets">Total net</th>
+                  <th title="Closed round trips for this strategy">Trades</th>
                 </tr>
               </thead>
               <tbody>
@@ -228,15 +228,15 @@ export function HoldingBuckets({
               <span className="hb-empty" aria-hidden>
                 ·
               </span>{" "}
-              bu kovada hiç işlem yok — sıfır değil, ölçüm yok
+              no trades in this bucket — not zero, not measured
             </span>
             <span className="hb-legend is-thin">
-              soluk hücre: {THIN_SAMPLE} işlemin altında, performans okuması sayılmaz
+              dimmed cell: under {THIN_SAMPLE} trades, does not count as a performance reading
             </span>
             {grid.undated > 0 && (
               <span className="hb-legend is-warn">
-                {formatInt(grid.undated)} tur tutma süresini bildirmedi ve hiçbir kovaya
-                yazılmadı — hiçbir satıra sessizce eklenmediler
+                {formatInt(grid.undated)} round trips did not report a holding time and were
+                written to no bucket — they were not silently added to any row
               </span>
             )}
           </div>

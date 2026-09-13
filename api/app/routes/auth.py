@@ -35,7 +35,7 @@ class LoginRequest(BaseModel):
     def _normalise(cls, v: str) -> str:
         v = v.strip().lower()
         if not v or "@" not in v:
-            raise ValueError("geçersiz e-posta")
+            raise ValueError("invalid email address")
         return v
 
 
@@ -49,7 +49,7 @@ def login(body: LoginRequest, response: Response) -> dict:
         with get_session() as session:
             user = session.query(User).filter(User.email == body.email).one_or_none()
             if user is None or not verify_password(body.password, user.password_hash):
-                raise HTTPException(status_code=401, detail="geçersiz kimlik bilgileri")
+                raise HTTPException(status_code=401, detail="invalid credentials")
             role = user.role
     except HTTPException:
         raise
@@ -57,9 +57,9 @@ def login(body: LoginRequest, response: Response) -> dict:
         # No database yet (first boot): fall back to the bootstrap credentials
         # so the operator is never locked out of their own dashboard.
         if not s.bootstrap_admin_email or body.email != s.bootstrap_admin_email.lower():
-            raise HTTPException(status_code=401, detail="geçersiz kimlik bilgileri")
+            raise HTTPException(status_code=401, detail="invalid credentials")
         if body.password != s.bootstrap_admin_password:
-            raise HTTPException(status_code=401, detail="geçersiz kimlik bilgileri")
+            raise HTTPException(status_code=401, detail="invalid credentials")
         role = "admin"
 
     set_session_cookie(response, issue_session(body.email, role, settings=s), settings=s)

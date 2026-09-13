@@ -49,13 +49,13 @@ export default function LoginPage() {
       router.replace("/");
     } catch (err) {
       if (err instanceof ApiError && err.status === 401) {
-        setError("E-posta veya parola hatalı.");
+        setError("Incorrect email or password.");
       } else if (err instanceof ApiError && err.status === 429) {
-        setError("Çok fazla deneme yapıldı. Bir süre sonra tekrar deneyin.");
+        setError("Too many attempts. Try again in a little while.");
       } else if (err instanceof ApiError) {
         setError(err.message);
       } else {
-        setError("Giriş yapılamadı. Bağlantınızı kontrol edip tekrar deneyin.");
+        setError("Sign-in failed. Check your connection and try again.");
       }
     } finally {
       setSubmitting(false);
@@ -65,21 +65,21 @@ export default function LoginPage() {
   return (
     <main className="login">
       <div className="panel login-card">
-        <div className="login-title">KRİPTO MICRO-PROFIT TRADER</div>
+        <div className="login-title">NETEDGE</div>
         <div className="login-sub">
-          Kâğıt üzerinde scalping · yalnızca gözlem ve simülasyon
+          Paper-only research terminal · observation and simulation
         </div>
 
         {error && (
           <div className="banner banner-err" style={{ marginTop: 16 }} role="alert">
-            <span className="banner-tag">Hata</span>
+            <span className="banner-tag">Error</span>
             <span>{error}</span>
           </div>
         )}
 
         <form onSubmit={handleSubmit} className="login-form">
           <div className="field">
-            <label htmlFor="email">E-posta</label>
+            <label htmlFor="email">Email</label>
             <input
               id="email"
               name="email"
@@ -91,7 +91,7 @@ export default function LoginPage() {
             />
           </div>
           <div className="field">
-            <label htmlFor="password">Parola</label>
+            <label htmlFor="password">Password</label>
             <input
               id="password"
               name="password"
@@ -107,7 +107,7 @@ export default function LoginPage() {
             className="btn btn-primary btn-block"
             disabled={submitting || checkingSession}
           >
-            {submitting ? "Giriş yapılıyor…" : "Giriş yap"}
+            {submitting ? "Signing in…" : "Sign in"}
           </button>
         </form>
 
@@ -115,15 +115,15 @@ export default function LoginPage() {
             they stay visible before anyone has authenticated. */}
         <div className="login-foot">
           <div className="rstat">
-            <span className="rstat-k">Mod</span>
+            <span className="rstat-k">Mode</span>
             <span className="rstat-v is-pos">PAPER</span>
           </div>
           <div className="rstat">
-            <span className="rstat-k">Gerçek emir</span>
-            <span className="rstat-v is-off">KAPALI</span>
+            <span className="rstat-k">Live orders</span>
+            <span className="rstat-v is-off">OFF</span>
           </div>
           <div className="rstat">
-            <span className="rstat-k">Başlangıç sermaye</span>
+            <span className="rstat-k">Starting equity</span>
             <span className="rstat-v">$500</span>
           </div>
         </div>

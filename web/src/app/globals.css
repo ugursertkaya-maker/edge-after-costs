@@ -1,5 +1,5 @@
 /* ==========================================================================
-   KRİPTO MICRO-PROFIT TRADER — terminal design system
+   NETEDGE — terminal design system
    --------------------------------------------------------------------------
    A dark quantitative desk. The ground is a cold near-black with a faint
    blue cast; panels are one step lighter and separated by hairlines, not by
@@ -1868,9 +1868,9 @@ table.tbl td.x {
 }
 
 /* ------------------------------------------------------------ OOS verdict */
-/* A verdict, not a label. FİNALİST is the only one that earns green; SINIRDA
+/* A verdict, not a label. FINALIST is the only one that earns green; MARGINAL
    is amber because "positive but under the bar" is precisely the reading that
-   gets rounded up into a winner when nobody is watching; ÖRNEKLEM YETERSİZ is
+   gets rounded up into a winner when nobody is watching; INSUFFICIENT SAMPLE is
    toneless because an unjudged arm has not failed. */
 .oos {
   display: inline-block;

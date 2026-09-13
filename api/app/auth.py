@@ -110,7 +110,7 @@ def require_csrf(
 ) -> None:
     """Double-submit check for state-changing requests."""
     if not cb_csrf or not x_csrf_token or not hmac.compare_digest(cb_csrf, x_csrf_token):
-        raise HTTPException(status_code=403, detail="csrf doğrulaması başarısız")
+        raise HTTPException(status_code=403, detail="CSRF validation failed")
 
 
 def clear_session_cookie(response: Response, *, settings: Settings | None = None) -> None:

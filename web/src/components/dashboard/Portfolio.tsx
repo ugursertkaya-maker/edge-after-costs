@@ -24,16 +24,16 @@ function correlationBand(pct: number): { cls: string; text: string } {
   if (pct >= 70)
     return {
       cls: "is-crit",
-      text: "Açık pozisyonlar tek bir yönlü bahis gibi davranıyor. Sayı çokluğu dağıtım değildir.",
+      text: "The open positions behave like a single directional bet. A large count is not diversification.",
     };
   if (pct >= 40)
     return {
       cls: "is-warn",
-      text: "Yoğunlaşma artıyor — pozisyonların önemli bölümü aynı hareketle kazanıp aynı hareketle kaybeder.",
+      text: "Concentration is rising — a significant share of the positions win together and lose together.",
     };
   return {
     cls: "is-ok",
-    text: "Açık pozisyonlar büyük ölçüde birbirinden bağımsız hareket ediyor.",
+    text: "The open positions move largely independently of one another.",
   };
 }
 
@@ -61,13 +61,13 @@ function Distribution({
   return (
     <div className="dist">
       <div className="dist-head">
-        <span className="dist-t">Yaş dağılımı</span>
+        <span className="dist-t">Age distribution</span>
         <span className="dist-n">
           {known.length === 0
-            ? "ölçüm yok"
+            ? "not measured"
             : total === 0
-              ? "açık pozisyon yok"
-              : `${formatInt(total)} açık pozisyon`}
+              ? "no open positions"
+              : `${formatInt(total)} open positions`}
         </span>
       </div>
       <div className="dist-bar" aria-hidden>
@@ -116,7 +116,7 @@ export function Portfolio({
     p && (p.allocation_mode || p.net_tp_profile) ? (
       <>
         {p.allocation_mode && (
-          <span className="pill" title="Sermaye dağıtım modu">
+          <span className="pill" title="Capital allocation mode">
             {allocationModeLabel(p.allocation_mode)}
           </span>
         )}
@@ -131,17 +131,17 @@ export function Portfolio({
   return (
     <Panel
       idx="09"
-      title="Portföy"
-      note="sermaye, risk ve yoğunlaşma"
+      title="Portfolio"
+      note="capital, risk and concentration"
       meta={meta}
-      footer="Pozisyon büyüklüğü risk değildir: %1 stop taşıyan $20'lık bir pozisyon $20 değil, yaklaşık $0,20 artı maliyet riske eder. Toplam açık risk bu modellenmiş kayıpların toplamıdır."
+      footer="Position size is not risk: a $20 position carrying a 1% stop risks about $0.20 plus costs, not $20. Total open risk is the sum of those modelled losses."
     >
       {loading && !p ? (
         <Skeleton rows={4} />
       ) : !p ? (
         <DataState
-          title="Portföy katmanı henüz raporlamıyor"
-          text="Worker V2 portföy alanlarını üretmeye başladığında dağıtılan sermaye, açık risk, korelasyonlu maruziyet ve yaş dağılımı burada görünecek. Boş görünmesi bir hata değil; ölçülmemiş bir değeri sıfır olarak göstermemek kasıtlıdır."
+          title="The portfolio layer is not reporting yet"
+          text="Once the worker starts producing the V2 portfolio fields, deployed capital, open risk, correlated exposure and the age distribution will appear here. Looking empty is not an error; not showing an unmeasured value as zero is deliberate."
         />
       ) : (
         <div className="pfolio">
@@ -158,76 +158,76 @@ export function Portfolio({
             <p className="corr-note">
               {band
                 ? band.text
-                : "Ölçüm yok. Sekiz eşzamanlı kripto long'u tek bir büyük kripto long'udur; bu değer o riski yakalamak içindir."}
+                : "Not measured. Eight simultaneous crypto longs are one large crypto long; this figure exists to capture that risk."}
             </p>
           </div>
 
           <div className="pfolio-grid">
             <Stat
-              label="Açık pozisyon"
+              label="Open positions"
               value={formatInt(p.open_positions)}
               note="adet"
             />
             <Stat
-              label="Kullanılan sermaye"
+              label="Deployed capital"
               value={formatMoney(p.capital_deployed)}
-              note="piyasada çalışan tutar"
+              note="notional at work in the market"
             />
             <Stat
-              label="Kullanılabilir nakit"
+              label="Available cash"
               value={formatMoney(p.available_cash)}
-              note="yeni pozisyon açılabilir"
+              note="can open a new position"
             />
             <Stat
-              label="Nakit rezervi"
+              label="Cash reserve"
               value={formatMoney(p.cash_reserve)}
-              note="kasıtlı olarak kullanılmaz"
+              note="deliberately not used"
             />
             <Stat
-              label="Toplam açık risk"
+              label="Total open risk"
               value={
                 p.open_risk_usd === null || p.open_risk_usd === undefined
                   ? DASH
                   : formatMoney(-Math.abs(p.open_risk_usd))
               }
               cls={p.open_risk_usd ? "neg" : ""}
-              note="stoplar dolarsa modellenen kayıp"
+              note="modelled loss if every stop fills"
             />
             <Stat
-              label="Açık risk / sermaye"
+              label="Open risk / equity"
               value={formatPct(p.open_risk_pct)}
               cls={
                 toNum(p.open_risk_pct) !== null && (toNum(p.open_risk_pct) as number) > 3
                   ? "warn"
                   : ""
               }
-              note="bütçe %3"
+              note="budget 3%"
             />
             <Stat
-              label="Ort. pozisyon"
+              label="Avg. position"
               value={formatMoney(p.avg_position_usd)}
               note="tutar"
             />
             <Stat
-              label="Medyan pozisyon"
+              label="Median position"
               value={formatMoney(p.median_position_usd)}
-              note="ortalamayı bozan uç değerler için"
+              note="for outliers that distort the mean"
             />
             <Stat
-              label="Ort. tutma süresi"
+              label="Avg. holding time"
               value={formatDuration(p.avg_holding_seconds)}
               note="hedef 25–60 dk"
             />
             <Stat
-              label="Günlük sermaye devri"
+              label="Daily capital turnover"
               value={formatRatio(p.capital_turnover_per_day)}
-              note="işlem hacmi / sermaye"
+              note="traded notional / equity"
             />
             <Stat
-              label="$1 başına NET kâr"
+              label="NET profit per $1"
               value={formatMicroMoney(p.net_profit_per_dollar_deployed)}
               cls={tone(p.net_profit_per_dollar_deployed) ?? ""}
-              note="dağıtılan sermaye başına"
+              note="per dollar of deployed capital"
             />
           </div>
 

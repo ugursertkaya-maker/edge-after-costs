@@ -30,7 +30,7 @@ import type {
 } from "@/lib/types";
 
 /**
- * BTC YOĞUNLAŞMA İZLEYİCİSİ — §21.
+ * BTC CONCENTRATION MONITOR — §21.
  *
  * The brief opens with an accusation ("the trader is BTC-only") and this panel
  * exists to answer it with counts instead of argument. Two headline figures do
@@ -97,22 +97,22 @@ function ShareMeter({
         role="img"
         aria-label={
           pct === null
-            ? `${label} ölçülmedi`
-            : `${label} ${formatPct(pct)}, eşik %${CONCENTRATION_THRESHOLD_PCT}`
+            ? `${label} not measured`
+            : `${label} ${formatPct(pct)}, threshold ${CONCENTRATION_THRESHOLD_PCT}%`
         }
       >
         <span className={`cshare-fill${pct === null ? " is-unknown" : ""}`} style={{ width: `${fill}%` }} />
         <span
           className="cshare-limit"
           style={{ left: `${CONCENTRATION_THRESHOLD_PCT}%` }}
-          title={`BTC_CONCENTRATION eşiği: %${CONCENTRATION_THRESHOLD_PCT}`}
+          title={`BTC_CONCENTRATION threshold: ${CONCENTRATION_THRESHOLD_PCT}%`}
         />
       </div>
       <div className="cshare-foot">
         <span className="cshare-n">
-          {sample === null ? "örneklem bildirilmedi" : `${formatInt(sample)} ${sampleUnit}`}
+          {sample === null ? "sample not reported" : `${formatInt(sample)} ${sampleUnit}`}
         </span>
-        <span className="cshare-lim">eşik %{CONCENTRATION_THRESHOLD_PCT}</span>
+        <span className="cshare-lim">threshold {CONCENTRATION_THRESHOLD_PCT}%</span>
       </div>
       <p className="cshare-x">{note}</p>
     </div>
@@ -154,30 +154,30 @@ function Flag({
           {symbol ? baseAsset(symbol) : DASH} {sharePct === null ? DASH : formatPct(sharePct)}
           <span className="cflag-vs">
             {" "}
-            / eşik %{CONCENTRATION_THRESHOLD_PCT} ·{" "}
-            {sample === null ? "örneklem yok" : `${formatInt(sample)} işlem`}
+            / threshold {CONCENTRATION_THRESHOLD_PCT}% ·{" "}
+            {sample === null ? "no sample" : `${formatInt(sample)} trades`}
           </span>
         </span>
       </div>
       <p className="cflag-x">{note}</p>
 
       <div className="cflag-cause">
-        <span className="cflag-cause-k">Sebep</span>
+        <span className="cflag-cause-k">Cause</span>
         {causeKnown ? (
           <span className="cflag-cause-v">{cause}</span>
         ) : (
           <span className="cflag-cause-v is-empty">
-            {DASH} — sebep verisi bu ekrana ulaşmıyor. Yoğunlaşmanın sebebi sıralamada mı
-            yoksa neyin aday olmasına izin verildiğinde mi olduğunu yalnızca sembol bazlı
-            huni söyleyebilir; o gelene kadar burada bir sebep uydurulmaz.
+            {DASH} — cause data is not reaching this screen. Only the per-symbol funnel can
+            say whether the concentration is in the ranking or in what was allowed to
+            become a candidate; until it arrives, no cause is invented here.
           </span>
         )}
       </div>
 
       <p className="cflag-guard">
-        Bu bayrak yalnızca teşhistir. BTC hiçbir yerde bastırılmaz, cezalandırılmaz veya
-        yeniden sıralanmaz; net EV'de BTC kazanıyorsa BTC işlem görür. Bayrak bir
-        kısıt değil, huniye bakma çağrısıdır.
+        This flag is a diagnosis only. BTC is nowhere suppressed, penalised or re-ranked;
+        if BTC wins on net EV, BTC trades. The flag is not a constraint, it is a call to
+        go and look at the funnel.
       </p>
     </div>
   );
@@ -190,18 +190,18 @@ function CoinTable({ rows, hasFunnel }: { rows: ConcentrationRow[]; hasFunnel: b
         <thead>
           <tr>
             <th className="l">Coin</th>
-            <th>İşlem</th>
-            <th title="İşlem sayısının payı">İşlem payı</th>
-            <th title="Maliyet sonrası net P&L">Net P&amp;L</th>
-            <th title="Kapanmış işlemlerin nominal toplamı — anlık dağıtılmış sermaye değil">
-              Tahsis edilen sermaye
+            <th>Trades</th>
+            <th title="Share of the trade count">Trade share</th>
+            <th title="Net P&L after costs">Net P&amp;L</th>
+            <th title="Sum of the notionals of closed trades — not the instantaneous deployed capital">
+              Allocated capital
             </th>
-            <th title="Tahsis edilen sermayenin payı">Sermaye payı</th>
-            <th title="Huni: strategy_evaluated">Sinyal</th>
-            <th title="Huni: ranked — tüm kapıları geçen sinyal">Nitelikli</th>
-            <th title="Sinyal − nitelikli">Reddedilen</th>
-            <th className="l" title="Bu sembolün öldüğü aşama ve orada en sık görülen gerekçe">
-              Darboğaz
+            <th title="Share of allocated capital">Capital share</th>
+            <th title="Funnel: strategy_evaluated">Signals</th>
+            <th title="Funnel: ranked — signals that cleared every gate">Qualified</th>
+            <th title="Signals - qualified">Rejected</th>
+            <th className="l" title="The stage this symbol died at, and the reason most often recorded there">
+              Bottleneck
             </th>
           </tr>
         </thead>
@@ -248,7 +248,7 @@ function CoinTable({ rows, hasFunnel }: { rows: ConcentrationRow[]; hasFunnel: b
                       ) : null}
                     </>
                   ) : (
-                    <span className="muted">{hasFunnel ? DASH : "huni yok"}</span>
+                    <span className="muted">{hasFunnel ? DASH : "no funnel"}</span>
                   )}
                 </td>
               </tr>
@@ -314,15 +314,15 @@ export function Concentration({
     <>
       <span
         className="pill is-off"
-        title="Payların hesaplandığı kapanmış işlem sayısı — her yüzdenin denominatörü"
+        title="Closed trades the shares were computed from — the denominator of every percentage"
       >
-        {sample === null ? "örneklem yok" : `${formatInt(sample)} işlem`}
+        {sample === null ? "no sample" : `${formatInt(sample)} trades`}
       </span>
       <span
         className={`pill ${verdict === "flagged" ? "is-warn" : "is-off"}`}
         title={CONCENTRATION_VERDICT_NOTES[verdict] ?? ""}
       >
-        {verdict === "flagged" ? "BAYRAK ETKİN" : "BAYRAK ETKİN DEĞİL"}
+        {verdict === "flagged" ? "FLAG ACTIVE" : "FLAG NOT ACTIVE"}
       </span>
     </>
   );
@@ -330,44 +330,44 @@ export function Concentration({
   return (
     <Panel
       idx="18"
-      title="BTC yoğunlaşma izleyicisi"
-      note="coin başına işlem, sermaye ve huni sayımları"
+      title="BTC concentration monitor"
+      note="per-asset trade, capital and funnel counts"
       meta={meta}
       footer={
-        "TAHSİS EDİLEN SERMAYE, kapanmış işlemlerin nominal toplamıdır: on kez devreden 50 dolarlık bir pozisyon bu sütuna 500 dolar yazar. Bu, §09'daki anlık DAĞITILMIŞ SERMAYE ile aynı büyüklük değildir ve iki sütun asla toplanmaz. " +
+        "ALLOCATED CAPITAL is the sum of the notionals of closed trades: a $50 position that rotates ten times writes $500 into this column. It is not the same quantity as the instantaneous DEPLOYED CAPITAL in §09, and the two columns are never summed. " +
         (derived
-          ? "İşlem ve sermaye payları kapanmış işlem listesinden TÜRETİLMİŞTİR (API son 200 turu yayınlar), sinyal/nitelikli/reddedilen sütunları ise yalnızca sembol bazlı huniden gelir. "
+          ? "Trade and capital shares are DERIVED from the closed-trade list (the API publishes the last 200 round trips), while the signal/qualified/rejected columns come only from the per-symbol funnel. "
           : "") +
-        `Bayrak eşiği %${CONCENTRATION_THRESHOLD_PCT}, konuşmaya başlaması için gereken en küçük örneklem ${CONCENTRATION_MIN_SAMPLE} işlemdir; az sayıda işlemde yüksek pay, yoğunlaşma değil az sayıda işlemdir. Bayrak hiçbir coini bastırmaz.`
+        `The flag threshold is ${CONCENTRATION_THRESHOLD_PCT}% and the smallest sample it will speak on is ${CONCENTRATION_MIN_SAMPLE} trades; a high share across few trades is few trades, not concentration. The flag suppresses no asset.`
       }
     >
       {loading && rows.length === 0 ? (
         <Skeleton rows={5} />
       ) : rows.length === 0 ? (
         <DataState
-          title="Coin bazlı sayım yok"
-          text="Ne kapanmış işlem ne de sembol bazlı huni bu ekrana ulaştı. Yoğunlaşma ölçülmedi — ve ölçülmemiş bir yoğunlaşma, olmayan bir yoğunlaşma değildir."
+          title="No per-asset counts"
+          text="Neither closed trades nor the per-symbol funnel reached this screen. Concentration was not measured — and an unmeasured concentration is not an absent one."
         />
       ) : (
         <div className="conc">
           <div className="conc-heads">
             <ShareMeter
-              label="BTC işlem payı"
+              label="BTC trade share"
               symbol={tradeHead.symbol}
               pct={tradeHead.sharePct}
               sample={tradeHead.sample}
-              sampleUnit="kapanmış işlem"
+              sampleUnit="closed trades"
               kind={verdict}
-              note="Kaç turun bu coine gittiği. Sıralamanın çıktısıdır; kota değildir."
+              note="How many round trips went to this asset. It is an output of the ranking, not a quota."
             />
             <ShareMeter
-              label="BTC sermaye payı"
+              label="BTC capital share"
               symbol={capHead.symbol}
               pct={capHead.sharePct}
               sample={capHead.sample}
-              sampleUnit="nominali bildirilmiş işlem"
+              sampleUnit="trades with a reported notional"
               kind={capHead.sharePct !== null && capHead.sharePct > CONCENTRATION_THRESHOLD_PCT ? "flagged" : verdict}
-              note="Paranın ne kadarının bu coinden geçtiği. İşlem payından farklı olması bir kusur değil, ayrı bir okumadır: az sayıda büyük tur, çok sayıda küçük turdan farklı bir maruziyettir."
+              note="How much of the money passed through this asset. Differing from the trade share is not a defect but a separate reading: a few large round trips are a different exposure from many small ones."
             />
           </div>
 
@@ -382,9 +382,9 @@ export function Concentration({
 
           {derivation.notionalMissing > 0 && (
             <p className="xnote">
-              {formatInt(derivation.notionalMissing)} işlem nominal büyüklüğünü bildirmedi;
-              sermaye payı yalnızca bildirenler üzerinden hesaplanmıştır. Bildirilmemiş bir
-              nominal sıfır dolar sayılmaz, denominatörden çıkarılır.
+              {formatInt(derivation.notionalMissing)} trades did not report a notional;
+              the capital share is computed only over those that did. An unreported notional
+              does not count as zero dollars, it is removed from the denominator.
             </p>
           )}
 
@@ -399,7 +399,7 @@ export function Concentration({
  * The cause, read off the funnel's own wall counts.
  *
  * The wording is assembled from counts, not composed: "251 sembol
- * `discovered` aşamasında duruyor" is the funnel speaking. When no funnel is
+ * stuck at the `discovered` stage" is the funnel speaking. When no funnel is
  * served there is no cause, and the flag prints that instead of a theory.
  */
 function causeFromFunnel(funnel: FunnelReport | null | undefined): string | null {
@@ -414,8 +414,8 @@ function causeFromFunnel(funnel: FunnelReport | null | undefined): string | null
   const total = entries.reduce((s, [, v]) => s + v, 0);
   const reason = topReasonAt(funnel, stage);
   return (
-    `${formatInt(n)} / ${formatInt(total)} sembol "${funnelStageLabel(stage)}" aşamasında duruyor` +
-    (reason ? ` — orada en sık kaydedilen gerekçe: ${reason}.` : ".")
+    `${formatInt(n)} / ${formatInt(total)} symbols are stuck at the "${funnelStageLabel(stage)}" stage` +
+    (reason ? ` — the reason most often recorded there: ${reason}.` : ".")
   );
 }
 
