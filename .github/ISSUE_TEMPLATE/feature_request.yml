@@ -1,0 +1,62 @@
+name: Feature request
+description: Propose a capability or an improvement
+labels: ["enhancement"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Thanks for the idea.
+
+        One thing will always be declined: **anything that adds an
+        order-execution path.** NetEdge is paper-only by construction and the
+        safety tests enforce it. See
+        [CONTRIBUTING.md](../blob/main/CONTRIBUTING.md).
+
+  - type: textarea
+    id: problem
+    attributes:
+      label: What problem does this solve
+      description: Describe the limitation you hit, not just the feature you want.
+    validations:
+      required: true
+
+  - type: textarea
+    id: proposal
+    attributes:
+      label: Proposed approach
+    validations:
+      required: true
+
+  - type: dropdown
+    id: area
+    attributes:
+      label: Which part of the system
+      options:
+        - Market data / ingestion
+        - Strategy modules
+        - Risk and portfolio
+        - Execution simulation
+        - Backtest and walk-forward
+        - Research tooling / tournament
+        - Predictive / ML pipeline
+        - Dashboard (web)
+        - Docs and developer experience
+        - New venue adapter
+    validations:
+      required: true
+
+  - type: textarea
+    id: evidence
+    attributes:
+      label: How would we know it works
+      description: |
+        For anything that touches measurement: what would you measure, on what
+        sample, and out-of-sample against what benchmark?
+
+  - type: checkboxes
+    id: checks
+    attributes:
+      label: Acknowledgements
+      options:
+        - label: This does not add or enable live order execution
+          required: true

@@ -50,3 +50,6 @@ data/
 .idea/
 .vscode/
 *.swp
+
+# Local, deployment-specific patterns for scripts/check-no-private-strings.sh
+.private-strings

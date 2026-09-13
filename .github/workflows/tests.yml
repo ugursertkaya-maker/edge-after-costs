@@ -1,0 +1,69 @@
+name: Tests
+
+# Everything here runs offline against the checked-out source. No secret, no
+# external service and no deployment environment is referenced, so this
+# workflow is safe to run on forks and on pull requests from them.
+on:
+  push:
+    branches: ["**"]
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  backend:
+    name: backend (pytest)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+          cache-dependency-path: api/requirements-dev.txt
+
+      - name: Install dependencies
+        run: python -m pip install --upgrade pip && pip install -r api/requirements-dev.txt
+
+      - name: Run the test suite
+        working-directory: api
+        run: python -m pytest tests -q
+
+      - name: Safety invariants (explicit, so a failure here is unmissable)
+        working-directory: api
+        run: python -m pytest tests/test_paper_only.py tests/test_safety.py -q
+
+  frontend:
+    name: frontend (typecheck + tests)
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: web
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+          cache: npm
+          cache-dependency-path: web/package-lock.json
+
+      - run: npm ci
+      - run: npm run typecheck
+      - run: npm test
+
+  compose:
+    name: docker compose config
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Validate the compose file against the example env
+        run: |
+          cp .env.example .env
+          sed -i 's/^POSTGRES_PASSWORD=.*/POSTGRES_PASSWORD=ci-placeholder/' .env
+          docker compose config --quiet
+          echo "docker-compose.yml is valid"

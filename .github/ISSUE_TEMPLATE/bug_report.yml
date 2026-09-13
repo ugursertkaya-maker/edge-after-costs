@@ -1,0 +1,82 @@
+name: Bug report
+description: Something in NetEdge behaves incorrectly
+labels: ["bug"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Thanks for the report.
+
+        **Do not use this form for security vulnerabilities.** See
+        [SECURITY.md](../blob/main/SECURITY.md) — use GitHub's private
+        vulnerability reporting instead.
+
+        **Do not paste secrets.** No `.env` contents, passwords, session
+        cookies, or API keys. Redact anything that looks like a credential
+        before you post.
+
+  - type: textarea
+    id: what-happened
+    attributes:
+      label: What happened
+      description: What did you observe, and what did you expect instead?
+    validations:
+      required: true
+
+  - type: textarea
+    id: reproduce
+    attributes:
+      label: Steps to reproduce
+      description: The smallest sequence that shows the problem.
+      placeholder: |
+        1. cp .env.example .env and set ...
+        2. docker compose up --build
+        3. Open /netedge/... and ...
+    validations:
+      required: true
+
+  - type: dropdown
+    id: area
+    attributes:
+      label: Which part of the system
+      options:
+        - API
+        - Worker / live paper loop
+        - Backtest engine
+        - Research tooling (api/scripts)
+        - Predictive / ML pipeline
+        - Dashboard (web)
+        - Docker / deployment
+        - Documentation
+        - Not sure
+    validations:
+      required: true
+
+  - type: textarea
+    id: logs
+    attributes:
+      label: Relevant logs or output
+      description: Paste the output. It will be rendered as code, so no backticks needed.
+      render: shell
+
+  - type: input
+    id: version
+    attributes:
+      label: Commit or version
+      placeholder: e.g. main @ 9ff9c1c
+
+  - type: input
+    id: environment
+    attributes:
+      label: Environment
+      placeholder: e.g. macOS 15 / Docker 27.3 / Python 3.12
+
+  - type: checkboxes
+    id: checks
+    attributes:
+      label: Before submitting
+      options:
+        - label: I ran the test suite and included any relevant failures
+          required: false
+        - label: I have removed all secrets and credentials from this report
+          required: true
