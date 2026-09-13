@@ -201,6 +201,34 @@ def profile_for_horizon(strategy: str, horizon_seconds: float) -> HoldingProfile
     )
 
 
+def configured_horizon_seconds(strategy: str, settings=None) -> float:
+    """The horizon this strategy is configured to hold for, 0 when unset.
+
+    Reads the same config the strategies read, so the exit side and the entry
+    side cannot disagree about how long a position is meant to live.
+    """
+    if settings is None:
+        from app.config import get_settings
+        settings = get_settings()
+    cfg = getattr(settings, "strategy_horizon", None)
+    if cfg is None or strategy not in cfg.slow_families:
+        return 0.0
+    return float(cfg.slow_horizon_seconds or 0.0)
+
+
+def effective_profile(strategy: str, settings=None) -> HoldingProfile:
+    """The profile a position of this strategy is actually managed by.
+
+    This is the accessor every caller should use. ``profile_for`` returns the
+    static table, which is right until a horizon is configured and wrong the
+    moment one is -- and a 60-minute arm managed by a 40-minute ceiling
+    measures a strategy nobody deployed.
+    """
+    return profile_for_horizon(
+        strategy, configured_horizon_seconds(strategy, settings)
+    )
+
+
 def profile_for(strategy: str) -> HoldingProfile:
     """The holding profile for ``strategy``, or the inert default."""
     return PROFILES.get(strategy or "", DEFAULT_PROFILE)
@@ -468,7 +496,7 @@ class HoldingPolicy:
         """The strategy's own deadline in seconds, or ``0.0`` if it has none."""
         if not self.cfg.enabled:
             return 0.0
-        profile = profile_for(pos.strategy)
+        profile = effective_profile(pos.strategy, getattr(self, 'settings', None))
         if profile.max_hold_seconds <= 0.0:
             return 0.0
         return profile.max_hold_seconds * self.hold_scale(f)
@@ -476,7 +504,9 @@ class HoldingPolicy:
     def trail_after_net_bps(self, pos: Position) -> float:
         if not self.cfg.enabled:
             return 0.0
-        return profile_for(pos.strategy).trail_after_net_bps
+        return effective_profile(
+            pos.strategy, getattr(self, 'settings', None)
+        ).trail_after_net_bps
 
     # -- the decision ------------------------------------------------------ #
 
@@ -493,7 +523,7 @@ class HoldingPolicy:
     ) -> HoldingVerdict:
         """Should this position still exist, and if not, why not."""
         cfg = self.cfg
-        profile = profile_for(pos.strategy)
+        profile = effective_profile(pos.strategy, getattr(self, 'settings', None))
         held = pos.holding_seconds(ts_ms)
         state = state_of(pos)
 

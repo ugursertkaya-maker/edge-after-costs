@@ -51,6 +51,7 @@ from app.holding import (
     HoldingPolicy,
     HoldingVerdict,
     arm,
+    effective_profile,
     profile_for,
     state_of,
 )
@@ -437,7 +438,7 @@ class ExitEngine:
         the first tick that carries features is the closest baseline that
         honestly exists, and taking it late can only *under*-report decay.
         """
-        if profile_for(pos.strategy) is DEFAULT_PROFILE:
+        if effective_profile(pos.strategy, self.settings) is DEFAULT_PROFILE:
             return HoldingVerdict(held_seconds=pos.holding_seconds(ts_ms))
         if state_of(pos) is None:
             arm(pos, f, book=book, ts_ms=ts_ms)

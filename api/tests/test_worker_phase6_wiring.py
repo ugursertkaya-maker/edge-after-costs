@@ -266,3 +266,41 @@ class TestIdleDepthSlotsAreUsed:
         src = _source(worker_main.TradingWorker.refresh_universe)
         assert "e.tier = " not in src
         assert 'replace(' not in src.split("subscribe_hot")[1][:400]
+
+
+class TestHorizonProfileIsReachable:
+    """profile_for_horizon must not join the list of built-but-unreachable parts.
+
+    exits.py called profile_for() directly, so a configured 60-minute horizon
+    would have been managed by a 40-minute ceiling -- closing every position
+    early and then reporting the 60-minute arm's results.
+    """
+
+    def test_exits_uses_the_effective_profile(self):
+        import inspect
+        from app import exits
+        src = inspect.getsource(exits)
+        assert "effective_profile(" in src
+
+    def test_the_effective_profile_follows_the_configured_horizon(self, monkeypatch):
+        from app.config import reload_settings
+        from app.holding import effective_profile, profile_for
+
+        monkeypatch.setenv("SLOW_HORIZON_SECONDS", "3600")
+        s = reload_settings()
+        widened = effective_profile("momentum_scalp", s)
+        assert widened.max_hold_seconds > profile_for("momentum_scalp").max_hold_seconds
+        monkeypatch.delenv("SLOW_HORIZON_SECONDS")
+        reload_settings()
+
+    def test_fast_families_are_untouched_by_the_horizon_config(self, monkeypatch):
+        from app.config import reload_settings
+        from app.holding import effective_profile, profile_for
+
+        monkeypatch.setenv("SLOW_HORIZON_SECONDS", "3600")
+        s = reload_settings()
+        for fast in ("flow_impulse", "book_imbalance"):
+            assert (effective_profile(fast, s).max_hold_seconds
+                    == profile_for(fast).max_hold_seconds)
+        monkeypatch.delenv("SLOW_HORIZON_SECONDS")
+        reload_settings()
