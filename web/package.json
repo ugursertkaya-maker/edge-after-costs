@@ -11,7 +11,7 @@
     "test": "TSX_TSCONFIG_PATH=tsconfig.test.json tsx --test src/lib/*.test.ts src/components/dashboard/*.test.tsx"
   },
   "dependencies": {
-    "next": "15.5.25",
+    "next": "15.5.28",
     "react": "19.0.0",
     "react-dom": "19.0.0"
   },
